@@ -116,6 +116,34 @@ describe("secure studio IPC sequences", () => {
     expect((await api.validate()).project?.metadata.name).toBe(metadata.name);
   });
 
+  it("persists a deterministic screen override for a project with no scenes", async () => {
+    let saved: ProjectStateV1 | undefined;
+    const adapter: StudioDependencies = {
+      ...dependencies([]),
+      save: async (state) => {
+        saved = state;
+      },
+    };
+    const handler = createStudioHandler(trusted, adapter);
+    const api = createStudioApi((_channel, request) => handler(event, request));
+    await api.create({ projectId: "empty", metadata });
+
+    const result = await api.edit({
+      version: 1,
+      type: "set-scene-token",
+      sceneId: "home:bottom",
+      screen: "bottom",
+      mode: "home",
+      key: "background",
+      value: "#224466",
+    });
+
+    expect(result.project?.scenes).toEqual([
+      { id: "home:bottom", screen: "bottom", mode: "home", overrides: { background: "#224466" } },
+    ]);
+    expect(currentProject(saved!).scenes).toEqual(result.project?.scenes);
+  });
+
   it("keeps create, undo, and redo state unchanged when their saves fail", async () => {
     let rejectNextSave = false;
     const adapter: StudioDependencies = {

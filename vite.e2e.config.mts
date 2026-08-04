@@ -6,5 +6,5 @@ export default defineConfig({
   root: "apps/studio/src/renderer",
   base: "./",
   plugins: [react()],
-  build: { outDir: path.resolve("dist/apps/studio/renderer/main_window"), emptyOutDir: true },
+  build: { assetsInlineLimit: 0, outDir: path.resolve("dist/apps/studio/renderer/main_window"), emptyOutDir: true },
 });

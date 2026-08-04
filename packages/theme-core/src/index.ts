@@ -47,16 +47,30 @@ export const OperationV1Schema = Type.Union([
     { version: Type.Literal(1), type: Type.Literal("set-token"), key: Type.String(), value: TokenValueSchema },
     { additionalProperties: false },
   ),
-  Type.Object(
-    {
-      version: Type.Literal(1),
-      type: Type.Literal("set-scene-token"),
-      sceneId: Type.String(),
-      key: Type.String(),
-      value: TokenValueSchema,
-    },
-    { additionalProperties: false },
-  ),
+  Type.Union([
+    Type.Object(
+      {
+        version: Type.Literal(1),
+        type: Type.Literal("set-scene-token"),
+        sceneId: Type.String(),
+        key: Type.String(),
+        value: TokenValueSchema,
+      },
+      { additionalProperties: false },
+    ),
+    Type.Object(
+      {
+        version: Type.Literal(1),
+        type: Type.Literal("set-scene-token"),
+        sceneId: Type.String(),
+        screen: Type.Union([Type.Literal("top"), Type.Literal("bottom")]),
+        mode: Type.String(),
+        key: Type.String(),
+        value: TokenValueSchema,
+      },
+      { additionalProperties: false },
+    ),
+  ]),
   Type.Object(
     { version: Type.Literal(1), type: Type.Literal("acknowledge"), fingerprint: Type.String() },
     { additionalProperties: false },
@@ -134,8 +148,14 @@ function applyToProject(project: MaterialProjectV1, operation: OperationV1): Mat
       next.tokens[operation.key] = operation.value;
       break;
     case "set-scene-token": {
-      const scene = next.scenes.find(({ id }) => id === operation.sceneId);
-      if (!scene) throw new Error(`Unknown scene: ${operation.sceneId}`);
+      let scene = next.scenes.find(({ id }) => id === operation.sceneId);
+      if (!scene) {
+        if (!("screen" in operation)) throw new Error(`Unknown scene: ${operation.sceneId}`);
+        scene = { id: operation.sceneId, screen: operation.screen, mode: operation.mode, overrides: {} };
+        next.scenes.push(scene);
+      } else if ("screen" in operation && (scene.screen !== operation.screen || scene.mode !== operation.mode)) {
+        throw new Error(`Scene identity mismatch: ${operation.sceneId}`);
+      }
       scene.overrides[operation.key] = operation.value;
       break;
     }

@@ -62,6 +62,55 @@ describe("theme-core canonical lifecycle", () => {
     expect(saveProject(openProject(saveProject(state)))).toBe(saveProject(state));
   });
 
+  it("upserts a missing scene only when deterministic screen identity is supplied", () => {
+    const empty = createProject({
+      projectId: "empty",
+      metadata: { name: "Theme", description: "Offline theme", author: "Author" },
+      targetProfileId: "dspico-launcher-v1",
+    });
+    const state = applyOperation(empty, {
+      version: 1,
+      type: "set-scene-token",
+      sceneId: "home:top",
+      screen: "top",
+      mode: "home",
+      key: "accent",
+      value: "#123456",
+    });
+
+    expect(currentProject(state).scenes).toEqual([
+      { id: "home:top", screen: "top", mode: "home", overrides: { accent: "#123456" } },
+    ]);
+    expect(saveProject(openProject(saveProject(state)))).toBe(saveProject(state));
+    expect(() =>
+      currentProject(
+        applyOperation(empty, {
+          version: 1,
+          type: "set-scene-token",
+          sceneId: "missing",
+          key: "accent",
+          value: "#123456",
+        }),
+      ),
+    ).toThrow("Unknown scene: missing");
+  });
+
+  it("refuses supplied identity that conflicts with an existing scene", () => {
+    expect(() =>
+      currentProject(
+        applyOperation(created(), {
+          version: 1,
+          type: "set-scene-token",
+          sceneId: "home-top",
+          screen: "bottom",
+          mode: "home",
+          key: "accent",
+          value: "#123456",
+        }),
+      ),
+    ).toThrow("Scene identity mismatch: home-top");
+  });
+
   it("discards redo when a new edit branches after undo", () => {
     const withA = applyOperation(created(), { version: 1, type: "set-token", key: "step", value: "A" });
     const withB = applyOperation(withA, { version: 1, type: "set-token", key: "step", value: "B" });
