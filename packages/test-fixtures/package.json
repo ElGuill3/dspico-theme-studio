@@ -1,0 +1,7 @@
+{
+  "name": "test-fixtures",
+  "private": true,
+  "scripts": {
+    "test": "vitest run --config ../../vitest.config.mts ../../packages/test-fixtures/src"
+  }
+}

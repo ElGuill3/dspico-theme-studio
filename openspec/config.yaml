@@ -1,0 +1,56 @@
+schema: spec-driven
+
+context: |
+  Product: Electron desktop application for authoring DSpico themes.
+  Architecture: The GUI is the primary offline-capable client over a shared deterministic core.
+  Integrations: CLI, MCP, and agent integrations are optional peer clients of that core.
+  Repository: Newly created standalone Git repository with no commits or implementation files.
+  Stack: Undetected; no package manifest, source tree, or tool configuration exists yet.
+  Testing: No test runner, test layers, coverage tool, linter, type checker, or formatter detected.
+  Strict TDD: Disabled until a test runner and project testing convention are established.
+
+strict_tdd: false
+
+testing:
+  runner:
+    available: false
+    command: ""
+    framework: ""
+  layers:
+    unit: { available: false, tool: "" }
+    integration: { available: false, tool: "" }
+    e2e: { available: false, tool: "" }
+  coverage:
+    available: false
+    command: ""
+  quality:
+    linter: { available: false, command: "" }
+    type_checker: { available: false, command: "" }
+    formatter: { available: false, command: "" }
+
+rules:
+  proposal:
+    - Define the offline GUI boundary and deterministic-core responsibilities explicitly.
+    - Identify rollback considerations for persistence and file-format changes.
+  specs:
+    - Use Given/When/Then scenarios.
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY).
+    - Treat AI and external integrations as optional peers, never as GUI prerequisites.
+  design:
+    - Document architecture decisions with rationale.
+    - Include sequence diagrams for complex flows.
+  tasks:
+    - Group tasks by phase and use hierarchical numbering.
+    - Keep tasks completable in one focused session.
+  apply:
+    guidelines:
+      - Preserve deterministic behavior in the shared core.
+      - Keep the GUI fully usable without AI or external integrations.
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive specification deltas.

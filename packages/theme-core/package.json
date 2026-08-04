@@ -1,0 +1,12 @@
+{
+  "name": "theme-core",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --config ../../vitest.config.mts ../../packages/theme-core/src"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "0.27.10",
+    "ajv": "^8.17.1"
+  }
+}

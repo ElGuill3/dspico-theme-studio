@@ -1,0 +1,7 @@
+{
+  "name": "dspico-contract",
+  "private": true,
+  "scripts": {
+    "test": "vitest run --config ../../vitest.config.mts ../../packages/dspico-contract/src"
+  }
+}

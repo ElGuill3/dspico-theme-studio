@@ -1,0 +1,10 @@
+# Agent-local generated skill registry and cache
+.atl/
+
+# Generated project and tooling output
+.codegraph/
+.vite/
+dist/
+out/
+node_modules/
+test-results/
