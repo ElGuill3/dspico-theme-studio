@@ -21,11 +21,11 @@ One unit maps to one reviewable commit/future chained PR; estimates include focu
 | 12 | Later-slot exclusions → full acceptance/archive readiness; e2e/scripts | 300/M | `pnpm test:e2e`, `pnpm package`; packaged BrowserWindow scenario | Revert acceptance/wiring only |
 
 ## Phase 0: Baseline Gate
-- [ ] 0.1 Verify and commit the existing 1,700+ line identity/DSi/overlay/draft-authority/package baseline outside this phase; record its exact SHA. Do not commit here; block apply until present.
+- [x] 0.1 Recognize the recorded baseline implementation checkpoint `8c5cff63ca8a251fb7b384e05b221b506474933`; clean planning HEAD is `3b0e69bd393de094d8d674dacf63670aed6b3cea`. No commit is created in this apply slice.
 
 ## Phase 1: V2 Authority
-- [ ] 1.1 RED: test exact V1 operation migration, identities, nested transitions, refusal, full redo, and untouched source bytes.
-- [ ] 1.2 Add V2 schema/replay/history and Save-preserves-redo in `packages/theme-core/src`; keep V1 lifecycle authoritative.
+- [x] 1.1 RED: test exact V1 operation migration, identities, nested transitions, refusal, full redo, and untouched source bytes.
+- [x] 1.2 Add V2 schema/replay/history and Save-preserves-redo in `packages/theme-core/src`; keep V1 lifecycle authoritative.
 
 ## Phase 2: Assets and Security
 - [ ] 2.1 RED: test absolute/parent/backslash/symlink paths, crash phases, missing/mismatched assets, and reachability retention.
@@ -55,6 +55,6 @@ Estimated changed lines per autonomous slice: 0, 360, 350, 380, 300, 370, 350, 3
 400-line budget risk: High
 Chained PRs recommended: Yes
 Decision needed before apply: No
-Chain strategy: pending — orchestration must select it after this forecast; do not invent one.
+Chain strategy: stacked-to-main — selected by orchestration for this auto-chain.
 
-The baseline checkpoint is mandatory because new slices must not mix with the current 1,700+ line uncommitted identity-authoring/DSi/overlay/draft-authority/package work or make rollback ambiguous. Auto-chain removes the user decision gate, but orchestration must select the pending chain strategy before apply.
+The baseline checkpoint is mandatory because new slices must not mix with the current 1,700+ line uncommitted identity-authoring/DSi/overlay/draft-authority/package work or make rollback ambiguous. Auto-chain removes the user decision gate, and orchestration selected stacked-to-main before apply.
