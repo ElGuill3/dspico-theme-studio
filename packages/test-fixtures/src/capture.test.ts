@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { captureLauncherFixtures } from "./capture.js";
@@ -11,7 +15,16 @@ const paths = [
   "arm9/source/themes/material/MaterialColorSchemeFactory.cpp",
   "_pico/themes/material/theme.json",
 ] as const;
-type Call = { file: string; args: readonly string[]; options: { encoding: "utf8"; shell: false } };
+type Call = {
+  file: string;
+  args: readonly string[];
+  options: {
+    encoding: "utf8";
+    maxBuffer: number;
+    shell: false;
+    stdio: ["ignore", "pipe", "pipe"];
+  };
+};
 type RunnerOptions = { head?: string; status?: string; repositoryRoot?: string };
 
 const runner = (options: RunnerOptions = {}) => {
@@ -43,8 +56,43 @@ describe("launcher fixture capture", () => {
     expect(() => capture(hostile, fake)).toThrowError(expect.objectContaining({ reason: "not-repository" }));
     expect(fake.calls).toHaveLength(1);
     expect(fake.calls[0]).toMatchObject({ file: "git", options: { shell: false } });
+    expect(fake.calls[0]?.options.maxBuffer).toBe(1_048_576);
     expect(fake.calls[0]?.args).toContain(root);
     expect(fake.calls[0]?.args).not.toContain(hostile);
+  });
+
+  it("passes a hostile repository path to native git as one inert argument", () => {
+    const sandbox = mkdtempSync(path.join(os.tmpdir(), "dspico-capture-"));
+    const marker = path.resolve(`capture-owned-${path.basename(sandbox)}`);
+    const repository = path.join(sandbox, `repo; touch ${path.basename(marker)}`);
+    mkdirSync(repository);
+    rmSync(marker, { force: true });
+    try {
+      const git = (args: string[]) => execFileSync("git", ["-C", repository, ...args], { stdio: "ignore" });
+      git(["init"]);
+      git(["config", "user.email", "acceptance@example.invalid"]);
+      git(["config", "user.name", "Acceptance Test"]);
+      writeFileSync(path.join(repository, "tracked"), "fixture\n");
+      git(["add", "tracked"]);
+      git(["commit", "-m", "fixture"]);
+
+      expect(() => captureLauncherFixtures(repository)).toThrowError(expect.objectContaining({ reason: "wrong-head" }));
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      rmSync(marker, { force: true });
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies native git rejection of a non-repository", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "dspico-not-repository-"));
+    try {
+      expect(() => captureLauncherFixtures(directory)).toThrowError(
+        expect.objectContaining({ reason: "not-repository" }),
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it.each([

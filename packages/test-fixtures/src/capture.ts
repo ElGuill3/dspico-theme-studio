@@ -10,7 +10,12 @@ export const LAUNCHER_V1_SOURCE_PATHS = [
   "arm9/source/themes/material/MaterialColorSchemeFactory.cpp",
   "_pico/themes/material/theme.json",
 ] as const;
-type CommandOptions = { encoding: "utf8"; shell: false };
+type CommandOptions = {
+  encoding: "utf8";
+  maxBuffer: number;
+  shell: false;
+  stdio: ["ignore", "pipe", "pipe"];
+};
 export type CommandRunner = (file: string, args: readonly string[], options: CommandOptions) => string;
 type CaptureFailure = "command-failed" | "not-repository" | "dirty-repository" | "wrong-head" | "invalid-source";
 const fail = (reason: CaptureFailure, message: string): never => {
@@ -28,15 +33,20 @@ export function captureLauncherFixtures(repositoryPath: string, options: Capture
     fail("not-repository", `Cannot resolve launcher repository: ${repositoryPath}`);
   }
   const run = options.run ?? nativeRunner;
-  const git = (args: readonly string[]): string => {
+  const git = (args: readonly string[], reason: CaptureFailure = "command-failed"): string => {
     try {
-      return run("git", args, { encoding: "utf8", shell: false });
+      return run("git", args, {
+        encoding: "utf8",
+        maxBuffer: 1_048_576,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
     } catch (error) {
-      return fail("command-failed", error instanceof Error ? error.message : String(error));
+      return fail(reason, error instanceof Error ? error.message : String(error));
     }
   };
   const prefix = ["-C", repositoryRoot] as const;
-  const root = git([...prefix, "rev-parse", "--show-toplevel"]).trim();
+  const root = git([...prefix, "rev-parse", "--show-toplevel"], "not-repository").trim();
   if (!root || root !== repositoryRoot) fail("not-repository", "Path is not a canonical Git repository.");
   if (git([...prefix, "status", "--porcelain=v1", "--untracked-files=all"]).trim())
     fail("dirty-repository", "Launcher repository is dirty.");

@@ -30,8 +30,8 @@ One unit maps to one reviewable commit/future chained PR; estimates include focu
 ## Phase 2: Assets and Security
 - [x] 2.1 RED: test absolute/parent/backslash/symlink paths, crash phases, missing/mismatched assets, and reachability retention.
 - [x] 2.2 Add portable transaction recovery and immutable SHA-256 asset store in `apps/studio/src` and `packages/theme-core/src`.
-- [ ] 3.1 RED: test forged sender, raw-path/network/converter requests, invalid/oversized PNGs, CRC/APNG/critical chunks, and rights refusal.
-- [ ] 3.2 Add main-owned PNG decode/import IPC, normalization, provenance, and rights in `apps/studio/src`.
+- [x] 3.1 RED: test forged sender, raw-path/network/converter requests, invalid/oversized PNGs, CRC/APNG/critical chunks, and rights refusal.
+- [x] 3.2 Add main-owned PNG decode/import IPC, normalization, provenance, and rights in `apps/studio/src`.
 
 ## Phase 3: Workspace
 - [ ] 4.1 RED: test navigation/CSP denial and `aria-hidden`/pointer-inert preview chrome before renderer wiring.

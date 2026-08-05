@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { MaterialProjectV1 } from "../../../../packages/theme-core/src/index.js";
+import type { MaterialProjectV1, OperationV2 } from "../../../../packages/theme-core/src/index.js";
 import { createPreviewModel, type PreviewModel } from "../../../../packages/theme-core/src/preview.js";
+import {
+  createCustomRenderPlan,
+  type RenderSurfacePlanV1,
+} from "../../../../packages/theme-core/src/render-plan-v2.js";
 import type { StudioApi, StudioResult } from "../studio-ipc.js";
 import { DraftAuthority, type DraftEdit } from "./draft-authority.js";
+import { ReadOnlyWorkspace } from "./workspace/read-only-workspace.js";
+import { paintWorkspaceSurface } from "./workspace/workspace-model.js";
 
 declare global {
   interface Window {
@@ -89,16 +95,23 @@ function previewProject(project: MaterialProjectV1, draft: Draft, mode: string):
 
 function PhysicalPreview({
   launcherView,
+  renderSurface,
   scene,
   screen,
 }: {
   launcherView: LauncherView;
+  renderSurface?: RenderSurfacePlanV1;
   scene?: PreviewModel["scenes"][number];
   screen: Screen;
 }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
   const background = validHex(scene?.tokens.background) ? scene.tokens.background : colorDefaults.background;
   const accent = validHex(scene?.tokens.accent) ? scene.tokens.accent : colorDefaults.accent;
   const foreground = validHex(scene?.tokens.foreground) ? scene.tokens.foreground : colorDefaults.foreground;
+  useEffect(() => {
+    const context = canvas.current?.getContext("2d");
+    if (context) paintWorkspaceSurface(context, { background, accent }, false, renderSurface);
+  }, [accent, background, renderSurface]);
   return (
     <section className={`physical-preview ${screen}-preview`} aria-label={`${screen} screen preview`}>
       <div className="screen-heading">
@@ -117,6 +130,17 @@ function PhysicalPreview({
           } as React.CSSProperties
         }
       >
+        {renderSurface && (
+          <canvas
+            ref={canvas}
+            className="device-render-canvas"
+            data-render-plan-screen={screen}
+            width={renderSurface.width}
+            height={renderSurface.height}
+            role="img"
+            aria-label={`${screen} custom theme render`}
+          />
+        )}
         <span
           aria-hidden="true"
           className={`launcher-overlay ${launcherView}-${screen}`}
@@ -182,6 +206,14 @@ function Studio() {
   const mounted = useRef(true);
   const authorityRef = useRef<DraftAuthority | null>(null);
 
+  useEffect(() => {
+    const denyExternalNavigation = (event: MouseEvent) => {
+      const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+      if (anchor && new URL(anchor.href).origin !== window.location.origin) event.preventDefault();
+    };
+    document.addEventListener("click", denyExternalNavigation, true);
+    return () => document.removeEventListener("click", denyExternalNavigation, true);
+  }, []);
   useEffect(() => {
     resultRef.current = result;
   }, [result]);
@@ -264,7 +296,9 @@ function Studio() {
       onDraftChange: invalidateArtifacts,
       onInvalid: ([field]) => {
         setStatus("Fix the invalid hex value before continuing. The first invalid field is focused.");
-        document.querySelector<HTMLElement>(`[data-draft-field="${field}"]`)?.focus();
+        const target = document.querySelector<HTMLElement>(`[data-draft-field="${field}"]`);
+        target?.closest("details")?.setAttribute("open", "");
+        target?.focus();
       },
       onFailure: (field, edit, error, isLatest) => {
         if (!mounted.current) return;
@@ -340,9 +374,19 @@ function Studio() {
     );
   };
 
+  // prettier-ignore
+  const addLayer = (screen: Screen) => void run("Layer added.", async () => {
+    const author = draftRef.current.metadata.author, imported = await window.studio.importPng({ source: "Local user-selected PNG", author, credit: author, license: "User supplied", terms: "User supplied", notice: "User supplied artwork", intendedUse: `${screen} theme background`, rightsToExport: true }), asset = imported.asset!, ordinal = resultRef.current?.customProject?.documents.find((document) => document.screen === screen)?.layers.length ?? 0;
+    return window.studio.editCustom({ version: 2, type: "add-layer", screen, layer: { id: `${screen}-${asset.sourceSha256.slice(0, 12)}-${ordinal}`, name: asset.originalName, visible: true, opacity: 65536, asset: { path: `assets/sha256/${asset.sourceSha256}.png`, sha256: asset.sourceSha256 }, xQ16: 0, yQ16: 0, width: asset.width, height: asset.height, widthQ16: asset.width * 65536, heightQ16: asset.height * 65536, crop: { x: 0, y: 0, width: asset.width, height: asset.height } } });
+  });
+  const editLayer = (operation: OperationV2) => void run("Layer updated.", () => window.studio.editCustom(operation));
+
   const project = result?.project;
+  const customProject = result?.customProject;
+  const customRenderPlan = customProject ? createCustomRenderPlan(customProject) : undefined;
   const preview = project ? createPreviewModel(previewProject(project, draft, mode), mode) : undefined;
-  const loaded = Boolean(project);
+  const livePreview = Boolean(preview || customRenderPlan);
+  const loaded = Boolean(project || customProject);
 
   return (
     <main className="studio-shell">
@@ -374,6 +418,11 @@ function Studio() {
           <button disabled={busy} onClick={() => run("Project opened.", window.studio.open, true)}>
             Open
           </button>
+          {/* prettier-ignore */}
+          <button disabled={busy} onClick={() => run("Custom project created.", () => window.studio.createCustom({ projectId: "local-custom", metadata: draftRef.current.metadata }), true)}>New custom</button>
+          <button disabled={busy} onClick={() => run("Custom project opened.", window.studio.openCustom, true)}>
+            Open custom
+          </button>
           <button disabled={!loaded || busy} onClick={() => run("Project saved.", window.studio.save)}>
             Save
           </button>
@@ -396,90 +445,163 @@ function Studio() {
       </div>
 
       <div className="workspace">
-        <aside className="inspector" aria-label="Theme inspector">
-          <div className="inspector-heading">
-            <span>Inspector</span>
-            <strong>{project?.metadata.name ?? "No project loaded"}</strong>
+        <section className="editor-region" aria-labelledby="editor-region-title">
+          <div className="editor-region-bar">
+            <div>
+              <span>Authoring workspace</span>
+              <h2 id="editor-region-title">Composition</h2>
+            </div>
+            <details className="project-settings">
+              <summary>Project settings</summary>
+              <section className="inspector" aria-labelledby="project-settings-title">
+                <div className="inspector-heading">
+                  <div>
+                    <span>Inspector</span>
+                    <h2 id="project-settings-title">Project settings</h2>
+                  </div>
+                  <strong>{project?.metadata.name ?? customProject?.metadata.name ?? "No project loaded"}</strong>
+                </div>
+                <section className="control-group" aria-labelledby="general-title">
+                  <h2 id="general-title">General</h2>
+                  <label>
+                    <span>Name</span>
+                    <input
+                      aria-label="Name"
+                      value={draft.metadata.name}
+                      disabled={busy || Boolean(customProject)}
+                      data-draft-field="metadata.name"
+                      onChange={(event) => updateMetadata("name", event.target.value)}
+                      onBlur={() => void authority.flushField("metadata.name")}
+                    />
+                  </label>
+                  <label>
+                    <span>Description</span>
+                    <textarea
+                      aria-label="Description"
+                      value={draft.metadata.description}
+                      disabled={busy || Boolean(customProject)}
+                      data-draft-field="metadata.description"
+                      rows={3}
+                      onChange={(event) => updateMetadata("description", event.target.value)}
+                      onBlur={() => void authority.flushField("metadata.description")}
+                    />
+                  </label>
+                  <label>
+                    <span>Author</span>
+                    <input
+                      aria-label="Author"
+                      value={draft.metadata.author}
+                      disabled={busy || Boolean(customProject)}
+                      data-draft-field="metadata.author"
+                      onChange={(event) => updateMetadata("author", event.target.value)}
+                      onBlur={() => void authority.flushField("metadata.author")}
+                    />
+                  </label>
+                </section>
+                <section className="control-group" aria-labelledby="global-title">
+                  <h2 id="global-title">Global colors</h2>
+                  <p>Shared by both screens until an override is set.</p>
+                  {colorKeys.map((key) => (
+                    <ColorField
+                      key={key}
+                      label={`Global ${key}`}
+                      value={draft.global[key]}
+                      disabled={!project || busy}
+                      field={`global.${key}`}
+                      onChange={(value) => updateGlobal(key, value)}
+                      onBlur={() => void authority.flushField(`global.${key}`)}
+                    />
+                  ))}
+                </section>
+                {screens.map((screen) => (
+                  <section className="control-group screen-group" aria-labelledby={`${screen}-title`} key={screen}>
+                    <h2 id={`${screen}-title`}>{screen === "top" ? "Top screen" : "Bottom screen"}</h2>
+                    <p>
+                      Overrides for the active <strong>{preview?.mode ?? mode}</strong> mode.
+                    </p>
+                    {colorKeys.map((key) => {
+                      const value = project
+                        ? (draft.screens[preview?.mode ?? mode]?.[screen]?.[key] ??
+                          effectiveGlobal(draft, project, key))
+                        : colorDefaults[key];
+                      return (
+                        <ColorField
+                          key={key}
+                          label={`${screen} ${key}`}
+                          value={value}
+                          disabled={!project || busy}
+                          field={`scene:${preview?.mode ?? mode}.${screen}.${key}`}
+                          onChange={(next) => updateScreen(screen, key, next)}
+                          onBlur={() => void authority.flushField(`scene:${preview?.mode ?? mode}.${screen}.${key}`)}
+                        />
+                      );
+                    })}
+                  </section>
+                ))}
+                <section className="delivery-panel" aria-labelledby="delivery-title">
+                  <div>
+                    <span>Project delivery</span>
+                    <h2 id="delivery-title">Diagnostics &amp; export</h2>
+                  </div>
+                  <dl>
+                    <div>
+                      <dt>Project</dt>
+                      <dd>{project?.metadata.name ?? customProject?.metadata.name ?? "Not loaded"}</dd>
+                    </div>
+                    <div>
+                      <dt>Diagnostics</dt>
+                      <dd>{result?.diagnostics?.length ?? "Not run"}</dd>
+                    </div>
+                  </dl>
+                  {result?.diagnostics && result.diagnostics.length > 0 && (
+                    <ul className="diagnostic-list" aria-label="Compatibility diagnostics">
+                      {result.diagnostics.map((diagnostic) => (
+                        <li key={diagnostic.fingerprint} data-diagnostic-rule={diagnostic.ruleId}>
+                          <strong>{diagnostic.severity}</strong>
+                          <code>
+                            {diagnostic.location.document}
+                            {diagnostic.location.pointer || "/"}
+                          </code>
+                          <span>{diagnostic.message}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="checks">
+                    <button
+                      disabled={!loaded || busy}
+                      onClick={() => run("Validation complete.", window.studio.validate)}
+                    >
+                      Run diagnostics
+                    </button>
+                    <button
+                      className="primary"
+                      disabled={!loaded || busy}
+                      onClick={() => run("Local theme exported.", window.studio.export)}
+                    >
+                      Export theme
+                    </button>
+                  </div>
+                  {result?.receipt && (
+                    <output
+                      data-testid="export-receipt"
+                      data-report-sha256={result.receipt.reportSha256}
+                      data-zip-sha256={result.receipt.zipSha256}
+                    >
+                      <strong>Export receipt</strong>
+                      <span>{result.receipt.files.join(" · ")}</span>
+                      <code>{result.receipt.reportSha256}</code>
+                    </output>
+                  )}
+                </section>
+              </section>
+            </details>
           </div>
-          <section className="control-group" aria-labelledby="general-title">
-            <h2 id="general-title">General</h2>
-            <label>
-              <span>Name</span>
-              <input
-                aria-label="Name"
-                value={draft.metadata.name}
-                disabled={busy}
-                data-draft-field="metadata.name"
-                onChange={(event) => updateMetadata("name", event.target.value)}
-                onBlur={() => void authority.flushField("metadata.name")}
-              />
-            </label>
-            <label>
-              <span>Description</span>
-              <textarea
-                aria-label="Description"
-                value={draft.metadata.description}
-                disabled={busy}
-                data-draft-field="metadata.description"
-                rows={3}
-                onChange={(event) => updateMetadata("description", event.target.value)}
-                onBlur={() => void authority.flushField("metadata.description")}
-              />
-            </label>
-            <label>
-              <span>Author</span>
-              <input
-                aria-label="Author"
-                value={draft.metadata.author}
-                disabled={busy}
-                data-draft-field="metadata.author"
-                onChange={(event) => updateMetadata("author", event.target.value)}
-                onBlur={() => void authority.flushField("metadata.author")}
-              />
-            </label>
-          </section>
-          <section className="control-group" aria-labelledby="global-title">
-            <h2 id="global-title">Global colors</h2>
-            <p>Shared by both screens until an override is set.</p>
-            {colorKeys.map((key) => (
-              <ColorField
-                key={key}
-                label={`Global ${key}`}
-                value={draft.global[key]}
-                disabled={!loaded || busy}
-                field={`global.${key}`}
-                onChange={(value) => updateGlobal(key, value)}
-                onBlur={() => void authority.flushField(`global.${key}`)}
-              />
-            ))}
-          </section>
-          {screens.map((screen) => (
-            <section className="control-group screen-group" aria-labelledby={`${screen}-title`} key={screen}>
-              <h2 id={`${screen}-title`}>{screen === "top" ? "Top screen" : "Bottom screen"}</h2>
-              <p>
-                Overrides for the active <strong>{preview?.mode ?? mode}</strong> mode.
-              </p>
-              {colorKeys.map((key) => {
-                const value = project
-                  ? (draft.screens[preview?.mode ?? mode]?.[screen]?.[key] ?? effectiveGlobal(draft, project, key))
-                  : colorDefaults[key];
-                return (
-                  <ColorField
-                    key={key}
-                    label={`${screen} ${key}`}
-                    value={value}
-                    disabled={!loaded || busy}
-                    field={`scene:${preview?.mode ?? mode}.${screen}.${key}`}
-                    onChange={(next) => updateScreen(screen, key, next)}
-                    onBlur={() => void authority.flushField(`scene:${preview?.mode ?? mode}.${screen}.${key}`)}
-                  />
-                );
-              })}
-            </section>
-          ))}
-        </aside>
+          {/* prettier-ignore */}
+          <ReadOnlyWorkspace scenes={preview?.scenes} customProject={customProject} renderPlan={customRenderPlan} onAdd={addLayer} onOperation={editLayer} />
+        </section>
 
-        <section className="preview-panel" aria-labelledby="preview-title">
+        <aside className="preview-panel" aria-labelledby="preview-title">
           <div className="preview-toolbar">
             <div>
               <span>Live device</span>
@@ -527,65 +649,37 @@ function Studio() {
           </div>
           <div className="device-stage">
             <div className="device-shell" aria-label="DSpico dual-screen device preview">
-              <PhysicalPreview launcherView={launcherView} scene={preview?.scenes[0]} screen="top" />
-              <PhysicalPreview launcherView={launcherView} scene={preview?.scenes[1]} screen="bottom" />
+              <span className="device-chrome" data-preview-chrome="device-frame" aria-hidden="true" />
+              <PhysicalPreview
+                launcherView={launcherView}
+                renderSurface={customRenderPlan?.screens[0]}
+                scene={preview?.scenes[0]}
+                screen="top"
+              />
+              <PhysicalPreview
+                launcherView={launcherView}
+                renderSurface={customRenderPlan?.screens[1]}
+                scene={preview?.scenes[1]}
+                screen="bottom"
+              />
             </div>
           </div>
           <div className="preview-caption">
-            <span className={preview ? "state-dot ready" : "state-dot"} aria-hidden="true" />
+            <span className={livePreview ? "state-dot ready" : "state-dot"} aria-hidden="true" />
             <p>
-              <strong>{preview ? "Draft preview is live" : "Preview ready"}</strong>
-              {preview
+              <strong>{livePreview ? "Draft preview is live" : "Preview ready"}</strong>
+              {livePreview
                 ? "Local edits appear immediately; validated exports remain authoritative."
                 : "Create or open a local project to begin authoring."}
             </p>
-            {preview && (
+            {livePreview && (
               <div className="fidelity-tags">
                 <span>launcher-vector-backed</span>
                 <span>Chromium approximation</span>
               </div>
             )}
           </div>
-          <section className="delivery-panel" aria-labelledby="delivery-title">
-            <div>
-              <span>Project delivery</span>
-              <h2 id="delivery-title">Diagnostics &amp; export</h2>
-            </div>
-            <dl>
-              <div>
-                <dt>Project</dt>
-                <dd>{project?.metadata.name ?? "Not loaded"}</dd>
-              </div>
-              <div>
-                <dt>Diagnostics</dt>
-                <dd>{result?.diagnostics?.length ?? "Not run"}</dd>
-              </div>
-            </dl>
-            <div className="checks">
-              <button disabled={!loaded || busy} onClick={() => run("Validation complete.", window.studio.validate)}>
-                Run diagnostics
-              </button>
-              <button
-                className="primary"
-                disabled={!loaded || busy}
-                onClick={() => run("Local theme exported.", window.studio.export)}
-              >
-                Export theme
-              </button>
-            </div>
-            {result?.receipt && (
-              <output
-                data-testid="export-receipt"
-                data-report-sha256={result.receipt.reportSha256}
-                data-zip-sha256={result.receipt.zipSha256}
-              >
-                <strong>Export receipt</strong>
-                <span>{result.receipt.files.join(" · ")}</span>
-                <code>{result.receipt.reportSha256}</code>
-              </output>
-            )}
-          </section>
-        </section>
+        </aside>
       </div>
       <footer>
         <span>DSpico Theme Studio</span>

@@ -263,3 +263,4 @@ export function recoverProject(input: { committedBytes: string; stagedBytes?: st
 export * from "./model-v2.js";
 export * from "./history-v2.js";
 export * from "./migration-v2.js";
+export * from "./render-plan-v2.js";

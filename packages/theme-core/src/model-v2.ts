@@ -12,6 +12,41 @@ const Scene = Type.Object(
   },
   noExtra,
 );
+const AssetReference = Type.Object({ path: Type.String(), sha256: Type.String() }, noExtra);
+export const LayerV2Schema = Type.Object(
+  {
+    id: Type.String(),
+    name: Type.String(),
+    visible: Type.Boolean(),
+    opacity: Type.Integer({ minimum: 0, maximum: 65536 }),
+    asset: AssetReference,
+    xQ16: Type.Integer(),
+    yQ16: Type.Integer(),
+    width: Type.Integer({ minimum: 1 }),
+    height: Type.Integer({ minimum: 1 }),
+    widthQ16: Type.Integer({ minimum: 1 }),
+    heightQ16: Type.Integer({ minimum: 1 }),
+    crop: Type.Object(
+      {
+        x: Type.Integer({ minimum: 0 }),
+        y: Type.Integer({ minimum: 0 }),
+        width: Type.Integer({ minimum: 1 }),
+        height: Type.Integer({ minimum: 1 }),
+      },
+      noExtra,
+    ),
+  },
+  noExtra,
+);
+export const DocumentV2Schema = Type.Object(
+  {
+    screen: Type.Union([Type.Literal("top"), Type.Literal("bottom")]),
+    width: Type.Literal(256),
+    height: Type.Literal(192),
+    layers: Type.Array(LayerV2Schema),
+  },
+  noExtra,
+);
 
 export const LaunchTransitionV2Schema = Type.Object(
   {
@@ -22,12 +57,13 @@ export const LaunchTransitionV2Schema = Type.Object(
   noExtra,
 );
 // prettier-ignore
-export const ThemeProjectV2Schema = Type.Object({ formatVersion: Type.Literal(2), projectId: Type.String(), themeKind: Type.Union([Type.Literal("material"), Type.Literal("custom")]), metadata: Metadata, targetProfileId: Type.Literal("dspico-launcher-v1"), tokens: Type.Record(Type.String(), Token), launchTransition: LaunchTransitionV2Schema, scenes: Type.Array(Scene), assetManifest: Type.Array(Type.Object({ path: Type.String(), sha256: Type.String() }, noExtra)), acknowledgments: Type.Array(Type.String()), documents: Type.Array(Type.Unknown()), assets: Type.Array(Type.Unknown()), notices: Type.Array(Type.String()) }, noExtra);
+export const ThemeProjectV2Schema = Type.Object({ formatVersion: Type.Literal(2), projectId: Type.String(), themeKind: Type.Union([Type.Literal("material"), Type.Literal("custom")]), metadata: Metadata, targetProfileId: Type.Literal("dspico-launcher-v1"), tokens: Type.Record(Type.String(), Token), launchTransition: LaunchTransitionV2Schema, scenes: Type.Array(Scene), assetManifest: Type.Array(AssetReference), acknowledgments: Type.Array(Type.String()), documents: Type.Array(DocumentV2Schema), assets: Type.Array(Type.Unknown()), notices: Type.Array(Type.String()) }, noExtra);
 // prettier-ignore
-export const OperationV2Schema = Type.Union([Type.Object({ version: Type.Literal(2), type: Type.Literal("set-metadata"), field: Type.Union([Type.Literal("name"), Type.Literal("description"), Type.Literal("author")]), value: Type.String() }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("set-material-token"), key: Type.String(), value: Token }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("set-launch-transition-field"), field: Type.Union([Type.Literal("coverStartScalePercent"), Type.Literal("coverFinalAlpha"), Type.Literal("scrimFinalAlpha")]), value: Type.Integer() }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("set-scene-token"), sceneId: Type.String(), screen: Type.Union([Type.Literal("top"), Type.Literal("bottom")]), mode: Type.String(), key: Type.String(), value: Token }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("acknowledge"), fingerprint: Type.String() }, noExtra)]);
+export const OperationV2Schema = Type.Union([Type.Object({ version: Type.Literal(2), type: Type.Literal("set-metadata"), field: Type.Union([Type.Literal("name"), Type.Literal("description"), Type.Literal("author")]), value: Type.String() }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("set-material-token"), key: Type.String(), value: Token }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("set-launch-transition-field"), field: Type.Union([Type.Literal("coverStartScalePercent"), Type.Literal("coverFinalAlpha"), Type.Literal("scrimFinalAlpha")]), value: Type.Integer() }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("set-scene-token"), sceneId: Type.String(), screen: Type.Union([Type.Literal("top"), Type.Literal("bottom")]), mode: Type.String(), key: Type.String(), value: Token }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("acknowledge"), fingerprint: Type.String() }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("add-layer"), screen: Type.Union([Type.Literal("top"), Type.Literal("bottom")]), layer: LayerV2Schema, assetRecord: Type.Optional(Type.Unknown()) }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("move-layer"), screen: Type.Union([Type.Literal("top"), Type.Literal("bottom")]), layerId: Type.String(), xQ16: Type.Integer(), yQ16: Type.Integer() }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("set-layer-visibility"), screen: Type.Union([Type.Literal("top"), Type.Literal("bottom")]), layerId: Type.String(), visible: Type.Boolean() }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("rename-layer"), screen: Type.Union([Type.Literal("top"), Type.Literal("bottom")]), layerId: Type.String(), name: Type.String({ minLength: 1 }) }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("remove-layer"), screen: Type.Union([Type.Literal("top"), Type.Literal("bottom")]), layerId: Type.String() }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("reorder-layer"), screen: Type.Union([Type.Literal("top"), Type.Literal("bottom")]), layerId: Type.String(), toIndex: Type.Integer({ minimum: 0 }) }, noExtra), Type.Object({ version: Type.Literal(2), type: Type.Literal("set-layer-properties"), screen: Type.Union([Type.Literal("top"), Type.Literal("bottom")]), layerId: Type.String(), xQ16: Type.Integer(), yQ16: Type.Integer(), widthQ16: Type.Integer({ minimum: 1 }), heightQ16: Type.Integer({ minimum: 1 }), opacity: Type.Integer({ minimum: 0, maximum: 65536 }), crop: Type.Object({ x: Type.Integer({ minimum: 0 }), y: Type.Integer({ minimum: 0 }), width: Type.Integer({ minimum: 1 }), height: Type.Integer({ minimum: 1 }) }, noExtra) }, noExtra)]);
 
 export type TokenValueV2 = Static<typeof Token>;
 export type ThemeProjectV2 = Static<typeof ThemeProjectV2Schema>;
+export type LayerV2 = Static<typeof LayerV2Schema>;
 export type OperationV2 = Static<typeof OperationV2Schema>;
 export type ProjectStateV2 = {
   formatVersion: 2;

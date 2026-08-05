@@ -1,0 +1,22 @@
+{
+  "id": "layer",
+  "name": "Layer",
+  "visible": true,
+  "opacity": 32768,
+  "asset": {
+    "path": "assets/sha256/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.png",
+    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "xQ16": -65536,
+  "yQ16": 131072,
+  "width": 4,
+  "height": 4,
+  "widthQ16": 524288,
+  "heightQ16": 393216,
+  "crop": {
+    "x": 1,
+    "y": 1,
+    "width": 2,
+    "height": 2
+  }
+}

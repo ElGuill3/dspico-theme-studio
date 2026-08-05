@@ -1,0 +1,9 @@
+{
+  "packingHex": "1f80e08300fc0000",
+  "alphaHex": "00001f80",
+  "quantizationHex": "10fc",
+  "sourceOverHex": "10c0",
+  "cropFirstRowsHex": ["4a81548154810000", "8a82948294820000"],
+  "cropTopSha256": "b600c48d510b92d50aecad459ee6af65b199be4c1e92fb31af827ad2f69a412e",
+  "transparentBottomSha256": "3a3ed164e42500a1c5b2d0093f0a813d27dc50d038f330cc100a7e70ece2e6e4"
+}

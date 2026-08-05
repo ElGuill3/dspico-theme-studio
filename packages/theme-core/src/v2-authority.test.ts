@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   applyOperation,
   applyOperationV2,
@@ -141,5 +143,51 @@ describe("V2 replay and history", () => {
     expect(reopened.project.scenes[0]).toMatchObject({ id: "scene", overrides: { accent: "#123" } });
     expect(source.initial.assetManifest).toEqual([{ path: "assets/a.png", sha256: "asset-hash" }]);
     expect(JSON.stringify(source)).toBe(before);
+  });
+  it("replays one canonical layer move across Save, reopen, Undo, and Redo", () => {
+    let state = createProjectV2({ projectId: "custom", metadata: { name: "N", description: "D", author: "A" }, themeKind: "custom" });
+    const asset = { path: `assets/sha256/${"a".repeat(64)}.png`, sha256: "a".repeat(64) };
+    state = applyOperationV2(state, { version: 2, type: "add-layer", screen: "top", layer: { id: "layer-a", name: "Artwork", visible: true, opacity: 65536, asset, xQ16: 0, yQ16: 0, width: 32, height: 24, widthQ16: 32 * 65536, heightQ16: 24 * 65536, crop: { x: 0, y: 0, width: 32, height: 24 } } });
+    state = applyOperationV2(state, { version: 2, type: "move-layer", screen: "top", layerId: "layer-a", xQ16: 12 * 65536, yQ16: 7 * 65536 });
+    const reopened = openProjectV2(saveProjectV2(state));
+
+    expect(reopened.operations).toHaveLength(2);
+    expect(reopened.project.documents[0]?.layers[0]).toMatchObject({ id: "layer-a", xQ16: 12 * 65536, yQ16: 7 * 65536 });
+    expect(undoV2(reopened).project.documents[0]?.layers[0]).toMatchObject({ xQ16: 0, yQ16: 0 });
+    expect(redoV2(undoV2(reopened)).project.documents[0]?.layers[0]).toMatchObject({ xQ16: 12 * 65536, yQ16: 7 * 65536 });
+  });
+  it("replays each layer control as one semantic operation", () => {
+    let state = createProjectV2({ projectId: "controls", metadata: { name: "N", description: "D", author: "A" }, themeKind: "custom" });
+    const asset = { path: `assets/sha256/${"b".repeat(64)}.png`, sha256: "b".repeat(64) };
+    const layer = (id: string) => ({ id, name: id, visible: true, opacity: 65536, asset, xQ16: 0, yQ16: 0, width: 16, height: 16, widthQ16: 16 * 65536, heightQ16: 16 * 65536, crop: { x: 0, y: 0, width: 16, height: 16 } });
+    state = applyOperationV2(state, { version: 2, type: "add-layer", screen: "top", layer: layer("first") });
+    state = applyOperationV2(state, { version: 2, type: "add-layer", screen: "top", layer: layer("second") });
+    state = applyOperationV2(state, { version: 2, type: "set-layer-visibility", screen: "top", layerId: "first", visible: false });
+    state = applyOperationV2(state, { version: 2, type: "rename-layer", screen: "top", layerId: "first", name: "Renamed" });
+    state = applyOperationV2(state, { version: 2, type: "reorder-layer", screen: "top", layerId: "first", toIndex: 1 });
+    state = applyOperationV2(state, { version: 2, type: "remove-layer", screen: "top", layerId: "second" });
+    const reopened = openProjectV2(saveProjectV2(state));
+
+    expect(reopened.operations).toHaveLength(6);
+    expect(reopened.project.documents[0]?.layers).toEqual([expect.objectContaining({ id: "first", name: "Renamed", visible: false })]);
+    expect(undoV2(reopened).project.documents[0]?.layers.map(({ id }) => id)).toEqual(["second", "first"]);
+    expect(redoV2(undoV2(reopened)).project.documents[0]?.layers.map(({ id }) => id)).toEqual(["first"]);
+  });
+  it("validates deterministic Q16 resize, crop, and properties against a golden", () => {
+    let state = createProjectV2({ projectId: "properties", metadata: { name: "N", description: "D", author: "A" }, themeKind: "custom" });
+    const asset = { path: `assets/sha256/${"c".repeat(64)}.png`, sha256: "c".repeat(64) };
+    state = applyOperationV2(state, { version: 2, type: "add-layer", screen: "top", layer: { id: "layer", name: "Layer", visible: true, opacity: 65536, asset, xQ16: 0, yQ16: 0, width: 4, height: 4, widthQ16: 4 * 65536, heightQ16: 4 * 65536, crop: { x: 0, y: 0, width: 4, height: 4 } } });
+    const operation = { version: 2, type: "set-layer-properties", screen: "top", layerId: "layer", xQ16: -65536, yQ16: 2 * 65536, widthQ16: 8 * 65536, heightQ16: 6 * 65536, opacity: 32768, crop: { x: 1, y: 1, width: 2, height: 2 } } as const;
+    const reopened = openProjectV2(saveProjectV2(applyOperationV2(state, operation)));
+    const golden = JSON.parse(readFileSync(path.resolve("packages/test-fixtures/goldens/workspace-q16-v1.json"), "utf8"));
+
+    expect(reopened.project.documents[0]?.layers[0]).toEqual(golden);
+    expect(undoV2(reopened).project.documents[0]?.layers[0]).toMatchObject({ widthQ16: 4 * 65536, crop: { x: 0, width: 4 } });
+    expect(redoV2(undoV2(reopened)).project.documents[0]?.layers[0]).toEqual(golden);
+    for (const invalid of [
+      { ...operation, widthQ16: 0 },
+      { ...operation, xQ16: Number.MAX_SAFE_INTEGER },
+      { ...operation, crop: { x: 3, y: 0, width: 2, height: 4 } },
+    ]) expect(() => applyOperationV2(state, invalid)).toThrow();
   });
 });
