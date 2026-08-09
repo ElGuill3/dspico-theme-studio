@@ -21,6 +21,7 @@ export type AssetProvenanceV1 = {
 export type PngImportContext = { sourceBytes?: number; assetCount?: number };
 export type ImportedPngV1 = {
   sourceSha256: string;
+  sourceBytes?: Uint8Array;
   originalName: string;
   width: number;
   height: number;
@@ -182,6 +183,7 @@ export function importPng(
   const normalized = checkedProvenance(provenance);
   return {
     sourceSha256: createHash("sha256").update(bytes).digest("hex"),
+    sourceBytes: new Uint8Array(bytes),
     originalName: normalized.originalName,
     width,
     height,

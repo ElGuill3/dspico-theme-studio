@@ -9,6 +9,7 @@ import { fileURLToPath, URL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { extractFile, listPackage } = require("@electron/asar");
+const ts = require("typescript");
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const productName = "dspico-theme-studio";
 const suffix = `-${process.platform}-${process.arch}`;
@@ -48,6 +49,34 @@ const bundledSource = files
   .filter((file) => file.endsWith(".js"))
   .map((file) => extractFile(archive, file.slice(1)).toString())
   .join("\n");
+const technicalJargon = (value) =>
+  value === "receipt" ||
+  value === "set-component-evidence" ||
+  value.startsWith("dspico-") ||
+  value.startsWith("receipt.") ||
+  value.startsWith("bcstm.") ||
+  value.startsWith("custom.visual-receipt") ||
+  value.startsWith("visual-receipt-") ||
+  value.startsWith("/") ||
+  value.includes("/receipts") ||
+  value.includes("evidence/");
+const bundledAst = ts.createSourceFile("app.asar.js", bundledSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+const runtimeJargon = [];
+const auditRuntimeStrings = (node) => {
+  if (
+    ts.isStringLiteral(node) ||
+    ts.isNoSubstitutionTemplateLiteral(node) ||
+    node.kind === ts.SyntaxKind.TemplateHead ||
+    node.kind === ts.SyntaxKind.TemplateMiddle ||
+    node.kind === ts.SyntaxKind.TemplateTail
+  ) {
+    const value = node.text.trim();
+    if (/\b(?:receipt|evidence)\b/i.test(value) && !technicalJargon(value)) runtimeJargon.push(value);
+  }
+  ts.forEachChild(node, auditRuntimeStrings);
+};
+auditRuntimeStrings(bundledAst);
+assert.deepEqual(runtimeJargon, [], `ASAR contains runtime-facing jargon: ${runtimeJargon.join(" | ")}`);
 for (const excluded of ["captureLauncherFixtures", "node:child_process", "electron-updater", "openai", "anthropic"])
   assert.ok(
     !bundledSource.toLowerCase().includes(excluded.toLowerCase()),
@@ -73,7 +102,7 @@ for (const directive of [
   assert.ok(index.includes(directive), `Packaged CSP is missing ${directive}`);
 
 const playwrightCli = require.resolve("@playwright/test/cli");
-const acceptance = spawnSync(process.execPath, [playwrightCli, "test", "e2e"], {
+const acceptance = spawnSync(process.execPath, [playwrightCli, "test", "e2e", "--workers=1"], {
   cwd: root,
   env: { ...process.env, DSPICO_PACKAGED_EXECUTABLE: executable },
   shell: false,

@@ -1,11 +1,13 @@
-import { mkdtemp, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyOperation, createProject, currentProject } from "../../../packages/theme-core/src/index.js";
 import { PathContainmentError, ProjectStore } from "./project-store.js";
 
 const roots: string[] = [];
+const stores: ProjectStore[] = [];
+const openRoot = ProjectStore.openRoot;
 const makeRoot = async () => {
   const root = await mkdtemp(path.join(tmpdir(), "dspico-store-"));
   roots.push(root);
@@ -21,7 +23,16 @@ const state = (status: string) =>
     { version: 1, type: "set-token", key: "status", value: status },
   );
 
+beforeEach(() => {
+  vi.spyOn(ProjectStore, "openRoot").mockImplementation(async (root, options) => {
+    const store = await openRoot(root, options);
+    stores.push(store);
+    return store;
+  });
+});
 afterEach(async () => {
+  await Promise.all(stores.splice(0).map((store) => store.close()));
+  vi.restoreAllMocks();
   const { rm } = await import("node:fs/promises");
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -98,5 +109,45 @@ describe("ProjectStore persistence and recovery", () => {
     expect(await readFile(projectPath, "utf8")).toBe(original);
     await expect(readFile(`${projectPath}.tmp`)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(readFile(`${projectPath}.journal`)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects save after the selected root is replaced by a symlink", async () => {
+    const root = await makeRoot();
+    const outside = await makeRoot();
+    const moved = `${root}.moved`;
+    roots.push(moved);
+    const store = await ProjectStore.openRoot(root);
+    await store.save("project.json", state("committed"));
+    await rename(root, moved);
+    await symlink(outside, root);
+
+    await expect(store.save("project.json", state("unsafe"))).rejects.toThrow("changed");
+    await expect(readFile(path.join(outside, "project.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(currentProject((await (await ProjectStore.openRoot(moved)).open("project.json")).state).tokens.status).toBe(
+      "committed",
+    );
+  });
+
+  it("anchors an in-flight save to the original root and fails closed after replacement", async () => {
+    const root = await makeRoot();
+    const outside = await makeRoot();
+    const moved = `${root}.moved`;
+    roots.push(moved);
+    const initial = await ProjectStore.openRoot(root);
+    await initial.save("project.json", state("committed"));
+    const raced = await ProjectStore.openRoot(root, {
+      checkpoint: async (checkpoint) => {
+        if (checkpoint === "temp-synced") {
+          await rename(root, moved);
+          await symlink(outside, root);
+        }
+      },
+    });
+
+    await expect(raced.save("project.json", state("unsafe"))).rejects.toThrow("changed");
+    await expect(readFile(path.join(outside, "project.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(currentProject((await (await ProjectStore.openRoot(moved)).open("project.json")).state).tokens.status).toBe(
+      "committed",
+    );
   });
 });

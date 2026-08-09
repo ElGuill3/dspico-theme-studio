@@ -4,23 +4,23 @@
 
 ### Requirement: Physical screen and mode identity
 
-The preview MUST render separate 256×192 physical `top` and `bottom` screens. Each generated Material scene MUST declare exactly one stable physical screen identity and one launcher-mode identity; scoped token overrides MUST apply only to that tuple. Public studio terminology MUST use `top` and `bottom`, not launcher engine names such as `Main` or `Sub`.
+The preview MUST render separate 256×192 physical `top` and `bottom` screens. For Material v1.3.0, the authoritative editable and rendered theme values MUST be only `primaryColor` and `darkTheme`; generic tokens, per-mode scenes, `background`, `foreground`, and `accent` MUST NOT be presented as launcher-exportable semantics. Legacy values MAY appear as preserved migration evidence. Custom preview controls MUST remain unavailable until the dependent Custom visual capability is complete.
 
-#### Scenario: Preview both physical screens
+#### Scenario: Preview launcher-consumed Material fields
 
-- GIVEN a valid Material project with scenes for its supported modes
-- WHEN the user selects a mode
-- THEN the studio MUST show distinct interactive 256×192 top and bottom previews with representative content
+- GIVEN a valid Material project with a `primaryColor` and `darkTheme`
+- WHEN the user edits either field
+- THEN both physical-screen previews MUST update from those fields and no ignored scene token MUST affect export claims
 
-#### Scenario: Isolate a scoped override
+#### Scenario: Preserve legacy meaning without rendering it as authority
 
-- GIVEN a token override belongs to the top-screen identity for one mode
-- WHEN the user edits that override
-- THEN the corresponding top scene MUST change while other modes and the bottom scene retain their canonical values
+- GIVEN a migrated project containing `accent`, `background`, `foreground`, or scene overrides
+- WHEN the preview displays migration state
+- THEN those values MUST be labeled non-exported evidence and MUST NOT be shown as v1.3.0 Material behavior
 
 ### Requirement: Honest fidelity labels
 
-The preview MUST visibly label evidence-backed dimensions, bounds, inheritance, wrapping, safe areas, and Material colors as `launcher-vector-backed` only when supported by launcher vectors or fixtures. Other rendering MUST be labeled `Chromium approximation`. Preview output MUST NOT claim DS pixel parity, hardware font/palette/blending/VRAM fidelity, timing fidelity, or audio fidelity, and MUST NOT determine export compatibility.
+The preview MUST visibly label evidence-backed dimensions, bounds, inheritance, wrapping, safe areas, and Material `primaryColor`/`darkTheme` behavior as `launcher-vector-backed` only when supported by v1.3.0 vectors or fixtures. Other rendering MUST be labeled `Chromium approximation`. Preview output MUST NOT claim DS pixel parity, hardware font/palette/blending/VRAM fidelity, codec fidelity, timing fidelity, or audio fidelity, and MUST NOT determine export compatibility.
 
 #### Scenario: Show source-backed fidelity
 

@@ -5,6 +5,8 @@ import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { compileThemeExport } from "../../../packages/dspico-contract/src/index.js";
+import { launcherV1Fixture } from "../../../packages/test-fixtures/src/launcher-v1.js";
 import { AtomicExportWriter, ExportPathError, type ExportCheckpoint } from "./export-writer.js";
 
 const bytes = (value: string) => new TextEncoder().encode(value);
@@ -418,6 +420,16 @@ describe("AtomicExportWriter threat boundaries", () => {
     await writer.commitBundle("theme", files, "theme.zip", bytes("zip"));
     await expect(readFile(path.join(root, "theme", "report.json"), "utf8")).resolves.toBe("report");
     await expect(readFile(path.join(root, "theme.zip"), "utf8")).resolves.toBe("zip");
+  });
+
+  it("rejects a ZIP whose ordered manifest differs before committing either output", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "dspico-export-manifest-"));
+    const first = compileThemeExport({ ...launcherV1Fixture.materialExample, name: "First theme" });
+    const second = compileThemeExport({ ...launcherV1Fixture.materialExample, name: "Second theme" });
+    const writer = await openWriter(root);
+
+    await expect(writer.commitBundle("theme", first.files, "theme.zip", second.zipBytes)).rejects.toThrow("manifest");
+    await expect(readdir(root)).resolves.toEqual([]);
   });
 
   it("cleans only the current private record and leaves unrelated private data", async () => {

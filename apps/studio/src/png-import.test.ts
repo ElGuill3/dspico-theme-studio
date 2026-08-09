@@ -54,6 +54,7 @@ describe("bounded canonical PNG import", () => {
       provenance,
     });
     expect(asset.sourceSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect([...asset.sourceBytes!]).toEqual([...png()]);
     expect(importPng(png(), provenance).sourceSha256).toBe(asset.sourceSha256);
     expect([...asset.pixels]).toEqual([255, 0, 0, 255]);
   });

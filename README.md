@@ -16,6 +16,8 @@ In the studio:
 3. Run diagnostics and inspect the top/bottom preview.
 4. Export after all errors are fixed and warnings are acknowledged.
 
+After export, copy the generated `theme/` folder (or extract `theme.zip`) under `/_pico/themes/theme/`, select that folder through the launcher's normal theme setting, and safely eject the SD card. The Studio does not write directly to SD cards and does not make a hardware compatibility claim. When an export contains BGM, keep `bgm.bcstm` inside the exported theme folder at `/_pico/themes/theme/bgm.bcstm`.
+
 ## MVP boundary
 
 | Included                      | Not included                                               |
@@ -41,9 +43,9 @@ Preview dimensions, bounds, inheritance, wrapping, safe areas, and Material colo
 | -------------- | ----------------------------------------------------------- |
 | `theme/`       | Ready-to-copy theme files and `report.json`                 |
 | `theme.zip`    | The same logical files with normalized level-0 ZIP metadata |
-| Export receipt | Destination, output paths, report SHA-256, and ZIP SHA-256  |
+| Export summary | Destination, output paths, report SHA-256, and ZIP SHA-256  |
 
-Material exports contain `theme.json`. Custom exports also contain deterministic `topbg.bin` and `bottombg.bin` raster payloads. `report.json` records compatibility provenance, ordered diagnostics and acknowledgments, file hashes, credits, licenses, sources, and Custom lineage. Folder and ZIP are staged, verified, and swapped as one rollback boundary.
+Material exports contain `theme.json`. Custom exports also contain deterministic `topbg.bin` and `bottombg.bin` raster payloads. `report.json` is provenance and verification metadata: it records ordered diagnostics and acknowledgments, file hashes, credits, licenses, sources, and Custom lineage. Its evidence boundary keeps `hardwareParityClaimed: false` deliberately honest. Folder and ZIP are staged, verified, and swapped as one rollback boundary.
 
 ### ZIP implementation note
 

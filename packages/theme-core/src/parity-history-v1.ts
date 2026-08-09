@@ -1,0 +1,23 @@
+// prettier-ignore
+import { PARITY_PROFILE, PARITY_SCHEMA, ParityFormatRefusalError, isParityProject, isRgb8, type LauncherParityProjectV1, type MaterialV1, type ParityMetadataV1, type ParityOperationV1 } from "./parity-model-v1.js";
+
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+// prettier-ignore
+const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, canonical(entry)])) : value;
+// prettier-ignore
+const fail = (reason: ParityFormatRefusalError["reason"], message: string): never => { throw new ParityFormatRefusalError(reason, message); };
+
+// prettier-ignore
+export function createLauncherParityProject(input: { projectId: string; metadata: ParityMetadataV1; primaryColor: MaterialV1["primaryColor"]; darkTheme: boolean }): LauncherParityProjectV1 { if (!isRgb8(input.primaryColor) || !input.projectId || [input.metadata.name, input.metadata.description, input.metadata.author].some((value) => !value.trim())) fail("invalid-format", "Material project input is not canonical."); const initial = { metadata: clone(input.metadata), material: { primaryColor: clone(input.primaryColor), darkTheme: input.darkTheme }, acknowledgments: [] }; return { schema: PARITY_SCHEMA, formatVersion: 1, projectId: input.projectId, ...clone(initial), profile: PARITY_PROFILE, history: { version: 1, initial, operations: [], cursor: 0 }, acknowledgments: [], evidence: { profileManifestSha256: PARITY_PROFILE.manifestSha256 } }; }
+// prettier-ignore
+export function currentLauncherParityProject(project: LauncherParityProjectV1): LauncherParityProjectV1 { const next = clone(project), initial = project.history.initial; next.metadata = clone(initial.metadata); next.material = clone(initial.material); next.acknowledgments = [...initial.acknowledgments]; for (const operation of project.history.operations.slice(0, project.history.cursor)) { if (operation.type === "set-metadata") next.metadata[operation.field] = operation.value; if (operation.type === "set-primary-color") next.material.primaryColor = clone(operation.value); if (operation.type === "set-dark-theme") next.material.darkTheme = operation.value; if (operation.type === "acknowledge") next.acknowledgments = [...new Set([...next.acknowledgments, operation.fingerprint])].sort(); if (operation.type === "set-migration-decision" && next.evidence.legacy) { next.evidence.legacy.mappings[operation.field] = operation.decision; if (operation.decision !== "map-primary-color" && !next.evidence.legacy.exclusions.includes(operation.field)) next.evidence.legacy.exclusions.push(operation.field); } } return next; }
+// prettier-ignore
+export function applyLauncherParityOperation(project: LauncherParityProjectV1, operation: ParityOperationV1): LauncherParityProjectV1 { const operations = [...project.history.operations.slice(0, project.history.cursor), clone(operation)]; return currentLauncherParityProject({ ...clone(project), history: { ...project.history, operations, cursor: operations.length } }); }
+// prettier-ignore
+export const undoLauncherParityProject = (project: LauncherParityProjectV1) => currentLauncherParityProject({ ...clone(project), history: { ...project.history, cursor: Math.max(0, project.history.cursor - 1) } });
+// prettier-ignore
+export const redoLauncherParityProject = (project: LauncherParityProjectV1) => currentLauncherParityProject({ ...clone(project), history: { ...project.history, cursor: Math.min(project.history.operations.length, project.history.cursor + 1) } });
+// prettier-ignore
+export function saveLauncherParityProject(project: LauncherParityProjectV1): string { if (!isParityProject(project) || project.history.cursor > project.history.operations.length) fail("invalid-format", "Project state is not canonical."); const committed = currentLauncherParityProject(project); committed.history.operations = committed.history.operations.slice(0, committed.history.cursor); committed.history.cursor = committed.history.operations.length; return `${JSON.stringify(canonical(committed))}\n`; }
+// prettier-ignore
+export function openLauncherParityProject(bytes: string): LauncherParityProjectV1 { let parsed: unknown; try { parsed = JSON.parse(bytes); } catch { return fail("invalid-json", "Project bytes are not valid JSON."); } if ((parsed as { formatVersion?: unknown } | null)?.formatVersion !== 1) return fail("unsupported-format", "Unsupported parity project format."); if (!isParityProject(parsed)) return fail("invalid-format", "Parity project failed strict validation."); return currentLauncherParityProject(parsed); }

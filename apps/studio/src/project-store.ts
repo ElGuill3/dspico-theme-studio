@@ -1,8 +1,10 @@
-import { access, lstat, mkdir, open, readFile, realpath, rename, unlink } from "node:fs/promises";
+import { constants, type BigIntStats } from "node:fs";
+import { access, lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import { openProject, saveProject, type ProjectStateV1 } from "../../../packages/theme-core/src/index.js";
+import { ProjectRootAuthority } from "./project-root-authority.js";
 
-export type StoreCheckpoint = "temp-synced" | "journal-synced" | "committed";
+export type StoreCheckpoint = "open-file-opened" | "temp-synced" | "journal-synced" | "committed";
 export type RecoveryOrphan = "journal" | "temporary";
 
 export interface LocalPathDialog {
@@ -34,12 +36,17 @@ const exists = async (candidate: string): Promise<boolean> => {
 
 export class ProjectStore {
   private constructor(
-    private readonly root: string,
+    private readonly authority: ProjectRootAuthority,
     private readonly options: StoreOptions,
   ) {}
 
   static async openRoot(root: string, options: StoreOptions = {}): Promise<ProjectStore> {
-    return new ProjectStore(await realpath(root), options);
+    return new ProjectStore(await ProjectRootAuthority.capture(root), options);
+  }
+
+  static async openAuthority(authority: ProjectRootAuthority, options: StoreOptions = {}): Promise<ProjectStore> {
+    await authority.assertCurrent();
+    return new ProjectStore(authority, options);
   }
 
   private parts(candidate: string): string[] {
@@ -52,8 +59,9 @@ export class ProjectStore {
   }
 
   private async resolve(candidate: string, createParents: boolean): Promise<string> {
+    await this.authority.assertCurrent();
     const parts = this.parts(candidate);
-    let parent = this.root;
+    let parent = this.authority.accessRoot;
     for (const part of parts.slice(0, -1)) {
       const next = path.join(parent, part);
       try {
@@ -64,7 +72,7 @@ export class ProjectStore {
         await mkdir(next);
       }
       const canonical = await realpath(next);
-      if (canonical !== this.root && !canonical.startsWith(`${this.root}${path.sep}`)) {
+      if (canonical !== this.authority.root && !canonical.startsWith(`${this.authority.root}${path.sep}`)) {
         throw new PathContainmentError(candidate);
       }
       parent = canonical;
@@ -79,18 +87,35 @@ export class ProjectStore {
   }
 
   async open(relativePath: string): Promise<{ state: ProjectStateV1; orphans: RecoveryOrphan[] }> {
+    await this.authority.assertCurrent();
     const target = await this.resolve(relativePath, false);
-    const bytes = await readFile(target, "utf8");
+    const handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+    let bytes: string;
+    try {
+      const before = await handle.stat({ bigint: true });
+      if (!before.isFile() || before.nlink !== 1n) throw new PathContainmentError(relativePath);
+      await this.options.checkpoint?.("open-file-opened");
+      bytes = (await handle.readFile()).toString("utf8");
+      const after = await handle.stat({ bigint: true });
+      const entry = await lstat(target, { bigint: true });
+      if (entry.isSymbolicLink() || !entry.isFile() || !sameFile(before, after) || !sameFile(after, entry))
+        throw new PathContainmentError(relativePath);
+    } finally {
+      await handle.close();
+    }
+    await this.authority.assertCurrent();
     const state = openProject(bytes);
     const journal = await this.resolve(`${relativePath}.journal`, false);
     const temporary = await this.resolve(`${relativePath}.tmp`, false);
     const orphans: RecoveryOrphan[] = [];
     if (await exists(journal)) orphans.push("journal");
     if (await exists(temporary)) orphans.push("temporary");
+    await this.authority.assertCurrent();
     return { state, orphans };
   }
 
   async save(relativePath: string, state: ProjectStateV1): Promise<void> {
+    await this.authority.assertCurrent();
     const bytes = saveProject(state);
     const target = await this.resolve(relativePath, true);
     const temporary = await this.resolve(`${relativePath}.tmp`, false);
@@ -104,6 +129,7 @@ export class ProjectStore {
       await temporaryFile.close();
     }
     await this.options.checkpoint?.("temp-synced");
+    await this.authority.assertCurrent();
 
     const journalFile = await open(journal, "a", 0o600);
     try {
@@ -113,12 +139,14 @@ export class ProjectStore {
       await journalFile.close();
     }
     await this.options.checkpoint?.("journal-synced");
+    await this.authority.assertCurrent();
 
     await rename(temporary, target);
     await this.syncDirectory(path.dirname(target));
     await unlink(journal);
     await this.syncDirectory(path.dirname(target));
     await this.options.checkpoint?.("committed");
+    await this.authority.assertCurrent();
   }
 
   private async syncDirectory(directory: string): Promise<void> {
@@ -129,4 +157,17 @@ export class ProjectStore {
       await handle.close();
     }
   }
+
+  close(): Promise<void> {
+    return this.authority.close();
+  }
 }
+
+const sameFile = (left: BigIntStats, right: BigIntStats) =>
+  left.dev === right.dev &&
+  left.ino === right.ino &&
+  left.mode === right.mode &&
+  left.nlink === right.nlink &&
+  left.size === right.size &&
+  left.mtimeNs === right.mtimeNs &&
+  left.ctimeNs === right.ctimeNs;

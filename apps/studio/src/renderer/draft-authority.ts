@@ -42,6 +42,14 @@ export class DraftAuthority {
     return [...this.invalid];
   }
 
+  hasDrafts(): boolean {
+    return this.pending.size > 0 || this.inFlight.size > 0 || this.invalid.size > 0;
+  }
+
+  flush(): Promise<boolean> {
+    return this.flushAll();
+  }
+
   async flushField(field: string): Promise<boolean> {
     const edit = this.pending.get(field);
     return edit ? this.commit(field, edit) : true;

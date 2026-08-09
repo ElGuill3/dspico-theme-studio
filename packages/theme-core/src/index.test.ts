@@ -155,7 +155,7 @@ describe("dual-screen preview model", () => {
       projectId: "preview-project",
       metadata: { name: "Pocket Library", description: "Choose a favorite", author: "Author" },
       targetProfileId: "dspico-launcher-v1",
-      tokens: { background: "#10243a", accent: "#f4b942" },
+      tokens: { primaryColor: { r: 16, g: 36, b: 58 }, darkTheme: false, background: "#10243a", accent: "#f4b942" },
       scenes: [
         { id: "home-top", screen: "top", mode: "home", overrides: { accent: "#ef476f" } },
         { id: "home-bottom", screen: "bottom", mode: "home", overrides: {} },
@@ -176,13 +176,14 @@ describe("dual-screen preview model", () => {
     expect(preview.scenes.every(({ content }) => content.items.length > 0)).toBe(true);
   });
 
-  it("isolates overrides to one physical screen and launcher mode tuple", () => {
+  it("does not promote legacy scene colors into active Material preview authority", () => {
     const home = createPreviewModel(project, "home");
     const library = createPreviewModel(project, "library");
 
-    expect(home.scenes.find(({ screen }) => screen === "top")?.tokens.accent).toBe("#ef476f");
-    expect(home.scenes.find(({ screen }) => screen === "bottom")?.tokens.accent).toBe("#f4b942");
-    expect(library.scenes.find(({ screen }) => screen === "top")?.tokens.accent).toBe("#06d6a0");
+    expect(home.scenes.every(({ tokens }) => tokens.accent === undefined && tokens.background === undefined)).toBe(
+      true,
+    );
+    expect(library.scenes.every(({ tokens }) => tokens.primaryColor && tokens.darkTheme === false)).toBe(true);
   });
 
   it("reports honest backed and approximate fidelity without claiming export authority", () => {

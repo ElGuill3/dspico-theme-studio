@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "capabilityId": "dspico-theme-sounds-v1",
+  "component": "theme-ui-sound-authoring",
+  "supportedHost": { "platform": "linux", "arch": "x64", "id": "linux-x64" },
+  "fallback": false,
+  "sourceLineage": [
+    { "commit": "59e0af2f62cff26e1b4d21f500837d36c4d22810", "role": "navigation" },
+    { "commit": "7a75b4d408b43b62201236576d00e1429d6c32aa", "role": "navigation-and-launch" }
+  ],
+  "targetSha256": "12a357324cab401a8f100d50198b33bfeba93fbaf53261bc7456ebe863d96342",
+  "assets": [
+    { "name": "navigation", "path": "sounds/navigation.wav", "channel": 2 },
+    { "name": "launch", "path": "sounds/launch.wav", "channel": 2 }
+  ],
+  "format": {
+    "container": "RIFF/WAVE",
+    "codec": "PCM",
+    "formatCode": 1,
+    "channels": 1,
+    "sampleRate": 22050,
+    "bitsPerSample": 16,
+    "endianness": "little",
+    "blockAlign": 2,
+    "byteRate": 44100
+  },
+  "limits": { "pcmDataBytes": { "minExclusive": 0, "max": 11024 }, "fileBytesMax": 16384 },
+  "evidence": {
+    "kind": "installed-target-capability",
+    "status": "target-bound",
+    "hardwareParityClaimed": false,
+    "perProjectReceiptRequired": false
+  }
+}

@@ -15,6 +15,7 @@ const Scene = Type.Object(
 const AssetReference = Type.Object({ path: Type.String(), sha256: Type.String() }, noExtra);
 export const LayerV2Schema = Type.Object(
   {
+    kind: Type.Optional(Type.Literal("image")),
     id: Type.String(),
     name: Type.String(),
     visible: Type.Boolean(),

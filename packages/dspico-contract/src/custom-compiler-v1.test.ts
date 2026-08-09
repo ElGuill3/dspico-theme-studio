@@ -5,11 +5,22 @@ import { describe, expect, it } from "vitest";
 import { createCustomRenderPlan, type LayerV2, type ThemeProjectV2 } from "../../theme-core/src/index.js";
 import {
   CustomCompileBlockedError,
+  compileCustomVisualPackageV1,
   compileCustomBackgroundsV1,
   compileCustomThemeExportV1,
+  customExportBlockedDiagnostic,
   packRgba8ToDspico15,
   validateThemeProjectV2,
 } from "./index.js";
+import { LAUNCHER_V1_VISUAL_FILES } from "./profile-v1-3.js";
+import {
+  CUSTOM_VISUAL_ROLES_V1,
+  CUSTOM_VISUAL_SLOTS_V1,
+  CUSTOM_VISUAL_TOTAL_BYTES_V1,
+  validateCustomModelV1,
+  validateCustomThemeV13,
+  validateCustomVisualPackageV1,
+} from "./custom-v1-3.js";
 
 const golden = JSON.parse(
   readFileSync(
@@ -184,10 +195,16 @@ describe("Custom background 15bpp compiler", () => {
     const first = compileCustomThemeExportV1(input, plan, sources),
       second = compileCustomThemeExportV1(input, plan, sources);
 
-    expect(first.files.map(({ path }) => path)).toEqual(["theme.json", "topbg.bin", "bottombg.bin", "report.json"]);
+    expect(first.files.map(({ path }) => path)).toEqual(["theme.json", ...LAUNCHER_V1_VISUAL_FILES, "report.json"]);
     expect(first).toEqual(second);
     expect(zipEntries(first.zipBytes)).toEqual(Object.fromEntries(first.files.map((file) => [file.path, file.bytes])));
-    const report = JSON.parse(new TextDecoder().decode(first.files[3]!.bytes));
+    const report = JSON.parse(new TextDecoder().decode(first.files.at(-1)!.bytes));
+    expect(report.files.map(({ path }: { path: string }) => path)).toEqual(["theme.json", ...LAUNCHER_V1_VISUAL_FILES]);
+    expect(
+      report.files
+        .filter(({ path }: { path: string }) => path !== "theme.json")
+        .reduce((total: number, file: { bytes: number }) => total + file.bytes, 0),
+    ).toBe(230_496);
     expect(report.compatibility).toMatchObject({ profileId: "dspico-launcher-v1", projectFormatVersion: 2 });
     expect(report.policies).toMatchObject({
       packing: "le-xbgr1555-alpha128-round-half-up-no-dither-v1",
@@ -202,5 +219,180 @@ describe("Custom background 15bpp compiler", () => {
     ]);
     expect(report.credits[0]).toMatchObject({ name: "Author", source: "https://example.test/e.png" });
     expect(report.licenses[0]).toMatchObject({ name: "CC-BY-4.0", notice: "Copyright Author" });
+  }, 15_000);
+
+  it("scenario 28: separates software fixture evidence from physical hardware claims", () => {
+    const top = layer("top", "e", { x: 0, y: 0, width: 1, height: 1 }, { x: 0, y: 0, width: 1, height: 1 });
+    const input = project([top], [{ ...top, id: "bottom" }], [record("e", 1, 1)]);
+    const report = JSON.parse(
+      new TextDecoder().decode(
+        compileCustomThemeExportV1(input, createCustomRenderPlan(input), [
+          source("e", 1, 1, [255, 0, 0, 255]),
+        ]).files.at(-1)!.bytes,
+      ),
+    );
+
+    expect(report.compatibility.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "source", path: "docs/Themes.md" }),
+        expect.objectContaining({ kind: "fixture", path: "_pico/themes/raspberry/theme.json" }),
+      ]),
+    );
+    expect(report.evidenceBoundary).toEqual({ softwareFixtureOnly: true, hardwareParityClaimed: false });
+  });
+});
+
+const v13Theme = () => ({
+  type: "custom",
+  name: "Raspberry",
+  description: "Theme based on raspberries.",
+  author: "Author",
+  primaryColor: { r: 138, g: 217, b: 255 },
+  darkTheme: false,
+  topIcon: { position: { x: 24, y: 132 }, blendColor: { r: 200, g: 200, b: 200 } },
+  topBannerTextLine0: {
+    position: { x: 70, y: 126 },
+    width: 176,
+    textColor: { r: 30, g: 30, b: 30 },
+    blendColor: { r: 200, g: 200, b: 200 },
+  },
+  topBannerTextLine1: {
+    position: { x: 70, y: 141 },
+    width: 176,
+    textColor: { r: 30, g: 30, b: 30 },
+    blendColor: { r: 200, g: 200, b: 200 },
+  },
+  topBannerTextLine2: {
+    position: { x: 70, y: 155 },
+    width: 176,
+    textColor: { r: 30, g: 30, b: 30 },
+    blendColor: { r: 200, g: 200, b: 200 },
+  },
+  topFileNameText: {
+    position: { x: 18, y: 170 },
+    width: 220,
+    textColor: { r: 30, g: 30, b: 30 },
+    blendColor: { r: 200, g: 200, b: 200 },
+  },
+  topCover: { position: { x: 75, y: 18 } },
+  gridIcon: { blendColor: { r: 200, g: 200, b: 200 } },
+  bannerListIcon: { blendColor: { r: 200, g: 200, b: 200 } },
+  bannerListTextLine0: { textColor: { r: 30, g: 30, b: 30 } },
+  bannerListTextLine1: { textColor: { r: 30, g: 30, b: 30 } },
+  bannerListTextLine2: { textColor: { r: 30, g: 30, b: 30 } },
+});
+const v13Source = () => ({
+  sourceSha256: hash("f"),
+  width: 256,
+  height: 192,
+  normalizationPolicy: "rgba8-straight-top-left-v1",
+  provenance: {
+    originalName: "raspberry.png",
+    source: "https://example.test/raspberry.png",
+    author: "Author",
+    credit: "Author",
+    license: "CC-BY-4.0",
+    terms: "Attribution required",
+    notice: "Copyright Author",
+    intendedUse: "Custom theme background",
+    rightsToExport: true,
+  },
+  referenceOnly: false,
+});
+const v13VisualPackage = () => ({
+  slots: CUSTOM_VISUAL_SLOTS_V1.map((slot) => ({
+    path: slot.path,
+    length: slot.length,
+    geometry: { ...slot.geometry },
+    codec: slot.codec,
+    sourceSha256: hash("f"),
+    bytes: new Uint8Array(slot.length),
+  })),
+  provenance: [v13Source()],
+});
+
+describe("v1.3 Custom model and completeness gate", () => {
+  it("compiles seven assigned source roles into the exact hashed post-codec rail", () => {
+    const sources = CUSTOM_VISUAL_ROLES_V1.map((role, index) => ({
+      role,
+      sourceSha256: hash(String(index)),
+      width: 1,
+      height: 1,
+      pixels: new Uint8Array([index * 20, 255 - index * 20, 128, 255]),
+      provenance: { ...v13Source().provenance },
+      recipe: { transform: "nearest-center-floor-v1" },
+    }));
+    const first = compileCustomVisualPackageV1(sources);
+
+    expect(first.lineage).toHaveLength(7);
+    expect(first.outputs).toHaveLength(12);
+    expect(first.totalBytes).toBe(CUSTOM_VISUAL_TOTAL_BYTES_V1);
+    expect(first.outputs.every(({ sha256 }) => /^[a-f0-9]{64}$/.test(sha256))).toBe(true);
+    expect(first.palettePolicy).toBe("locked-median-cut-v1");
+    expect(first.preview).toEqual({
+      label: "Decoded post-codec output",
+      fidelity: "Chromium approximation",
+      hardwareParityClaimed: false,
+      hardwareUnknown: true,
+    });
+    expect(compileCustomVisualPackageV1(sources)).toEqual(first);
+  });
+
+  it("accepts the typed launcher layout and exact 12-slot visual package", () => {
+    const visual = v13VisualPackage();
+    const result = validateCustomModelV1({ theme: v13Theme(), visual });
+
+    expect(result).toMatchObject({ valid: true, totalBytes: CUSTOM_VISUAL_TOTAL_BYTES_V1, diagnostics: [] });
+    expect(visual.slots).toHaveLength(12);
+    expect(visual.slots.reduce((total, slot) => total + slot.bytes.length, 0)).toBe(230_496);
+  });
+
+  it("rejects partial, unsafe, and unsupported Custom JSON without defaulting", () => {
+    const input = { ...v13Theme(), topIcon: { position: { x: 256, y: 132 } }, launchTransition: {} };
+    const result = validateCustomThemeV13(input);
+
+    expect(result.valid).toBe(false);
+    expect(result.diagnostics.map(({ code }) => code)).toEqual(
+      expect.arrayContaining(["custom.layout-object", "custom.range", "custom.unsupported-field"]),
+    );
+  });
+
+  it("rejects missing, mis-sized, misnamed, or unauthorized visual slots", () => {
+    const visual = v13VisualPackage();
+    visual.slots = visual.slots.slice(0, -1);
+    visual.provenance[0]!.provenance.rightsToExport = false;
+    const result = validateCustomVisualPackageV1(visual);
+
+    expect(result.valid).toBe(false);
+    expect(result.diagnostics.map(({ code }) => code)).toEqual(
+      expect.arrayContaining(["custom.visual-completeness", "custom.provenance-rights"]),
+    );
+  });
+
+  it("reports the actual byte length for a short visual binary", () => {
+    const visual = v13VisualPackage();
+    const expected = visual.slots[0]!.length;
+    visual.slots[0]!.bytes = new Uint8Array(expected - 1);
+    const result = validateCustomVisualPackageV1(visual);
+
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "custom.visual-length",
+          path: "/slots/0/length",
+          expected,
+          observed: expected - 1,
+        }),
+      ]),
+    );
+  });
+
+  it("keeps publication blocked even when the dependent model is complete", () => {
+    expect(validateCustomModelV1({ theme: v13Theme(), visual: v13VisualPackage() }).valid).toBe(true);
+    expect(customExportBlockedDiagnostic()).toMatchObject({
+      ruleId: "custom.export-blocked",
+      severity: "error",
+      location: { document: "project.json", pointer: "/export" },
+    });
   });
 });

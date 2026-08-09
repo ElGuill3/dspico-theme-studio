@@ -2,7 +2,20 @@ import { Type, type Static } from "@sinclair/typebox";
 import { Ajv } from "ajv";
 export { createPreviewModel, type PreviewModel } from "./preview.js";
 
-const TokenValueSchema = Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()]);
+const TokenValueSchema = Type.Union([
+  Type.String(),
+  Type.Number(),
+  Type.Boolean(),
+  Type.Null(),
+  Type.Object(
+    {
+      r: Type.Integer({ minimum: 0, maximum: 255 }),
+      g: Type.Integer({ minimum: 0, maximum: 255 }),
+      b: Type.Integer({ minimum: 0, maximum: 255 }),
+    },
+    { additionalProperties: false },
+  ),
+]);
 const MetadataSchema = Type.Object(
   { name: Type.String(), description: Type.String(), author: Type.String() },
   { additionalProperties: false },
@@ -264,3 +277,11 @@ export * from "./model-v2.js";
 export * from "./history-v2.js";
 export * from "./migration-v2.js";
 export * from "./render-plan-v2.js";
+export * from "./parity-model-v1.js";
+export * from "./parity-history-v1.js";
+export * from "./parity-migration-v1.js";
+export * from "./model-v3.js";
+export * from "./limits-v3.js";
+export * from "./history-v3.js";
+export * from "./migration-v3.js";
+export * from "./render-plan-v3.js";

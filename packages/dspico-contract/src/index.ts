@@ -1,4 +1,22 @@
-import type { CustomRenderPlanV1, RenderSurfacePlanV1 } from "../../theme-core/src/render-plan-v2.js";
+import type {
+  CustomRenderPlanV1,
+  RenderLayerPlanV1,
+  RenderSurfacePlanV1,
+} from "../../theme-core/src/render-plan-v2.js";
+import { isParityProject } from "../../theme-core/src/parity-model-v1.js";
+import { CODEC_POLICY_V1, PALETTE_POLICY_V1, encodeV13VisualFiles, type RgbaImageV1 } from "./codecs-v1-3.js";
+import {
+  CUSTOM_VISUAL_ROLES_V1,
+  CUSTOM_VISUAL_DOCUMENTS_V1,
+  CUSTOM_VISUAL_SLOTS_V1,
+  CUSTOM_VISUAL_TOTAL_BYTES_V1,
+  type CustomVisualOutputV1,
+  type CustomVisualPackageV1,
+  type CustomVisualRoleV1,
+  type CustomVisualSourceV1,
+} from "./custom-v1-3.js";
+import { LAUNCHER_V1_PROFILE, LAUNCHER_V1_VISUAL_FILES } from "./profile-v1-3.js";
+import { textLayerContainsPixelCenterV1, validTextContentV1 } from "./pixel-font-v1.js";
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 export type DiagnosticV1 = {
@@ -16,11 +34,14 @@ export type ReportV1 = {
   reportVersion: 1;
   compatibility: {
     profileId: "dspico-launcher-v1";
+    tag: string;
     launcherCommit: string;
+    manifestSha256: string;
     compilerVersion: string;
     projectFormatVersion: 1;
-    evidence: { path: string; sha256: string }[];
+    evidence: { kind: "source" | "fixture"; path: string; sha256: string }[];
   };
+  evidenceBoundary: { softwareFixtureOnly: true; hardwareParityClaimed: false };
   diagnostics: DiagnosticV1[];
   acknowledgmentFingerprints: string[];
   files: { path: string; bytes: number; sha256: string }[];
@@ -28,40 +49,35 @@ export type ReportV1 = {
   licenses: { name: string; spdx: string; source: string; notice?: string }[];
 };
 
+const profileEvidence = (ref: string) => {
+  const item = LAUNCHER_V1_PROFILE.evidence.find((candidate) => candidate.ref === ref);
+  if (!item) throw new Error(`Required compatibility profile data is missing: ${ref}`);
+  return item;
+};
 const evidence = {
-  metadata: {
-    kind: "source",
-    ref: "docs/Themes.md",
-    sha256: "d0b12dfbfcba6e70b01c19a23244a25094f46ad5ef355886345ed089cd627c81",
-  },
-  type: {
-    kind: "source",
-    ref: "arm9/source/themes/ThemeInfoFactory.thumb.cpp",
-    sha256: "ca621fca760e64fb24d47b697fe1366122462257b1105666f6c7280516d5a380",
-  },
-  transition: {
-    kind: "source",
-    ref: "arm9/source/themes/LaunchTransitionStyle.h",
-    sha256: "d87ebda8405531963eea156a82f2bdbe9dccbf72461aa5801fc6c3d7f87b93fe",
-  },
-  color: {
-    kind: "source",
-    ref: "arm9/source/themes/material/MaterialColorSchemeFactory.cpp",
-    sha256: "d3f9c459521f1813f89d709f29c44d588a9be34459ac0c477286706e53c6a04e",
-  },
-  fixture: {
-    kind: "fixture",
-    ref: "_pico/themes/material/theme.json",
-    sha256: "8699d6364ad4d18f409c6aeec804265af1f32648d169591ba7bea18ffc47ce49",
-  },
+  metadata: profileEvidence("docs/Themes.md"),
+  type: profileEvidence("arm9/source/themes/ThemeInfoFactory.thumb.cpp"),
+  transition: profileEvidence("arm9/source/themes/ThemeInfoFactory.thumb.cpp"),
+  color: profileEvidence("arm9/source/themes/ThemeInfoFactory.thumb.cpp"),
+  fixture: profileEvidence("_pico/themes/material/theme.json"),
 } as const;
+const reportEvidence = () =>
+  DSPICO_LAUNCHER_V1.evidence
+    .map(({ kind, ref, sha256: digest }) => ({ kind, path: ref, sha256: digest }))
+    .sort((a, b) => lexical(a.path, b.path));
+const softwareFixtureBoundary = { softwareFixtureOnly: true, hardwareParityClaimed: false } as const;
 
 export const DSPICO_LAUNCHER_V1 = {
-  profileId: "dspico-launcher-v1",
-  launcherCommit: "f3ae63279ab72bc6c83124c752ec79f3247db437",
-  evidence: Object.values(evidence),
+  ...LAUNCHER_V1_PROFILE,
   defaults: { coverStartScalePercent: 100, coverFinalAlpha: 12, scrimFinalAlpha: 14 },
 } as const;
+
+export * from "./codecs-v1-3.js";
+export * from "./custom-v1-3.js";
+export * from "./bcstm-v1-3.js";
+export * from "./theme-sounds-v1.js";
+export * from "./receipts-v1.js";
+export * from "./pixel-font-v1.js";
 
 type Theme = Record<string, unknown>;
 export type ValidationResultV1 = {
@@ -82,7 +98,7 @@ const canonical = (value: unknown): string => {
   return JSON.stringify(value);
 };
 
-function sha256(value: string | Uint8Array): string {
+export function sha256(value: string | Uint8Array): string {
   const bytes = [...(typeof value === "string" ? new TextEncoder().encode(value) : value)];
   const bitLength = bytes.length * 8;
   bytes.push(0x80);
@@ -143,8 +159,88 @@ const compare = (left: DiagnosticV1, right: DiagnosticV1) =>
   lexical(left.location.document, right.location.document) ||
   lexical(left.location.pointer, right.location.pointer) ||
   lexical(left.fingerprint, right.fingerprint);
+const diagnosticFingerprint = (
+  severity: DiagnosticV1["severity"],
+  ruleId: string,
+  location: DiagnosticV1["location"],
+  normalizedValue: DiagnosticV1["normalizedValue"],
+  sources: readonly { ref: string; sha256: string }[],
+) =>
+  sha256(
+    canonical([
+      DSPICO_LAUNCHER_V1.profileId,
+      DSPICO_LAUNCHER_V1.tag,
+      DSPICO_LAUNCHER_V1.launcherCommit,
+      DSPICO_LAUNCHER_V1.manifestSha256,
+      ruleId,
+      1,
+      severity,
+      location,
+      normalizedValue,
+      sources.map(({ ref, sha256: digest }) => [ref, digest]),
+    ]),
+  );
+
+// prettier-ignore
+const validateLauncherMaterialV13 = (input: unknown, acknowledgments: readonly string[] = []): ValidationResultV1 => { const parity = isParityProject(input), materialInput = parity ? { type: "material", ...input.metadata, ...input.material } : input, requested = parity ? input.acknowledgments : acknowledgments, diagnostics: DiagnosticV1[] = [], add = (severity: DiagnosticV1["severity"], ruleId: string, pointer: string, normalizedValue: DiagnosticV1["normalizedValue"], source: keyof typeof evidence, message: string) => { const location = { document: "theme.json", pointer }; diagnostics.push({ version: 1, profileId: "dspico-launcher-v1", severity, ruleId, location, normalizedValue, evidence: [evidence[source]], message, fingerprint: diagnosticFingerprint(severity, ruleId, location, normalizedValue, [evidence[source]]) }); }; if (materialInput === null || materialInput === undefined) add("error", "document.unavailable", "", { missing: true }, "fixture", "Theme data is unavailable."); let parsed = materialInput; if (typeof materialInput === "string") try { parsed = JSON.parse(materialInput); } catch { add("error", "document.malformed", "", materialInput, "fixture", "Theme data is malformed."); } const theme = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? { ...(parsed as Theme) } : undefined; if (!theme && diagnostics.length === 0) add("error", "document.malformed", "", parsed as JsonValue, "fixture", "Theme data must be an object."); if (theme) { for (const field of ["name", "description", "author"] as const) { const value = theme[field]; if (typeof value !== "string" || !value.length || value !== value.trim()) add("error", `metadata.${field}`, `/${field}`, typeof value === "string" ? value.trim() : { missing: true }, "metadata", `${field} must be a trimmed, non-empty string.`); } if (theme.type !== "material") add("error", "theme.type", "/type", (theme.type ?? { missing: true }) as JsonValue, "type", "Only Material themes are supported."); if (theme.formatVersion !== undefined && theme.formatVersion !== 1) add("error", "theme.format-version", "/formatVersion", theme.formatVersion as JsonValue, "fixture", "Theme format is newer or unsupported."); const color = theme.primaryColor as Theme, validColor = color && typeof color === "object" && ["r", "g", "b"].every((component) => Number.isInteger(color[component]) && Number(color[component]) >= 0 && Number(color[component]) <= 255); if (!validColor) add("error", "color.primaryColor", "/primaryColor", theme.primaryColor as JsonValue, "color", "primaryColor must contain integer RGB components in 0..255."); if (typeof theme.darkTheme !== "boolean") add("error", "theme.dark-theme", "/darkTheme", theme.darkTheme as JsonValue, "color", "darkTheme must be boolean."); const transitionFields = ["launchTransition", "coverStartScalePercent", "coverFinalAlpha", "scrimFinalAlpha"] as const, transitionPresent = transitionFields.filter((key) => Object.hasOwn(theme, key)); if (transitionPresent.length) add("error", "unsupported.launch-transition", "/launchTransition", transitionPresent as unknown as JsonValue, "transition", "v1.3.0 Material output does not consume launchTransition."); if (typeof theme.description === "string" && theme.description.length > 0 && theme.description.length < 10) add("warning", "metadata.short-description", "/description", theme.description, "metadata", "A longer description improves theme identification."); } diagnostics.sort(compare); const accepted = [...new Set(requested)].filter((fingerprint) => diagnostics.some((item) => item.severity === "warning" && item.fingerprint === fingerprint)).sort(); const canonicalTheme = theme && { type: "material", name: theme.name, description: theme.description, author: theme.author, primaryColor: theme.primaryColor, darkTheme: theme.darkTheme }; return { profileId: "dspico-launcher-v1", ...(canonicalTheme ? { theme: canonicalTheme } : {}), diagnostics, acknowledgedFingerprints: accepted, canExport: diagnostics.every((item) => item.severity === "suggestion" || (item.severity === "warning" && accepted.includes(item.fingerprint))) }; };
+const unsupportedV13FeatureRules = [
+  ["selectorAssets", "unsupported.selector-assets", "selector assets"],
+  ["preview.bin", "unsupported.preview-bin", "preview.bin"],
+  ["icon.bmp", "unsupported.icon-bmp", "theme icon.bmp"],
+  ["wav", "unsupported.wav", "WAV UI sounds"],
+  ["launchTransition", "unsupported.launch-transition", "launchTransition"],
+  ["animation", "unsupported.animation", "animation controls"],
+  ["timing", "unsupported.timing", "timing controls"],
+  ["fonts", "unsupported.fonts", "custom fonts"],
+  ["covers", "unsupported.covers", "global covers"],
+  ["sdInstall", "unsupported.sd-installation", "direct SD installation"],
+  ["directSdInstallation", "unsupported.sd-installation", "direct SD installation"],
+  ["launcherMutation", "unsupported.launcher-mutation", "launcher mutation"],
+  ["ai", "unsupported.ai", "AI prerequisites"],
+  ["cloud", "unsupported.cloud", "cloud prerequisites"],
+] as const;
+const unsupportedV13Diagnostics = (input: unknown): DiagnosticV1[] => {
+  let parsed = input;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return [];
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || isParityProject(parsed)) return [];
+  const theme = parsed as Theme;
+  return unsupportedV13FeatureRules.flatMap(([key, ruleId, label]) => {
+    if (!Object.hasOwn(theme, key)) return [];
+    const location = { document: "theme.json", pointer: `/${key}` };
+    const normalizedValue = theme[key] as JsonValue;
+    return [
+      {
+        version: 1 as const,
+        profileId: "dspico-launcher-v1" as const,
+        severity: "error" as const,
+        ruleId,
+        location,
+        normalizedValue,
+        evidence: [evidence.type],
+        message: `${label} are outside the pinned v1.3.0 profile.`,
+        fingerprint: diagnosticFingerprint("error", ruleId, location, normalizedValue, [evidence.type]),
+      },
+    ];
+  });
+};
 
 export function validateTheme(input: unknown, acknowledgments: readonly string[] = []): ValidationResultV1 {
+  const result = validateLauncherMaterialV13(input, acknowledgments);
+  const existing = new Set(result.diagnostics.map(({ ruleId, location }) => `${ruleId}:${location.pointer}`));
+  const unsupported = unsupportedV13Diagnostics(input).filter(
+    ({ ruleId, location }) => !existing.has(`${ruleId}:${location.pointer}`),
+  );
+  if (!unsupported.length) return result;
+  return { ...result, diagnostics: [...result.diagnostics, ...unsupported].sort(compare), canExport: false };
+}
+
+export function validateLegacyTheme(input: unknown, acknowledgments: readonly string[] = []): ValidationResultV1 {
   const diagnostics: DiagnosticV1[] = [];
   const add = (
     severity: DiagnosticV1["severity"],
@@ -299,6 +395,112 @@ export function validateTheme(input: unknown, acknowledgments: readonly string[]
   };
 }
 
+export const CUSTOM_EXPORT_BLOCKED_MESSAGE =
+  "Custom export is unavailable in the Pico Launcher v1.3.0 safety baseline; only the complete validated visual package may publish.";
+export const customExportBlockedDiagnostic = (): DiagnosticV1 => {
+  const location = { document: "project.json", pointer: "/export" };
+  const normalizedValue = "custom-export-safety-baseline-v1.3.0";
+  return {
+    version: 1,
+    profileId: "dspico-launcher-v1",
+    severity: "error",
+    ruleId: "custom.export-blocked",
+    location,
+    normalizedValue,
+    evidence: [evidence.fixture],
+    message: CUSTOM_EXPORT_BLOCKED_MESSAGE,
+    fingerprint: sha256(canonical(["dspico-launcher-v1", "custom.export-blocked", location, normalizedValue])),
+  };
+};
+
+export const customDiagnosticV1 = (
+  ruleId: string,
+  document: string,
+  pointer: string,
+  message: string,
+  severity: DiagnosticV1["severity"] = "error",
+): DiagnosticV1 => {
+  const location = { document, pointer },
+    normalizedValue = { missing: true } as const;
+  return {
+    version: 1,
+    profileId: "dspico-launcher-v1",
+    severity,
+    ruleId,
+    location,
+    normalizedValue,
+    evidence: [evidence.fixture],
+    message,
+    fingerprint: diagnosticFingerprint(severity, ruleId, location, normalizedValue, [evidence.fixture]),
+  };
+};
+
+export type LegacyVisualReceiptV1 = {
+  launcherTag: string;
+  launcherCommit: string;
+  fileHashes: Record<string, string>;
+  observations: string[];
+  pass: boolean;
+};
+const receiptHash = /^[a-f0-9]{64}$/;
+const visualReceiptDiagnostic = (ruleId: string, normalizedValue: JsonValue, message: string): DiagnosticV1 => {
+  const location = { document: "compatibility.json", pointer: "" };
+  return {
+    version: 1,
+    profileId: "dspico-launcher-v1",
+    severity: "error",
+    ruleId,
+    location,
+    normalizedValue,
+    evidence: [evidence.fixture],
+    message,
+    fingerprint: diagnosticFingerprint("error", ruleId, location, normalizedValue, [evidence.fixture]),
+  };
+};
+export function validateVisualReceiptV1(
+  input: unknown,
+  expectedFileHashes?: Readonly<Record<string, string>>,
+): DiagnosticV1[] {
+  const receipt = objectValue(input);
+  if (!receipt)
+    return [
+      visualReceiptDiagnostic(
+        "custom.visual-receipt-required",
+        "visual-receipt-required-v1",
+        "A passing v1.3.0 visual compatibility record is required before Custom publication.",
+      ),
+    ];
+  const hashes = objectValue(receipt.fileHashes);
+  const expected = [...LAUNCHER_V1_VISUAL_FILES].sort(lexical);
+  const actual = hashes ? Object.keys(hashes).sort(lexical) : [];
+  const matchesCurrentOutput =
+    !expectedFileHashes ||
+    (Object.keys(expectedFileHashes).sort(lexical).join("\n") === expected.join("\n") &&
+      expected.every((name) => hashes?.[name] === expectedFileHashes[name]));
+  const valid =
+    receipt.launcherTag === LAUNCHER_V1_PROFILE.tag &&
+    receipt.launcherCommit === LAUNCHER_V1_PROFILE.launcherCommit &&
+    receipt.pass === true &&
+    Array.isArray(receipt.observations) &&
+    receipt.observations.length > 0 &&
+    receipt.observations.every((observation) => typeof observation === "string" && observation.trim()) &&
+    Boolean(hashes) &&
+    actual.length === expected.length &&
+    matchesCurrentOutput &&
+    actual.every(
+      (name, index) => name === expected[index] && typeof hashes![name] === "string" && receiptHash.test(hashes![name]),
+    );
+  return valid
+    ? []
+    : [
+        visualReceiptDiagnostic(
+          "custom.visual-receipt-invalid",
+          receipt as JsonValue,
+          "The visual compatibility record must pass for the pinned v1.3.0 launcher and match the current 12-file visual output manifest.",
+        ),
+      ];
+}
+
 const objectValue = (value: unknown): Theme | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Theme) : undefined;
 const customRanges = {
@@ -313,7 +515,7 @@ export function validateThemeProjectV2(input: unknown, acknowledgments?: readonl
   const diagnostics: DiagnosticV1[] = [], project = objectValue(input);
   const add = (severity: DiagnosticV1["severity"], ruleId: string, pointer: string, normalizedValue: DiagnosticV1["normalizedValue"], source: keyof typeof evidence, message: string) => {
     const location = { document: "project.json", pointer };
-    diagnostics.push({ version: 1, profileId: "dspico-launcher-v1", severity, ruleId, location, normalizedValue, evidence: [evidence[source]], message, fingerprint: sha256(canonical(["dspico-launcher-v1", ruleId, location, project?.themeKind ?? { missing: true }, normalizedValue])) });
+    diagnostics.push({ version: 1, profileId: "dspico-launcher-v1", severity, ruleId, location, normalizedValue, evidence: [evidence[source]], message, fingerprint: diagnosticFingerprint(severity, ruleId, location, normalizedValue, [evidence[source]]) });
   };
   if (!project) add("error", "document.malformed", "", input as JsonValue, "fixture", "Project data must be an object.");
   if (project) {
@@ -394,6 +596,31 @@ export class CustomCompileBlockedError extends Error {
 }
 const roundDivide = (value: number, divisor: number) => Math.floor((value + Math.floor(divisor / 2)) / divisor);
 const q5 = (value: number) => Math.min(31, Math.floor((value * 63 + 255) / 510));
+export const shapeContainsPixelCenterV1 = (
+  shape: "rectangle" | "ellipse",
+  relativeXQ16: number,
+  relativeYQ16: number,
+  widthQ16: number,
+  heightQ16: number,
+): boolean => {
+  if (
+    ![relativeXQ16, relativeYQ16, widthQ16, heightQ16].every(Number.isSafeInteger) ||
+    widthQ16 < 1 ||
+    heightQ16 < 1 ||
+    relativeXQ16 < 0 ||
+    relativeYQ16 < 0 ||
+    relativeXQ16 >= widthQ16 ||
+    relativeYQ16 >= heightQ16
+  )
+    return false;
+  if (shape === "rectangle") return true;
+  if (shape !== "ellipse") return false;
+  const width = BigInt(widthQ16),
+    height = BigInt(heightQ16),
+    x = BigInt(relativeXQ16) * 2n - width,
+    y = BigInt(relativeYQ16) * 2n - height;
+  return x * x * height * height + y * y * width * width <= width * width * height * height;
+};
 
 export function packRgba8ToDspico15(rgba: Uint8Array): Uint8Array {
   if (rgba.length % 4 !== 0) throw new Error("RGBA8 byte length must be divisible by four.");
@@ -441,23 +668,164 @@ const expectedPlan = (project: Theme): CustomRenderPlanV1 => ({
   }),
 });
 
-function compileSurface(surface: RenderSurfacePlanV1, sources: Map<string, NormalizedRgbaAssetV1>): Uint8Array {
-  const pixelCount = 256 * 192;
+type CustomImageLayerPlanV1 = Omit<RenderSurfacePlanV1, "screen" | "width" | "height">["layers"][number] & {
+  kind?: "image";
+  rotation?: QuarterTurnV1;
+};
+type CustomShapeLayerPlanV1 = {
+  kind: "shape";
+  id: string;
+  order: number;
+  shape: "rectangle" | "ellipse";
+  fill: string;
+  opacity: number;
+  rotation?: QuarterTurnV1;
+  destinationQ16: { x: number; y: number; width: number; height: number };
+};
+type CustomTextLayerPlanV1 = {
+  kind: "text";
+  id: string;
+  order: number;
+  content: string;
+  fill: string;
+  scale: number;
+  alignment: "left" | "center" | "right";
+  opacity: number;
+  rotation?: QuarterTurnV1;
+  destinationQ16: { x: number; y: number; width: number; height: number };
+};
+export type CustomLayerPlanV1 = (CustomImageLayerPlanV1 | CustomShapeLayerPlanV1 | CustomTextLayerPlanV1)[];
+export type QuarterTurnV1 = 0 | 90 | 180 | 270;
+export const isQuarterTurnV1 = (value: unknown): value is QuarterTurnV1 =>
+  value === 0 || value === 90 || value === 180 || value === 270;
+const roundHalfAwayFromZero = (numerator: number): number =>
+  numerator < 0 ? -Math.round(-numerator / 2) : Math.round(numerator / 2);
+export const rotatedBoundsQ16V1 = (
+  destination: { x: number; y: number; width: number; height: number },
+  rotation: QuarterTurnV1 = 0,
+) => {
+  const width = rotation === 90 || rotation === 270 ? destination.height : destination.width,
+    height = rotation === 90 || rotation === 270 ? destination.width : destination.height;
+  return {
+    x: roundHalfAwayFromZero(destination.x * 2 + destination.width - width),
+    y: roundHalfAwayFromZero(destination.y * 2 + destination.height - height),
+    width,
+    height,
+  };
+};
+export const unrotatePointQ16V1 = (
+  relativeX: number,
+  relativeY: number,
+  width: number,
+  height: number,
+  rotation: QuarterTurnV1,
+) =>
+  rotation === 90
+    ? { x: relativeY, y: height - 1 - relativeX }
+    : rotation === 180
+      ? { x: width - 1 - relativeX, y: height - 1 - relativeY }
+      : rotation === 270
+        ? { x: width - 1 - relativeY, y: relativeX }
+        : { x: relativeX, y: relativeY };
+export const imageSourcePixelAtQ16V1 = (
+  source: { x: number; y: number; width: number; height: number },
+  destination: { x: number; y: number; width: number; height: number },
+  rotation: QuarterTurnV1,
+  point: { x: number; y: number },
+): { x: number; y: number } | undefined => {
+  if (![point.x, point.y, destination.width, destination.height].every(Number.isSafeInteger)) return undefined;
+  const bounds = rotatedBoundsQ16V1(destination, rotation),
+    visualX = point.x - bounds.x,
+    visualY = point.y - bounds.y;
+  if (visualX < 0 || visualY < 0 || visualX >= bounds.width || visualY >= bounds.height) return undefined;
+  const relative = unrotatePointQ16V1(visualX, visualY, destination.width, destination.height, rotation),
+    x = source.x + Number((BigInt(relative.x) * BigInt(source.width)) / BigInt(destination.width)),
+    y = source.y + Number((BigInt(relative.y) * BigInt(source.height)) / BigInt(destination.height));
+  return x < source.x || y < source.y || x >= source.x + source.width || y >= source.y + source.height
+    ? undefined
+    : { x, y };
+};
+export const MAX_CUSTOM_COMPOSITE_PIXELS_V1 = 256 * 192;
+export const MAX_CUSTOM_COMPOSITE_BYTES_V1 = MAX_CUSTOM_COMPOSITE_PIXELS_V1 * 4;
+export function compositeCustomLayersV1(
+  width: number,
+  height: number,
+  layers: CustomLayerPlanV1,
+  sourceAssets: readonly NormalizedRgbaAssetV1[],
+): Uint8Array {
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1)
+    throw new Error("Invalid Custom document geometry.");
+  if (width > Math.floor(MAX_CUSTOM_COMPOSITE_PIXELS_V1 / height))
+    throw new Error("Custom document exceeds the compositor allocation limit.");
+  const pixelCount = width * height,
+    byteCount = pixelCount * 4;
+  if (!Number.isSafeInteger(byteCount) || byteCount > MAX_CUSTOM_COMPOSITE_BYTES_V1)
+    throw new Error("Custom document exceeds the compositor allocation limit.");
+  const sources = new Map(sourceAssets.map((source) => [source.sourceSha256, source]));
+  if (sources.size !== sourceAssets.length) throw new Error("Custom document sources are not unique.");
   const alpha = new Uint16Array(pixelCount),
     red = new Uint32Array(pixelCount),
     green = new Uint32Array(pixelCount),
     blue = new Uint32Array(pixelCount);
-  for (const layer of surface.layers) {
-    const asset = sources.get(layer.asset.sha256);
-    if (!asset) throw new Error(`Missing normalized RGBA8 source: ${layer.asset.sha256}`);
-    if (asset.pixels.length !== asset.width * asset.height * 4)
-      throw new Error(`Mismatched normalized RGBA8 source: ${layer.asset.sha256}`);
-    const { source, destinationQ16: destination } = layer;
+  for (const layer of layers) {
+    const hasKind = Object.hasOwn(layer, "kind"),
+      kind = hasKind ? (layer as { kind?: unknown }).kind : undefined;
+    if (hasKind && kind !== "image" && kind !== "shape" && kind !== "text")
+      throw new Error(`Unsupported Custom layer kind: ${String(kind)}`);
+    const shape = kind === "shape" ? (layer as CustomShapeLayerPlanV1) : undefined,
+      text = kind === "text" ? (layer as CustomTextLayerPlanV1) : undefined,
+      image = shape || text ? undefined : (layer as RenderLayerPlanV1),
+      asset = image ? sources.get(image.asset.sha256) : undefined;
+    if (image && !asset) throw new Error(`Missing normalized RGBA8 source: ${image.asset.sha256}`);
+    if (asset && asset.pixels.length !== asset.width * asset.height * 4)
+      throw new Error(`Mismatched normalized RGBA8 source: ${image!.asset.sha256}`);
+    if (shape && (!/^#[0-9a-f]{6}$/.test(shape.fill) || !["rectangle", "ellipse"].includes(shape.shape)))
+      throw new Error(`Invalid shape layer: ${shape.id}`);
+    if (!isQuarterTurnV1(layer.rotation === undefined ? 0 : layer.rotation))
+      throw new Error(`Invalid layer rotation: ${layer.id}`);
+    if (
+      text &&
+      (!validTextContentV1(text.content) ||
+        typeof text.id !== "string" ||
+        !text.id ||
+        !Number.isSafeInteger(text.order) ||
+        !/^#[0-9a-f]{6}$/.test(text.fill) ||
+        !Number.isInteger(text.scale) ||
+        text.scale < 1 ||
+        text.scale > 16 ||
+        !["left", "center", "right"].includes(text.alignment) ||
+        Object.keys(text).some(
+          (key) =>
+            ![
+              "kind",
+              "id",
+              "order",
+              "content",
+              "fill",
+              "scale",
+              "alignment",
+              "opacity",
+              "rotation",
+              "destinationQ16",
+            ].includes(key),
+        ))
+    )
+      throw new Error(`Invalid text layer: ${text.id}`);
+    const source = image?.source,
+      destination = layer.destinationQ16,
+      rotation = layer.rotation === undefined ? 0 : layer.rotation,
+      visualBounds = rotatedBoundsQ16V1(destination, rotation),
+      solidColor =
+        shape || text
+          ? [
+              Number.parseInt((shape?.fill ?? text!.fill).slice(1, 3), 16),
+              Number.parseInt((shape?.fill ?? text!.fill).slice(3, 5), 16),
+              Number.parseInt((shape?.fill ?? text!.fill).slice(5, 7), 16),
+              255,
+            ]
+          : undefined;
     const geometry = [
-      source.x,
-      source.y,
-      source.width,
-      source.height,
+      ...(source ? [source.x, source.y, source.width, source.height] : []),
       destination.x,
       destination.y,
       destination.width,
@@ -468,38 +836,75 @@ function compileSurface(surface: RenderSurfacePlanV1, sources: Map<string, Norma
       !Number.isSafeInteger(layer.opacity) ||
       layer.opacity < 0 ||
       layer.opacity > 65536 ||
-      source.x < 0 ||
-      source.y < 0 ||
-      source.width < 1 ||
-      source.height < 1 ||
-      source.x + source.width > asset.width ||
-      source.y + source.height > asset.height ||
+      (source &&
+        asset &&
+        (source.x < 0 ||
+          source.y < 0 ||
+          source.width < 1 ||
+          source.height < 1 ||
+          source.x + source.width > asset.width ||
+          source.y + source.height > asset.height)) ||
       destination.width < 1 ||
-      destination.height < 1
+      destination.height < 1 ||
+      !Number.isSafeInteger(destination.x + destination.width) ||
+      !Number.isSafeInteger(destination.y + destination.height)
     )
       throw new Error(`Invalid compile geometry: ${layer.id}`);
-    for (let y = 0; y < 192; y += 1)
-      for (let x = 0; x < 256; x += 1) {
-        const relativeX = x * 65536 + 32768 - destination.x,
-          relativeY = y * 65536 + 32768 - destination.y;
+    if (image && asset && source) {
+      for (let y = 0; y < height; y += 1)
+        for (let x = 0; x < width; x += 1) {
+          const sourcePixel = imageSourcePixelAtQ16V1(source, destination, rotation, {
+            x: x * 65536 + 32768,
+            y: y * 65536 + 32768,
+          });
+          if (!sourcePixel) continue;
+          const sourceX = sourcePixel.x,
+            sourceY = sourcePixel.y;
+          const input = (sourceY * asset.width + sourceX) * 4,
+            output = y * width + x;
+          const sourceAlpha = roundDivide(asset.pixels[input + 3]! * layer.opacity, 65536),
+            inverse = 255 - sourceAlpha;
+          red[output] = asset.pixels[input]! * sourceAlpha + roundDivide(red[output]! * inverse, 255);
+          green[output] = asset.pixels[input + 1]! * sourceAlpha + roundDivide(green[output]! * inverse, 255);
+          blue[output] = asset.pixels[input + 2]! * sourceAlpha + roundDivide(blue[output]! * inverse, 255);
+          alpha[output] = sourceAlpha + roundDivide(alpha[output]! * inverse, 255);
+        }
+      continue;
+    }
+    for (let y = 0; y < height; y += 1)
+      for (let x = 0; x < width; x += 1) {
+        const visualX = x * 65536 + 32768 - visualBounds.x,
+          visualY = y * 65536 + 32768 - visualBounds.y;
+        if (visualX < 0 || visualY < 0 || visualX >= visualBounds.width || visualY >= visualBounds.height) continue;
+        const { x: relativeX, y: relativeY } = unrotatePointQ16V1(
+          visualX,
+          visualY,
+          destination.width,
+          destination.height,
+          rotation,
+        );
         if (relativeX < 0 || relativeY < 0 || relativeX >= destination.width || relativeY >= destination.height)
           continue;
-        const sourceX = source.x + Number((BigInt(relativeX) * BigInt(source.width)) / BigInt(destination.width));
-        const sourceY = source.y + Number((BigInt(relativeY) * BigInt(source.height)) / BigInt(destination.height));
         if (
-          sourceX < source.x ||
-          sourceY < source.y ||
-          sourceX >= source.x + source.width ||
-          sourceY >= source.y + source.height
+          shape
+            ? !shapeContainsPixelCenterV1(shape.shape, relativeX, relativeY, destination.width, destination.height)
+            : !textLayerContainsPixelCenterV1(
+                text!.content,
+                text!.scale,
+                text!.alignment,
+                relativeX,
+                relativeY,
+                destination.width,
+                destination.height,
+              )
         )
           continue;
-        const input = (sourceY * asset.width + sourceX) * 4,
-          output = y * 256 + x;
-        const sourceAlpha = roundDivide(asset.pixels[input + 3]! * layer.opacity, 65536),
+        const output = y * width + x,
+          sourceAlpha = roundDivide(255 * layer.opacity, 65536),
           inverse = 255 - sourceAlpha;
-        red[output] = asset.pixels[input]! * sourceAlpha + roundDivide(red[output]! * inverse, 255);
-        green[output] = asset.pixels[input + 1]! * sourceAlpha + roundDivide(green[output]! * inverse, 255);
-        blue[output] = asset.pixels[input + 2]! * sourceAlpha + roundDivide(blue[output]! * inverse, 255);
+        red[output] = solidColor![0]! * sourceAlpha + roundDivide(red[output]! * inverse, 255);
+        green[output] = solidColor![1]! * sourceAlpha + roundDivide(green[output]! * inverse, 255);
+        blue[output] = solidColor![2]! * sourceAlpha + roundDivide(blue[output]! * inverse, 255);
         alpha[output] = sourceAlpha + roundDivide(alpha[output]! * inverse, 255);
       }
   }
@@ -514,7 +919,13 @@ function compileSurface(surface: RenderSurfacePlanV1, sources: Map<string, Norma
       rgba[output + 3] = divisor;
     }
   }
-  return packRgba8ToDspico15(rgba);
+  return rgba;
+}
+
+function compileSurface(surface: RenderSurfacePlanV1, sources: Map<string, NormalizedRgbaAssetV1>): Uint8Array {
+  return packRgba8ToDspico15(
+    compositeCustomLayersV1(surface.width, surface.height, surface.layers, [...sources.values()]),
+  );
 }
 
 export function compileCustomBackgroundsV1(
@@ -554,6 +965,98 @@ export function compileCustomBackgroundsV1(
   };
 }
 
+const visualRoleForPath: Record<string, CustomVisualRoleV1> = {
+  "topbg.bin": "top-background",
+  "bottombg.bin": "bottom-background",
+  "gridcell.bin": "grid-cell",
+  "gridcellSelected.bin": "grid-cell-selected",
+  "gridcellPltt.bin": "grid-cell",
+  "gridcellSelectedPltt.bin": "grid-cell-selected",
+  "bannerListCell.bin": "banner-cell",
+  "bannerListCellSelected.bin": "banner-cell-selected",
+  "bannerListCellPltt.bin": "banner-cell",
+  "bannerListCellSelectedPltt.bin": "banner-cell-selected",
+  "scrim.bin": "scrim",
+  "scrimPltt.bin": "scrim",
+};
+const visualImage = (source: CustomVisualSourceV1, width: number, height: number): RgbaImageV1 => {
+  if (source.pixels.length !== source.width * source.height * 4)
+    throw new Error(`Invalid RGBA8 source: ${source.role}`);
+  const pixels = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y += 1)
+    for (let x = 0; x < width; x += 1) {
+      const sourceX = Math.min(source.width - 1, Math.floor(((x + 0.5) * source.width) / width));
+      const sourceY = Math.min(source.height - 1, Math.floor(((y + 0.5) * source.height) / height));
+      const input = (sourceY * source.width + sourceX) * 4,
+        output = (y * width + x) * 4;
+      pixels.set(source.pixels.subarray(input, input + 4), output);
+    }
+  return { width, height, pixels };
+};
+const visualGeometry = (role: CustomVisualRoleV1) => {
+  return CUSTOM_VISUAL_DOCUMENTS_V1[role];
+};
+
+export function compileCustomVisualPackageV1(sources: readonly CustomVisualSourceV1[]): CustomVisualPackageV1 {
+  if (sources.length !== CUSTOM_VISUAL_ROLES_V1.length) throw new Error("Exactly seven visual roles are required.");
+  const byRole = new Map<CustomVisualRoleV1, CustomVisualSourceV1>();
+  for (const source of sources) {
+    if (!CUSTOM_VISUAL_ROLES_V1.includes(source.role) || byRole.has(source.role))
+      throw new Error(`Visual role assignment is not unique: ${source.role}`);
+    if (
+      !/^[a-f0-9]{64}$/.test(source.sourceSha256) ||
+      source.referenceOnly ||
+      source.provenance.rightsToExport !== true
+    )
+      throw new Error(`Visual source authority is incomplete: ${source.role}`);
+    if (source.sourceBytes && sha256(source.sourceBytes) !== source.sourceSha256)
+      throw new Error(`Visual source bytes changed: ${source.role}`);
+    byRole.set(source.role, source);
+  }
+  if (CUSTOM_VISUAL_ROLES_V1.some((role) => !byRole.has(role))) throw new Error("Every visual role must be assigned.");
+  const image = (role: CustomVisualRoleV1) => {
+    const source = byRole.get(role)!;
+    const geometry = visualGeometry(role);
+    return visualImage(source, geometry.width, geometry.height);
+  };
+  const files = encodeV13VisualFiles({
+    top: image("top-background"),
+    bottom: image("bottom-background"),
+    gridcell: image("grid-cell"),
+    gridcellSelected: image("grid-cell-selected"),
+    bannerListCell: image("banner-cell"),
+    bannerListCellSelected: image("banner-cell-selected"),
+    scrim: image("scrim"),
+  });
+  const outputs: CustomVisualOutputV1[] = CUSTOM_VISUAL_SLOTS_V1.map((slot) => {
+    const path = slot.path as keyof typeof files,
+      bytes = files[path],
+      role = visualRoleForPath[slot.path],
+      source = byRole.get(role)!;
+    return { ...slot, role, sourceSha256: source.sourceSha256, bytes, sha256: sha256(bytes) };
+  });
+  return {
+    version: 1,
+    profileId: "dspico-launcher-v1",
+    codecPolicy: CODEC_POLICY_V1,
+    palettePolicy: PALETTE_POLICY_V1,
+    totalBytes: CUSTOM_VISUAL_TOTAL_BYTES_V1,
+    files,
+    outputs,
+    lineage: CUSTOM_VISUAL_ROLES_V1.map((role) => ({
+      role,
+      sourceSha256: byRole.get(role)!.sourceSha256,
+      recipe: { ...byRole.get(role)!.recipe, transform: "nearest-center-floor-v1" },
+    })),
+    preview: {
+      label: "Decoded post-codec output",
+      fidelity: "Chromium approximation",
+      hardwareParityClaimed: false,
+      hardwareUnknown: true,
+    },
+  };
+}
+
 export type ExportFileV1 = { path: string; bytes: Uint8Array };
 export type ExportPlanV1 = {
   files: ExportFileV1[];
@@ -589,7 +1092,7 @@ const assertPath = (candidate: string): void => {
   if (parts.some((part) => !part || part === "." || part === "..")) throw new Error(`Unsafe export path: ${candidate}`);
 };
 
-function storedZip(files: readonly ExportFileV1[]): Uint8Array {
+export function storedZip(files: readonly ExportFileV1[]): Uint8Array {
   const names = files.map(({ path }) => (assertPath(path), encoder.encode(path)));
   const localSize = files.reduce((size, file, index) => size + 30 + names[index]!.length + file.bytes.length, 0);
   const centralSize = files.reduce((size, _file, index) => size + 46 + names[index]!.length, 0);
@@ -640,13 +1143,14 @@ export function compileThemeExport(input: unknown, acknowledgments: readonly str
     reportVersion: 1,
     compatibility: {
       profileId: DSPICO_LAUNCHER_V1.profileId,
+      tag: DSPICO_LAUNCHER_V1.tag,
       launcherCommit: DSPICO_LAUNCHER_V1.launcherCommit,
+      manifestSha256: DSPICO_LAUNCHER_V1.manifestSha256,
       compilerVersion: "0.1.0",
       projectFormatVersion: 1,
-      evidence: DSPICO_LAUNCHER_V1.evidence
-        .map(({ ref, sha256: digest }) => ({ path: ref, sha256: digest }))
-        .sort((a, b) => lexical(a.path, b.path)),
+      evidence: reportEvidence(),
     },
+    evidenceBoundary: softwareFixtureBoundary,
     diagnostics: validation.diagnostics,
     acknowledgmentFingerprints: validation.acknowledgedFingerprints,
     files: [{ path: "theme.json", bytes: themeBytes.length, sha256: sha256(themeBytes) }],
@@ -661,6 +1165,24 @@ export function compileThemeExport(input: unknown, acknowledgments: readonly str
   return { files, zipBytes: storedZip(files), reportSha256: sha256(reportBytes), diagnostics: validation.diagnostics };
 }
 
+const transparentImage = (width: number, height: number): RgbaImageV1 => ({
+  width,
+  height,
+  pixels: new Uint8Array(width * height * 4),
+});
+const unpackDspico15 = (bytes: Uint8Array, width: number, height: number): RgbaImageV1 => {
+  const pixels = new Uint8Array(width * height * 4);
+  for (let input = 0, output = 0; output < pixels.length; input += 2, output += 4) {
+    const word = bytes[input]! | (bytes[input + 1]! << 8);
+    const expand = (value: number) => Math.round((value * 255) / 31);
+    pixels[output] = expand(word & 31);
+    pixels[output + 1] = expand((word >>> 5) & 31);
+    pixels[output + 2] = expand((word >>> 10) & 31);
+    pixels[output + 3] = word & 0x8000 ? 255 : 0;
+  }
+  return { width, height, pixels };
+};
+
 export function compileCustomThemeExportV1(
   projectInput: unknown,
   plan: CustomRenderPlanV1,
@@ -672,33 +1194,42 @@ export function compileCustomThemeExportV1(
   const project = objectValue(projectInput)!;
   const metadata = objectValue(project.metadata)!;
   const records = (project.assets as unknown[]).map(objectValue).filter(Boolean);
+  const tokens = objectValue(project.tokens);
+  const primaryColor = objectValue(tokens?.primaryColor) ?? { r: 0, g: 0, b: 0 };
   const themeBytes = canonicalJson({
     type: "custom",
-    formatVersion: 1,
     name: metadata.name,
     description: metadata.description,
     author: metadata.author,
-    launchTransition: project.launchTransition,
-    topBackground: "topbg.bin",
-    bottomBackground: "bottombg.bin",
+    primaryColor,
+    darkTheme: tokens?.darkTheme === true,
+  });
+  const visual = encodeV13VisualFiles({
+    top: unpackDspico15(compiled.top, 256, 192),
+    bottom: unpackDspico15(compiled.bottom, 256, 192),
+    gridcell: transparentImage(64, 64),
+    gridcellSelected: transparentImage(64, 64),
+    bannerListCell: transparentImage(256, 49),
+    bannerListCellSelected: transparentImage(256, 49),
+    scrim: transparentImage(8, 42),
   });
   const payloads = [
     { path: "theme.json", bytes: themeBytes },
-    { path: "topbg.bin", bytes: compiled.top },
-    { path: "bottombg.bin", bytes: compiled.bottom },
+    ...LAUNCHER_V1_VISUAL_FILES.map((path) => ({ path, bytes: visual[path] })),
   ];
   const provenance = records.map((record) => objectValue(record!.provenance)!).filter(Boolean);
   const report = {
     reportVersion: 1,
     compatibility: {
       profileId: DSPICO_LAUNCHER_V1.profileId,
+      tag: DSPICO_LAUNCHER_V1.tag,
       launcherCommit: DSPICO_LAUNCHER_V1.launcherCommit,
+      manifestSha256: DSPICO_LAUNCHER_V1.manifestSha256,
       compilerVersion: "custom-compiler-v1",
       projectFormatVersion: 2,
-      evidence: DSPICO_LAUNCHER_V1.evidence
-        .map(({ ref, sha256: digest }) => ({ path: ref, sha256: digest }))
-        .sort((a, b) => lexical(a.path, b.path)),
+      evidence: reportEvidence(),
     },
+    evidenceBoundary: softwareFixtureBoundary,
     policies: {
       composition: "fixed-integer-source-over-v1",
       resize: "nearest-center-floor-v1",

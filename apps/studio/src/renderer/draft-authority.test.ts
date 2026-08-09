@@ -97,7 +97,7 @@ describe("draft authority", () => {
     vi.useRealTimers();
   });
 
-  it("invalidates diagnostics and export receipt as soon as a draft changes", () => {
+  it("invalidates diagnostics and export summary as soon as a draft changes", () => {
     const { authority, invalidated } = harness();
 
     authority.schedule("global.background", operation("#123456"), "home");

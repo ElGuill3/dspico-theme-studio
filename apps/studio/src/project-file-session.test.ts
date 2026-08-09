@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { createProject } from "../../../packages/theme-core/src/index.js";
+import { createProject, createProjectV3 } from "../../../packages/theme-core/src/index.js";
 import { ProjectFileSession, type ProjectFileStore } from "./project-file-session.js";
 
 const metadata = { name: "Theme", description: "Offline", author: "Author" };
@@ -63,5 +63,34 @@ describe("ProjectFileSession", () => {
     await session.save(state);
 
     expect(saves).toEqual(["replacement.json", "original.json", "saved.json", "saved.json"]);
+  });
+
+  it("uses Save migrated copy for V3 and changes the session only after the writer commits", async () => {
+    const selected = ["/projects/source.json", "/projects/migrated.json", "/projects/after.json"];
+    const calls: string[] = [];
+    let fail = true;
+    // prettier-ignore
+    const store = {
+      open: async () => ({ state, orphans: [] }),
+      save: async (name: string) => void calls.push(`save:${name}`),
+      saveV3: async (name: string) => {
+        calls.push(`v3:${name}`);
+        if (fail) {
+          fail = false;
+          throw new Error("atomic writer failed");
+        }
+      },
+    } satisfies ProjectFileStore & { saveV3: (name: string, state: ReturnType<typeof createProjectV3>) => Promise<void> };
+    const session = new ProjectFileSession(
+      async () => selected.shift()!,
+      async () => store,
+    );
+    await session.open();
+    const v3 = createProjectV3({ projectId: "v3", metadata });
+    await expect(session.saveMigratedCopy(v3)).rejects.toThrow("atomic writer failed");
+    await session.save(v3 as never);
+    await session.saveMigratedCopy(v3);
+    await session.save(v3 as never);
+    expect(calls).toEqual(["v3:migrated.json", "save:source.json", "v3:after.json", "save:after.json"]);
   });
 });

@@ -47,6 +47,49 @@ const exists = async (candidate: string): Promise<boolean> => {
 
 const equal = (left: Uint8Array, right: Uint8Array) =>
   left.length === right.length && left.every((byte, index) => byte === right[index]);
+const zipManifest = (bytes: Uint8Array): readonly (readonly [string, string])[] | undefined => {
+  if (
+    bytes.length < 4 ||
+    new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0, true) !== 0x04034b50
+  )
+    return undefined;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    entries: [string, string][] = [];
+  let offset = 0;
+  while (offset + 4 <= bytes.length && view.getUint32(offset, true) === 0x04034b50) {
+    if (offset + 30 > bytes.length || view.getUint16(offset + 8, true) !== 0 || view.getUint16(offset + 6, true) & 0x08)
+      throw new Error("ZIP manifest is invalid.");
+    const size = view.getUint32(offset + 18, true),
+      nameLength = view.getUint16(offset + 26, true),
+      extraLength = view.getUint16(offset + 28, true);
+    const nameStart = offset + 30,
+      dataStart = nameStart + nameLength + extraLength;
+    if (dataStart + size > bytes.length) throw new Error("ZIP manifest is invalid.");
+    const name = new TextDecoder().decode(bytes.slice(nameStart, nameStart + nameLength));
+    entries.push([
+      name,
+      createHash("sha256")
+        .update(bytes.slice(dataStart, dataStart + size))
+        .digest("hex"),
+    ]);
+    offset = dataStart + size;
+  }
+  if (!entries.length || offset + 4 > bytes.length || view.getUint32(offset, true) !== 0x02014b50)
+    throw new Error("ZIP manifest is invalid.");
+  return entries;
+};
+const assertEquivalentZip = (files: readonly ExportFile[], zipBytes: Uint8Array): void => {
+  const actual = zipManifest(zipBytes);
+  if (!actual) return;
+  const expected = files.map(
+    ({ path: filePath, bytes: fileBytes }) => [filePath, createHash("sha256").update(fileBytes).digest("hex")] as const,
+  );
+  if (
+    actual.length !== expected.length ||
+    actual.some(([filePath, hash], index) => filePath !== expected[index]?.[0] || hash !== expected[index]?.[1])
+  )
+    throw new Error("ZIP manifest does not match folder manifest.");
+};
 
 export class AtomicExportWriter {
   private constructor(
@@ -412,6 +455,7 @@ export class AtomicExportWriter {
   ): Promise<void> {
     if (folderDestination !== OWNED_DESTINATIONS[0] || zipDestination !== OWNED_DESTINATIONS[1])
       throw new ExportPathError(`${folderDestination},${zipDestination}`);
+    assertEquivalentZip(files, zipBytes);
     const targets = await Promise.all(OWNED_DESTINATIONS.map((candidate) => this.destination(candidate)));
     const transaction = randomUUID();
     const identityRecord = `${this.record}.identity`;

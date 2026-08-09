@@ -1,0 +1,8 @@
+{
+  "policy": "le-xbgr555-a3i5-a5i3-round-half-up-median-cut-v1",
+  "directHex": "1f80e08300fc0000",
+  "a3i5IndicesHex": "00e382e1",
+  "a3i5PalettePrefixHex": "000000fce0831f80",
+  "a5i3IndicesHex": "00fb82f9",
+  "a5i3PalettePrefixHex": "000000fce0831f80"
+}
