@@ -39,6 +39,16 @@ type RunnerOptions = {
   repositoryRoot?: string;
   show?: (spec: string, options: Call["options"]) => string | Buffer;
 };
+const syntheticSources = new Map(
+  launcherV1Fixture.sources.map(({ path, sha256 }) => {
+    const spec = `${commit}:${path}`;
+    const content = Buffer.from(path === "_pico/themes/material/theme.json" ? "{}" : spec);
+    return [spec, { content, sha256 }] as const;
+  }),
+);
+const syntheticDigest = (content: string | Buffer) =>
+  [...syntheticSources.values()].find((source) => source.content.equals(Buffer.from(content)))?.sha256 ??
+  "0000000000000000000000000000000000000000000000000000000000000000";
 
 const runner = (options: RunnerOptions = {}) => {
   const calls: Call[] = [];
@@ -49,18 +59,16 @@ const runner = (options: RunnerOptions = {}) => {
     if (args[2] === "rev-parse") return `${options.head ?? commit}\n`;
     if (args[2] === "describe") return `${options.tag ?? tag}\n`;
     if (args[2] === "show" && options.show) return options.show(args[3] ?? "", commandOptions);
-    if (args[2] === "show")
-      return execFileSync(
-        "git",
-        ["-C", path.resolve(process.cwd(), "../pico-launcher-worktrees/v1.3.0-audit"), "show", args[3] ?? ""],
-        commandOptions,
-      );
+    if (args[2] === "show") {
+      const source = syntheticSources.get(args[3] ?? "");
+      if (source) return source.content;
+    }
     throw new Error(`Unexpected command: ${args.join(" ")}`);
   };
   return { calls, run };
 };
 const capture = (path: string, fake: ReturnType<typeof runner>) =>
-  captureLauncherFixtures(path, { realpath: () => root, run: fake.run });
+  captureLauncherFixtures(path, { contentSha256: syntheticDigest, realpath: () => root, run: fake.run });
 
 describe("launcher fixture capture", () => {
   it("equates relative and absolute paths", () => {
@@ -159,6 +167,9 @@ describe("launcher fixture capture", () => {
     });
     expect(result.sources.map(({ path }) => path)).toEqual(paths);
     expect(result.sources.map(({ path }) => path)).not.toContain("_pico/themes/raspberry/gridcellPlttSelected.bin");
+    expect(fake.calls.filter(({ args }) => args[2] === "show").map(({ args }) => args)).toEqual(
+      paths.map((path) => ["-C", root, "show", `${commit}:${path}`]),
+    );
     expect(fake.calls.every(({ file, options }) => file === "git" && options.shell === false)).toBe(true);
     expect(
       fake.calls.every(({ args }) => !["add", "checkout", "commit", "push", "reset"].includes(args[2] ?? "")),
@@ -167,14 +178,7 @@ describe("launcher fixture capture", () => {
 
   it("rejects source hash drift before reading later evidence", () => {
     const fake = runner({
-      show: (spec, commandOptions) =>
-        spec.endsWith(":docs/Themes.md")
-          ? Buffer.from("drifted source")
-          : execFileSync(
-              "git",
-              ["-C", path.resolve(process.cwd(), "../pico-launcher-worktrees/v1.3.0-audit"), "show", spec],
-              commandOptions,
-            ),
+      show: (spec) => (spec.endsWith(":docs/Themes.md") ? Buffer.from("drifted source") : Buffer.from(spec)),
     });
     expect(() => capture(root, fake)).toThrowError(expect.objectContaining({ reason: "invalid-source" }));
     expect(fake.calls.filter(({ args }) => args[2] === "show")).toHaveLength(1);
@@ -193,7 +197,7 @@ describe("launcher fixture capture", () => {
 
   it("matches the checked-in immutable profile evidence", () => {
     const evidence = JSON.parse(
-      readFileSync(path.join(process.cwd(), "packages/test-fixtures/evidence/pico-launcher-v1-3-profile.json"), "utf8"),
+      readFileSync(path.join(__dirname, "../evidence/pico-launcher-v1-3-profile.json"), "utf8"),
     );
     expect(evidence).toMatchObject({ profileId: launcherV1Fixture.profileId, tag: "v1.3.0", launcherCommit: commit });
     expect(evidence.manifestSha256).toBe(launcherV1Fixture.manifestSha256);

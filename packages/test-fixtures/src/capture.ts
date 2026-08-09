@@ -21,7 +21,11 @@ const fail = (reason: CaptureFailure, message: string): never => {
 };
 
 const nativeRunner: CommandRunner = (file, args, options) => execFileSync(file, [...args], options);
-export type CaptureOptions = { realpath?: (path: string) => string; run?: CommandRunner };
+export type CaptureOptions = {
+  contentSha256?: (content: CommandOutput) => string;
+  realpath?: (path: string) => string;
+  run?: CommandRunner;
+};
 
 const text = (output: CommandOutput) => (typeof output === "string" ? output : output.toString("utf8"));
 
@@ -49,6 +53,7 @@ export function captureLauncherFixtures(repositoryPath: string, options: Capture
     }
   };
   const gitText = (args: readonly string[], reason?: CaptureFailure) => text(git(args, reason));
+  const contentSha256 = options.contentSha256 ?? ((content) => createHash("sha256").update(content).digest("hex"));
   const prefix = ["-C", repositoryRoot] as const;
   const root = gitText([...prefix, "rev-parse", "--show-toplevel"], "not-repository").trim();
   if (!root) fail("not-repository", "Path is not a canonical Git repository.");
@@ -62,7 +67,7 @@ export function captureLauncherFixtures(repositoryPath: string, options: Capture
   const expected = new Map(launcherV1Fixture.sources.map(({ path, sha256 }) => [path, sha256]));
   const sources = LAUNCHER_V1_SOURCE_PATHS.map((path) => {
     const content = git([...prefix, "show", `${LAUNCHER_V1_COMMIT}:${path}`], "invalid-source");
-    const sha256 = createHash("sha256").update(content).digest("hex");
+    const sha256 = contentSha256(content);
     if (expected.get(path) !== sha256) fail("invalid-source", `Pinned launcher evidence drifted at ${path}.`);
     return { path, content: text(content), sha256 };
   });
