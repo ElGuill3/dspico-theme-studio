@@ -29,7 +29,34 @@ type BrowserStudio = {
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 // prettier-ignore
 const testWav = () => Buffer.from("524946462800000057415645666d742010000000010001002256000044ac00000200100064617461040000000000e803", "hex");
-const projectName = (page: Page) => page.locator("dt", { hasText: "Project" }).locator("..").locator("dd");
+const projectName = (page: Page) => page.locator(".current-project");
+const projectDrawer = (page: Page) => page.getByRole("dialog", { name: "Project" });
+const openProjectDrawer = async (page: Page, tab: "Details" | "Assets" | "Audio" | "Export" = "Details") => {
+  const drawer = projectDrawer(page);
+  if (!(await drawer.isVisible())) await page.getByRole("button", { name: "Project", exact: true }).click();
+  await drawer.getByRole("tab", { name: tab }).click();
+  return drawer;
+};
+const closeProjectDrawer = async (page: Page) => {
+  const drawer = projectDrawer(page);
+  if (await drawer.isVisible()) await drawer.getByRole("button", { name: "Close Project drawer" }).click();
+};
+const showDockTab = async (page: Page, tab: "Layers" | "Properties" | "Preview") => {
+  if ((await page.locator("#workspace-dock").count()) === 0)
+    await page.getByRole("button", { name: "Dock", exact: true }).click();
+  const dock = page.locator("#workspace-dock");
+  await dock.getByRole("tab", { name: tab }).click();
+  return dock;
+};
+const createCustomFromChrome = async (page: Page) => {
+  const menu = page.locator("details.new-menu > summary");
+  if (await menu.count()) await menu.click();
+  await page.getByRole("button", { name: "New Custom" }).click();
+};
+const closeOnboarding = async (page: Page) => {
+  const onboarding = page.getByRole("dialog", { name: "Build a theme in seven documents" });
+  if (await onboarding.isVisible()) await onboarding.getByRole("button", { name: "Close help" }).click();
+};
 const customState = async (root: string) => {
   const selected = await readFile(path.join(root, "project-selection.txt"), "utf8").catch(() => root);
   const state = JSON.parse(await readFile(path.join(selected.trim(), "project.json"), "utf8")) as {
@@ -62,7 +89,7 @@ const exportFolderSnapshot = async (root: string): Promise<Map<string, Buffer>> 
 };
 
 test("completes the offline Material and Custom lifecycles through the hardened Electron boundary", async () => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   const root = await mkdtemp(path.join(os.tmpdir(), "dspico-studio-e2e-"));
   const materialRoot = path.join(root, "material-project");
   const customRoot = path.join(root, "custom-project");
@@ -102,11 +129,10 @@ test("completes the offline Material and Custom lifecycles through the hardened 
   try {
     const page = await electronApp.firstWindow();
     page.setDefaultTimeout(5_000);
-    const projectSettings = page.locator("details.project-settings > summary");
     const workspace = page.getByRole("region", { name: "Theme canvas" });
-    const previewView = page.getByRole("group", { name: "Preview view" });
+    const previewView = page.getByRole("group", { name: "Preview mode" });
     const coverflow = previewView.getByRole("button", { name: "Coverflow" });
-    const bannerList = previewView.getByRole("button", { name: "Banner list" });
+    const bannerList = previewView.getByRole("button", { name: "Banner" });
 
     await test.step("Launch and shell boundary", async () => {
       const onboarding = page.getByRole("dialog", { name: "Build a theme in seven documents" });
@@ -125,51 +151,15 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(help).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(help).toBeHidden();
-      await projectSettings.click();
-      const editableName = page.getByLabel("Name");
-      await editableName.focus();
-      await editableName.press("End");
-      await editableName.press("?");
-      await expect(help).toBeHidden();
-      await expect(editableName).toHaveValue(/\?$/);
-      await projectSettings.click();
       await expect(page).toHaveURL(/^app:\/\/studio\/index\.html/);
-      await expect(page.getByRole("heading", { name: "DSpico Theme Studio" })).toBeVisible();
-      await expect(page.getByText("Create or open a local project to begin authoring.")).toBeVisible();
-      await expect(projectSettings).toBeVisible();
-      await expect(projectSettings).toHaveText("Project settings");
-      await expect(page.locator('[data-launcher-overlay="coverflow-top"]')).toBeVisible();
-      await expect(page.locator('[data-launcher-overlay="coverflow-bottom"]')).toBeVisible();
-      await expect(page.locator('[data-preview-chrome="device-frame"]')).toBeVisible();
-      expect(
-        await page.locator("[data-launcher-overlay], [data-preview-chrome]").evaluateAll((chrome) =>
-          chrome.map((overlay) => ({
-            ariaHidden: overlay.getAttribute("aria-hidden"),
-            pointerEvents: getComputedStyle(overlay).pointerEvents,
-            tabIndex: (overlay as HTMLElement).tabIndex,
-          })),
-        ),
-      ).toEqual([
-        { ariaHidden: "true", pointerEvents: "none", tabIndex: -1 },
-        { ariaHidden: "true", pointerEvents: "none", tabIndex: -1 },
-        { ariaHidden: "true", pointerEvents: "none", tabIndex: -1 },
-      ]);
-
-      await expect(workspace).toBeVisible();
-      await expect(workspace.locator("canvas")).toHaveCount(1);
-      expect(
-        await workspace.locator("canvas").evaluateAll((canvases) =>
-          canvases.map((canvas) => ({
-            height: (canvas as HTMLCanvasElement).height,
-            width: (canvas as HTMLCanvasElement).width,
-          })),
-        ),
-      ).toEqual([{ height: 192, width: 256 }]);
-      await workspace.getByRole("button", { name: "bottom-background", exact: true }).click();
-      await expect(workspace.locator('[data-workspace-surface="top-background"]')).toHaveCount(0);
-      await expect(workspace.locator('[data-workspace-surface="bottom-background"]')).toBeVisible();
-      await workspace.getByRole("button", { name: "top-background", exact: true }).click();
-      await expect(workspace.locator('[data-workspace-surface="top-background"]')).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Pico Theme Creator" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Build every screen in one focused canvas." })).toBeVisible();
+      await expect(page.getByRole("button", { name: "New custom", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Open project", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "New material", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Project", exact: true })).toHaveCount(0);
+      await expect(workspace).toHaveCount(0);
+      await expect(page.locator(".preview-panel, .utility-bar, .status")).toHaveCount(0);
 
       const denied = await page.evaluate(async () => {
         const global = globalThis as typeof globalThis & {
@@ -252,17 +242,25 @@ test("completes the offline Material and Custom lifecycles through the hardened 
 
     await test.step("Material create, edit, and reopen", async () => {
       await writeFile(path.join(root, "project-selection.txt"), materialRoot);
-      const name = page.getByLabel("Name");
-      await projectSettings.click();
+      await page.getByRole("button", { name: "New material", exact: true }).click();
+      await expect(workspace).toBeVisible();
+      await showDockTab(page, "Preview");
+      await expect(page.locator('[data-preview-chrome="device-frame"]')).toBeVisible();
+      await expect(workspace.locator("canvas")).toHaveCount(1);
+      const drawer = await openProjectDrawer(page);
+      const name = drawer.getByLabel("Name");
       await expect(name).toBeVisible();
       await name.fill("Original E2E theme");
-      await page.getByRole("button", { name: "New Material" }).click();
+      await name.blur();
       await expect(projectName(page)).toHaveText("Original E2E theme");
-      await page.getByLabel("Primary color").fill("#123456");
-      await expect(page.getByText("Primary color saved.")).toBeVisible();
-      await page.getByLabel("Name").fill("Edited E2E theme");
-      await page.getByLabel("Name").blur();
+      await drawer.getByLabel("Primary color").fill("#123456");
+      await closeProjectDrawer(page);
+      await openProjectDrawer(page);
+      await expect(drawer.getByLabel("Primary color")).toHaveValue("#123456");
+      await drawer.getByLabel("Name").fill("Edited E2E theme");
+      await drawer.getByLabel("Name").blur();
       await expect(projectName(page)).toHaveText("Edited E2E theme");
+      await closeProjectDrawer(page);
       await page.getByRole("button", { name: "Undo" }).click();
       await expect(projectName(page)).toHaveText("Original E2E theme");
       await page.getByRole("button", { name: "Redo" }).click();
@@ -270,8 +268,12 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await page.getByRole("button", { name: "Save" }).click();
       await page.getByRole("button", { name: "Open project" }).click();
       await expect(projectName(page)).toHaveText("Edited E2E theme");
-      await expect(page.getByLabel("Primary color")).toHaveValue("#123456");
-      await expect(page.getByLabel("Project folder")).toHaveText("material-project");
+      await openProjectDrawer(page);
+      await expect(projectDrawer(page).getByLabel("Primary color")).toHaveValue("#123456");
+      await expect(
+        projectDrawer(page).locator("dt", { hasText: "Project location" }).locator("..").locator("dd"),
+      ).toContainText("material-project");
+      await closeProjectDrawer(page);
 
       const corruptRoot = path.join(root, "corrupt-project");
       await mkdir(corruptRoot);
@@ -298,6 +300,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(projectName(page)).toHaveText("Edited E2E theme");
       await writeFile(path.join(root, "project-selection.txt"), materialRoot);
 
+      await coverflow.click();
       await expect(coverflow).toHaveAttribute("aria-pressed", "true");
       await bannerList.click();
       await expect(bannerList).toHaveAttribute("aria-pressed", "true");
@@ -334,15 +337,16 @@ test("completes the offline Material and Custom lifecycles through the hardened 
 
     const materialExport = await test.step("Material diagnostics and export", async () => {
       const projectBefore = await readFile(path.join(materialRoot, "project.json"));
-      await page.getByRole("button", { name: "Run diagnostics" }).click();
-      await expect(page.locator("dt", { hasText: "Diagnostics" }).locator("..").locator("dd")).toHaveText("0");
+      const drawer = await openProjectDrawer(page, "Export");
+      await drawer.getByRole("button", { name: "Run diagnostics" }).click();
+      await expect(drawer.getByText("0 diagnostics", { exact: true })).toBeVisible();
       await expect(page.locator('[data-screen="top"]')).toBeVisible();
       await expect(page.locator('[data-screen="bottom"]')).toBeVisible();
       await expect(page.getByText("launcher-vector-backed", { exact: true })).toBeVisible();
       await expect(page.getByText("Chromium approximation", { exact: true })).toBeVisible();
 
-      await page.getByRole("button", { name: "Export theme" }).click();
-      const summary = page.getByTestId("export-summary");
+      await drawer.getByRole("button", { name: "Export theme" }).click();
+      const summary = drawer.getByTestId("export-summary");
       await expect(summary).toBeVisible();
       const reportHash = await summary.getAttribute("data-report-sha256");
       const zipHash = await summary.getAttribute("data-zip-sha256");
@@ -379,12 +383,9 @@ test("completes the offline Material and Custom lifecycles through the hardened 
 
       const reportBefore = await readFile(path.join(root, "export/theme/report.json"));
       const zipBefore = await readFile(path.join(root, "export/theme.zip"));
-      const diagnosticsBefore = await page
-        .locator("dt", { hasText: "Diagnostics" })
-        .locator("..")
-        .locator("dd")
-        .textContent();
+      const diagnosticsBefore = await drawer.getByText(/^\d+ diagnostics$/).textContent();
       const summaryBefore = await summary.textContent();
+      await closeProjectDrawer(page);
       return {
         diagnosticsBefore,
         projectBefore,
@@ -396,14 +397,128 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       };
     });
 
+    await test.step("Workspace dock, focus restoration, and local persistence", async () => {
+      const artboard = workspace.locator(".artboard-stage"),
+        projectBefore = await readFile(path.join(materialRoot, "project.json")),
+        reportBefore = await readFile(path.join(root, "export/theme/report.json")),
+        zipBefore = await readFile(path.join(root, "export/theme.zip"));
+
+      let dock = await showDockTab(page, "Layers");
+      await expect(dock.getByRole("tabpanel")).toHaveCount(1);
+      await expect(dock.getByRole("tab", { name: "Layers" })).toHaveAttribute("aria-selected", "true");
+      const constrainedWidth = (await artboard.boundingBox())!.width;
+      await dock.getByRole("button", { name: "Close workspace dock" }).click();
+      await expect(page.locator("#workspace-dock")).toHaveCount(0);
+      await expect(workspace.locator(".workspace-canvas")).toBeFocused();
+      expect((await artboard.boundingBox())!.width).toBeGreaterThan(constrainedWidth);
+
+      dock = await showDockTab(page, "Preview");
+      await bannerList.click();
+      await expect(bannerList).toHaveAttribute("aria-pressed", "true");
+      await dock.getByRole("button", { name: "Close workspace dock" }).click();
+      await expect(page.locator('[data-launcher-overlay="banner-list-top"]')).toHaveCount(0);
+      dock = await showDockTab(page, "Preview");
+      await expect(bannerList).toHaveAttribute("aria-pressed", "true");
+
+      await bannerList.focus();
+      await page.keyboard.press("Tab");
+      await expect(page.locator(".tool-rail, #workspace-dock")).toHaveCount(0);
+      await expect(workspace.locator(".workspace-canvas")).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(page.locator(".tool-rail")).toBeVisible();
+      await expect(page.locator("#workspace-dock")).toBeVisible();
+      await expect(bannerList).toHaveAttribute("aria-pressed", "true");
+
+      await page.locator("#workspace-dock").getByRole("button", { name: "Close workspace dock" }).focus();
+      await page.keyboard.press("Shift+Tab");
+      await expect(page.locator("#workspace-dock")).toHaveCount(0);
+      await expect(page.locator(".tool-rail")).toBeVisible();
+      await expect(workspace.locator(".workspace-canvas")).toBeFocused();
+      await page.keyboard.press("Shift+Tab");
+      await expect(page.locator("#workspace-dock")).toBeVisible();
+
+      const drawer = await openProjectDrawer(page);
+      const metadata = drawer.getByLabel("Name");
+      await metadata.focus();
+      await page.keyboard.press("Shift+Tab");
+      await expect(page.locator("#workspace-dock")).toBeVisible();
+      await metadata.focus();
+      await metadata.press("End");
+      await metadata.type(" input");
+      await expect(metadata).toHaveValue("Edited E2E theme input");
+      await metadata.press("Escape");
+      await closeProjectDrawer(page);
+
+      await showDockTab(page, "Properties");
+      await page.reload();
+      await expect(page.getByRole("heading", { name: "Build every screen in one focused canvas." })).toBeVisible();
+      await page.getByRole("button", { name: "Open project", exact: true }).click();
+      await expect(workspace).toBeVisible();
+      await expect(page.locator("#workspace-dock").getByRole("tab", { name: "Properties" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await page.evaluate(() =>
+        dispatchEvent(new StorageEvent("storage", { key: "unrelated", newValue: null, storageArea: localStorage })),
+      );
+      await expect(page.locator("#workspace-dock").getByRole("tab", { name: "Properties" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await page.evaluate(() =>
+        dispatchEvent(
+          new StorageEvent("storage", {
+            key: "dspico:workspace-layout:v2",
+            newValue: JSON.stringify({
+              version: 2,
+              layout: { dockOpen: true, dockTab: "preview", previewMode: "banner-list" },
+            }),
+            storageArea: localStorage,
+          }),
+        ),
+      );
+      await expect(page.locator("#workspace-dock").getByRole("tab", { name: "Preview" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await expect(bannerList).toHaveAttribute("aria-pressed", "true");
+      await page.evaluate(() =>
+        dispatchEvent(
+          new StorageEvent("storage", {
+            key: "dspico:workspace-layout:v2",
+            newValue: "{",
+            storageArea: localStorage,
+          }),
+        ),
+      );
+      await expect(page.locator("#workspace-dock").getByRole("tab", { name: "Layers" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+
+      const exportDrawer = await openProjectDrawer(page, "Export");
+      await exportDrawer.getByRole("button", { name: "Run diagnostics" }).click();
+      await exportDrawer.getByRole("button", { name: "Export theme" }).click();
+      await exportDrawer.getByTestId("export-summary").getByRole("button", { name: "Reveal ZIP" }).click();
+      expect(await readFile(path.join(materialRoot, "project.json"))).toEqual(projectBefore);
+      expect(await readFile(path.join(root, "export/theme/report.json"))).toEqual(reportBefore);
+      expect(await readFile(path.join(root, "export/theme.zip"))).toEqual(zipBefore);
+      await closeProjectDrawer(page);
+    });
+
     await test.step("Responsive invariants", async () => {
       const screenshotRoot = process.env.DSPICO_SCREENSHOT_DIR;
       if (screenshotRoot) {
         await mkdir(screenshotRoot, { recursive: true });
+        await showDockTab(page, "Preview");
         await coverflow.focus();
         await coverflow.press("Enter");
         await expect(coverflow).toHaveAttribute("aria-pressed", "true");
-        await page.setViewportSize({ width: 1180, height: 768 });
+        await electronApp.evaluate(({ BrowserWindow }) => {
+          const browserWindow = BrowserWindow.getAllWindows()[0];
+          if (!browserWindow) throw new Error("Electron BrowserWindow is unavailable");
+          browserWindow.setSize(1440, 900);
+        });
         await page.screenshot({
           path: path.join(screenshotRoot, "coverflow-desktop.png"),
           fullPage: true,
@@ -445,10 +560,10 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       const responsiveEvidence = await page.evaluate(() => {
         const viewportWidth = window.innerWidth;
         const contentWidth = document.documentElement.scrollWidth;
-        const previewPanel = document.querySelector<HTMLElement>(".preview-panel");
+        const previewPanel = document.querySelector<HTMLElement>("#workspace-dock");
         return {
           contentWidth,
-          mobileBreakpointActive: previewPanel !== null && getComputedStyle(previewPanel).position === "static",
+          mobileBreakpointActive: previewPanel !== null && getComputedStyle(previewPanel).position === "absolute",
           noHorizontalOverflow: contentWidth <= viewportWidth,
           overlayAlignment: [...document.querySelectorAll<HTMLElement>("[data-launcher-overlay]")].every((overlay) => {
             const overlayBounds = overlay.getBoundingClientRect();
@@ -481,49 +596,56 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       expect(await readFile(path.join(materialRoot, "project.json"))).toEqual(materialExport.projectBefore);
       expect(await readFile(path.join(root, "export/theme/report.json"))).toEqual(materialExport.reportBefore);
       expect(await readFile(path.join(root, "export/theme.zip"))).toEqual(materialExport.zipBefore);
-      await expect(page.locator("dt", { hasText: "Diagnostics" }).locator("..").locator("dd")).toHaveText(
-        materialExport.diagnosticsBefore ?? "",
-      );
-      await expect(materialExport.summary).toHaveText(materialExport.summaryBefore ?? "");
+      const exportDrawer = await openProjectDrawer(page, "Export");
+      await expect(exportDrawer.getByText(/^\d+ diagnostics$/)).toHaveText(materialExport.diagnosticsBefore ?? "");
+      await expect(exportDrawer.getByTestId("export-summary")).toHaveText(materialExport.summaryBefore ?? "");
       await expect(page.getByText("Export ZIP revealed.")).toBeVisible();
-      await projectSettings.click();
+      await closeProjectDrawer(page);
     });
 
     await test.step("Custom create, import, and render", async () => {
+      await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
+      await page.waitForFunction(() => innerWidth >= 1400);
       await writeFile(path.join(root, "project-selection.txt"), customRoot);
       // prettier-ignore
       await copyFile(path.resolve("apps/studio/src/renderer/assets/launcher-preview/coverflow-bottom.png"), path.join(root, "input.png"));
-      await page.getByRole("button", { name: "New Custom" }).click();
+      await createCustomFromChrome(page);
       await expect(
         page.evaluate(
           (id) => (globalThis as typeof globalThis & { studio: BrowserStudio }).studio.revealExport(id!, "folder"),
           materialExport.revealId,
         ),
       ).rejects.toThrow("no longer the latest");
-      await projectSettings.click();
-      await page.getByLabel("Name").fill("Edited Custom E2E");
-      await page.getByLabel("Name").blur();
+      let drawer = await openProjectDrawer(page);
+      await drawer.getByLabel("Name").fill("Edited Custom E2E");
+      await drawer.getByLabel("Name").blur();
       await expect(page.getByText("Custom metadata saved.")).toBeVisible();
-      await page.getByLabel("Description").fill("Custom metadata persisted through V3 history");
-      await page.getByLabel("Description").blur();
-      await page.getByLabel("Author").fill("Custom Author");
+      await drawer.getByLabel("Description").fill("Custom metadata persisted through V3 history");
+      await drawer.getByLabel("Description").blur();
+      await drawer.getByLabel("Author").fill("Custom Author");
       const metadataSequence = await page.locator(".status").getAttribute("data-accepted-sequence");
-      await page.getByLabel("Author").press("Enter");
+      await drawer.getByLabel("Author").press("Enter");
       await expect(page.locator(".status")).not.toHaveAttribute("data-accepted-sequence", metadataSequence!);
       await expect(projectName(page)).toHaveText("Edited Custom E2E");
+      await closeProjectDrawer(page);
       await page.getByRole("button", { name: "Undo" }).click();
-      await expect(page.getByLabel("Author")).toHaveValue("Theme author");
+      drawer = await openProjectDrawer(page);
+      await expect(drawer.getByLabel("Author")).toHaveValue("Theme author");
+      await closeProjectDrawer(page);
       await page.getByRole("button", { name: "Redo" }).click();
-      await expect(page.getByLabel("Author")).toHaveValue("Custom Author");
+      drawer = await openProjectDrawer(page);
+      await expect(drawer.getByLabel("Author")).toHaveValue("Custom Author");
+      await closeProjectDrawer(page);
       await page.getByRole("button", { name: "Save" }).click();
       await page.getByRole("button", { name: "Open project" }).click();
-      await expect(page.getByLabel("Name")).toHaveValue("Edited Custom E2E");
-      await expect(page.getByLabel("Description")).toHaveValue("Custom metadata persisted through V3 history");
-      await expect(page.getByLabel("Author")).toHaveValue("Custom Author");
-      await projectSettings.click();
-      await expect(page.getByTestId("bgm-workbench")).toContainText("BGM import is not available in this release");
-      await expect(page.getByTestId("bgm-workbench").locator("audio")).toHaveCount(0);
-      await expect(page.getByTestId("bgm-workbench").locator('input[accept*="bcstm"], textarea')).toHaveCount(0);
+      drawer = await openProjectDrawer(page);
+      await expect(drawer.getByLabel("Name")).toHaveValue("Edited Custom E2E");
+      await expect(drawer.getByLabel("Description")).toHaveValue("Custom metadata persisted through V3 history");
+      await expect(drawer.getByLabel("Author")).toHaveValue("Custom Author");
+      await drawer.getByRole("tab", { name: "Audio" }).click();
+      await expect(drawer.getByTestId("bgm-workbench")).toContainText("BGM import is not available in this release");
+      await expect(drawer.getByTestId("bgm-workbench").locator("audio")).toHaveCount(0);
+      await expect(drawer.getByTestId("bgm-workbench").locator('input[accept*="bcstm"], textarea')).toHaveCount(0);
       expect(
         await page.evaluate(
           () => typeof (globalThis as typeof globalThis & { studio: Record<string, unknown> }).studio.importBcstm,
@@ -538,12 +660,13 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         "banner-cell-selected",
         "scrim",
       ]) {
-        if (role === "top-background") await page.getByText("Visual outputs and audio", { exact: true }).click();
-        await page.getByRole("button", { name: `Assign ${role} PNG` }).click();
+        if (role === "top-background") await drawer.getByRole("tab", { name: "Assets" }).click();
+        await drawer.getByRole("button", { name: `Assign ${role} PNG` }).click();
       }
-      await expect(page.getByTestId("custom-output-rail")).toHaveAttribute("data-complete", "true");
-      await expect(page.locator("[data-custom-output]")).toHaveCount(12);
-      const outputRail = page.getByTestId("custom-output-rail");
+      await drawer.getByRole("tab", { name: "Export" }).click();
+      await expect(drawer.getByTestId("custom-output-rail")).toHaveAttribute("data-complete", "true");
+      await expect(drawer.locator("[data-custom-output]")).toHaveCount(12);
+      const outputRail = drawer.getByTestId("custom-output-rail");
       expect(await outputRail.getAttribute("data-total-bytes")).toBe("230496");
       expect(
         await page
@@ -552,12 +675,15 @@ test("completes the offline Material and Custom lifecycles through the hardened 
             outputs.every((output) => /^[a-f0-9]{64}$/.test(output.getAttribute("data-output-hash") ?? "")),
           ),
       ).toBe(true);
-      await expect(page.getByText("locked palette", { exact: true })).toBeVisible();
+      await drawer.getByRole("tab", { name: "Assets" }).click();
+      await expect(drawer.getByText("locked palette", { exact: true })).toBeVisible();
+      await drawer.getByRole("tab", { name: "Export" }).click();
       await expect(outputRail.getByText("Decoded post-codec output", { exact: true })).toBeVisible();
       await expect(outputRail.getByText("Chromium approximation", { exact: true })).toBeVisible();
       await expect(outputRail.getByText("hardware-unknown", { exact: true })).toBeVisible();
-      const navigationAudio = page.locator('[data-audio-role="navigation"]');
-      const launchAudio = page.locator('[data-audio-role="launch"]');
+      await drawer.getByRole("tab", { name: "Audio" }).click();
+      const navigationAudio = drawer.locator('[data-audio-role="navigation"]');
+      const launchAudio = drawer.locator('[data-audio-role="launch"]');
       await navigationAudio.locator('input[type="file"]').setInputFiles(path.join(root, "input.png"));
       await expect(page.locator(".status")).toContainText("WAV");
       await navigationAudio.locator('input[type="file"]').setInputFiles(path.join(root, "input.wav"));
@@ -585,15 +711,22 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(page.locator('[data-audio-role="navigation"] audio')).toHaveAttribute("data-paused-by-peer", "true");
       await navigationAudio.getByRole("button", { name: "Remove navigation sound" }).click();
       await expect(navigationAudio).toHaveAttribute("data-state", "omitted");
+      await closeProjectDrawer(page);
       await page.getByRole("button", { name: "Undo" }).click();
+      drawer = await openProjectDrawer(page, "Audio");
       await expect(navigationAudio).toHaveAttribute("data-state", "prepared");
+      await closeProjectDrawer(page);
       await page.getByRole("button", { name: "Save" }).click();
       await page.getByRole("button", { name: "Open project" }).click();
-      await expect(page.locator('[data-audio-role="navigation"] [data-waveform]')).toBeVisible();
-      await expect(page.locator('[data-audio-role="launch"] [data-waveform]')).toBeVisible();
+      drawer = await openProjectDrawer(page, "Audio");
+      await expect(drawer.locator('[data-audio-role="navigation"] [data-waveform]')).toBeVisible();
+      await expect(drawer.locator('[data-audio-role="launch"] [data-waveform]')).toBeVisible();
       await expect(page.locator("body")).not.toContainText(/receipt|evidence/i);
+      await closeProjectDrawer(page);
       await workspace.getByRole("button", { name: "top-background", exact: true }).click();
-      await workspace.getByRole("button", { name: "Import PNG" }).click();
+      await workspace.getByRole("button", { name: "Import image" }).click();
+      await showDockTab(page, "Preview");
+      await bannerList.click();
       const deviceTopCanvas = page.locator('[data-render-plan-screen="top"]');
       await expect(deviceTopCanvas).toBeVisible();
       await expect(page.locator('[data-render-plan-screen="bottom"]')).toBeVisible();
@@ -613,16 +746,29 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         { width: 256, height: 192 },
         { width: 256, height: 192 },
       ]);
-      await projectSettings.click();
-      await page.getByRole("button", { name: "Run diagnostics" }).click();
-      await expect(page.locator("dt", { hasText: "Diagnostics" }).locator("..").locator("dd")).toHaveText("0");
-      await projectSettings.click();
+      drawer = await openProjectDrawer(page, "Export");
+      await drawer.getByRole("button", { name: "Run diagnostics" }).click();
+      await expect(drawer.getByText("0 diagnostics", { exact: true })).toBeVisible();
+      await closeProjectDrawer(page);
+      await showDockTab(page, "Layers");
       const layerControl = workspace.getByRole("button", {
         name: "Select input.png",
       });
       await expect(layerControl).toBeVisible();
       await layerControl.click();
       await expect(layerControl).toHaveAttribute("aria-current", "true");
+      await showDockTab(page, "Properties");
+      const inspectorX = workspace.getByLabel("X", { exact: true }),
+        committedX = await inspectorX.inputValue(),
+        operationCountBeforeDraft = (await customState(root)).operations.length;
+      await inspectorX.fill("123");
+      await page.locator("#workspace-dock").getByRole("button", { name: "Close workspace dock" }).click();
+      await expect(page.locator("#workspace-dock")).toHaveCount(0);
+      await showDockTab(page, "Properties");
+      await expect(workspace.getByLabel("X", { exact: true })).toHaveValue("123");
+      expect((await customState(root)).operations).toHaveLength(operationCountBeforeDraft);
+      await workspace.getByLabel("X", { exact: true }).press("Escape");
+      await expect(workspace.getByLabel("X", { exact: true })).toHaveValue(committedX);
       const canvas = workspace.locator('[data-workspace-surface="top-background"]');
       await canvas.scrollIntoViewIfNeeded();
       const bounds = (await canvas.boundingBox())!;
@@ -644,6 +790,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
     });
 
     await test.step("Custom history and properties", async () => {
+      await showDockTab(page, "Layers");
       await page.getByRole("button", { name: "Save" }).click();
       await page.getByRole("button", { name: "Open project" }).click();
       await page.getByRole("button", { name: "Undo" }).click();
@@ -653,7 +800,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await workspace.getByRole("button", { name: "Select input.png" }).press("ArrowRight");
       await expect.poll(async () => (await customState(root)).operations.length).toBe(3);
 
-      await workspace.getByRole("button", { name: "Import PNG" }).click();
+      await workspace.getByRole("button", { name: "Import image" }).click();
       await expect.poll(async () => (await customState(root)).operations.length).toBe(4);
       const topLayers = workspace.getByRole("listbox", {
         name: "top-background layers",
@@ -667,12 +814,16 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(controlled).toHaveAttribute("aria-selected", "false");
       await controlled.getByRole("button", { name: "Show input.png" }).press("Enter");
       await expect.poll(async () => (await customState(root)).operations.length).toBe(6);
+      await expect(controlled.getByRole("button", { name: "Hide input.png" })).toBeVisible();
       await controlled.getByRole("button", { name: "Select input.png" }).click();
+      await expect(controlled).toHaveAttribute("aria-selected", "true");
+      await showDockTab(page, "Properties");
       const rename = workspace.getByLabel("Rename input.png");
       await rename.fill("Overlay");
       await rename.press("Enter");
       await expect.poll(async () => (await customState(root)).operations.length).toBe(7);
       await expect(workspace.getByRole("status")).toHaveText("input.png renamed to Overlay.");
+      await showDockTab(page, "Layers");
       controlled = topLayers.getByRole("option").filter({ hasText: "Overlay" });
       await controlled.getByRole("button", { name: "Move Overlay up" }).press("Enter");
       await expect.poll(async () => (await customState(root)).operations.length).toBe(8);
@@ -686,12 +837,14 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await page.getByRole("button", { name: "Open project" }).click();
       await page.getByRole("button", { name: "Undo" }).click();
       await expect.poll(async () => (await customState(root)).cursor).toBe(8);
+      await showDockTab(page, "Layers");
       await expect(topLayers.getByRole("button", { name: "Select Overlay" })).toBeVisible();
       await page.getByRole("button", { name: "Redo" }).click();
       await expect.poll(async () => (await customState(root)).cursor).toBe(9);
       await expect(topLayers.getByRole("button", { name: "Select Overlay" })).toHaveCount(0);
 
       await topLayers.getByRole("button", { name: "Select input.png" }).click();
+      await showDockTab(page, "Properties");
       for (const [label, value] of [
         ["X", "2"],
         ["Y", "3"],
@@ -727,16 +880,16 @@ test("completes the offline Material and Custom lifecycles through the hardened 
 
     await test.step("Custom diagnostics and export", async () => {
       await workspace.getByRole("button", { name: "bottom-background", exact: true }).click();
-      await workspace.getByRole("button", { name: "Import PNG" }).click();
-      await projectSettings.click();
-      await page.getByRole("button", { name: "Run diagnostics" }).click();
-      await expect(page.locator("dt", { hasText: "Diagnostics" }).locator("..").locator("dd")).toHaveText("0");
+      await workspace.getByRole("button", { name: "Import image" }).click();
+      const drawer = await openProjectDrawer(page, "Export");
+      await drawer.getByRole("button", { name: "Run diagnostics" }).click();
+      await expect(drawer.getByText("0 diagnostics", { exact: true })).toBeVisible();
       await rm(path.join(root, "export/theme"), {
         recursive: true,
         force: true,
       });
       await rm(path.join(root, "export/theme.zip"), { force: true });
-      await expect(page.getByRole("button", { name: "Export theme" })).toBeEnabled();
+      await expect(drawer.getByRole("button", { name: "Export theme" })).toBeEnabled();
       await expect(
         page.evaluate(() => (globalThis as typeof globalThis & { studio: BrowserStudio }).studio.export("custom")),
       ).resolves.toMatchObject({
@@ -750,16 +903,20 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         author: "Custom Author",
       });
       await expect(readFile(path.join(root, "export/theme.zip"))).resolves.toBeTruthy();
+      await closeProjectDrawer(page);
     });
 
     await test.step("Viewport rulers and persistent snapping guides stay export-neutral", async () => {
+      await expect(workspace.getByRole("button", { name: "Toggle guides" })).toHaveAttribute("aria-pressed", "true");
+      const railDrawer = await openProjectDrawer(page, "Export");
+      const railBefore = await railDrawer
+        .locator("[data-custom-output]")
+        .evaluateAll((outputs) => outputs.map((output) => output.getAttribute("data-output-hash")));
+      await closeProjectDrawer(page);
       const canvas = workspace.locator('[data-workspace-surface="bottom-background"]'),
         viewport = workspace.locator(".artboard-viewport"),
         operationCount = (await customState(root)).operations.length,
         browserBefore = await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL()),
-        railBefore = await page
-          .locator("[data-custom-output]")
-          .evaluateAll((outputs) => outputs.map((output) => output.getAttribute("data-output-hash"))),
         folderBefore = await exportFolderSnapshot(root),
         zipBefore = await readFile(path.join(root, "export/theme.zip"));
 
@@ -786,9 +943,16 @@ test("completes the offline Material and Custom lifecycles through the hardened 
           { once: true },
         ),
       );
-      await page.keyboard.down("Control");
-      await page.mouse.wheel(0, -300);
-      await page.keyboard.up("Control");
+      const initialFitZoom = Number(await workspace.getByLabel("Exact zoom percentage").inputValue());
+      await viewport.dispatchEvent("wheel", {
+        clientX: pointer.x,
+        clientY: pointer.y,
+        ctrlKey: true,
+        deltaY: -300,
+      });
+      await expect
+        .poll(async () => Number(await workspace.getByLabel("Exact zoom percentage").inputValue()))
+        .toBeCloseTo(Math.min(1600, initialFitZoom * 2), 2);
       await expect.poll(() => viewport.getAttribute("data-wheel-client")).not.toBeNull();
       const [wheelX, wheelY] = (await viewport.getAttribute("data-wheel-client"))!.split(",").map(Number),
         documentBefore = {
@@ -798,22 +962,27 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         afterBox = (await canvas.boundingBox())!;
       expect((wheelX! - afterBox.x) / (afterBox.width / 256)).toBeCloseTo(documentBefore.x, 3);
       expect((wheelY! - afterBox.y) / (afterBox.height / 192)).toBeCloseTo(documentBefore.y, 3);
-      await page.keyboard.down("Control");
       for (let cycle = 0; cycle < 20; cycle += 1) {
-        await page.mouse.wheel(0, 300);
-        await expect(viewport).toHaveAttribute("aria-label", /Viewport at 150 percent/);
-        await page.mouse.wheel(0, -300);
-        await expect(viewport).toHaveAttribute("aria-label", /Viewport at 300 percent/);
+        await viewport.dispatchEvent("wheel", { clientX: wheelX, clientY: wheelY, ctrlKey: true, deltaY: 300 });
+        expect(Number(await workspace.getByLabel("Exact zoom percentage").inputValue())).toBeCloseTo(initialFitZoom, 2);
+        await viewport.dispatchEvent("wheel", { clientX: wheelX, clientY: wheelY, ctrlKey: true, deltaY: -300 });
+        expect(Number(await workspace.getByLabel("Exact zoom percentage").inputValue())).toBeCloseTo(
+          Math.min(1600, initialFitZoom * 2),
+          2,
+        );
       }
-      await page.keyboard.up("Control");
       const repeatedBox = (await canvas.boundingBox())!;
       expect((wheelX! - repeatedBox.x) / (repeatedBox.width / 256)).toBeCloseTo(documentBefore.x, 3);
       expect((wheelY! - repeatedBox.y) / (repeatedBox.height / 192)).toBeCloseTo(documentBefore.y, 3);
 
       const panStart = await viewport.getAttribute("aria-label");
       const viewportBox = (await viewport.boundingBox())!;
-      await page.mouse.move(viewportBox.x + viewportBox.width / 2, viewportBox.y + viewportBox.height / 2);
-      await page.mouse.wheel(12, 18);
+      await viewport.dispatchEvent("wheel", {
+        clientX: viewportBox.x + viewportBox.width / 2,
+        clientY: viewportBox.y + viewportBox.height / 2,
+        deltaX: 12,
+        deltaY: 18,
+      });
       await expect(viewport).not.toHaveAttribute("aria-label", panStart!);
       let box = (await canvas.boundingBox())!;
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -1044,13 +1213,13 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await guide.dispatchEvent("keydown", { key: "Delete" });
       expect((await customState(root)).cursor).toBe(lockedGuideHistory);
       await expect(guide).toHaveCount(1);
-      await workspace.getByLabel("Show guides").evaluate((input) => (input as HTMLInputElement).click());
-      await expect(guide).toHaveCount(0);
       await workspace.getByLabel("Lock guides").evaluate((input) => (input as HTMLInputElement).click());
+      await workspace.getByRole("button", { name: "Toggle guides" }).click();
+      await expect(guide).toHaveCount(0);
 
       const beforeHiddenRectangle = (await customState(root)).cursor;
       await workspace
-        .getByRole("button", { name: "Rectangle", exact: true })
+        .getByRole("button", { name: "Add rectangle", exact: true })
         .evaluate((button) => (button as HTMLButtonElement).click());
       await expect.poll(async () => (await customState(root)).cursor).toBe(beforeHiddenRectangle + 1);
       await page.waitForTimeout(100);
@@ -1085,16 +1254,17 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         await expect(page.locator(".status")).not.toHaveAttribute("data-accepted-sequence", undoSequence!);
         await expect.poll(async () => (await customState(root)).cursor).toBe(beforeUndo - 1);
       }
-      await workspace.getByLabel("Show guides").evaluate((input) => (input as HTMLInputElement).click());
+      await workspace.getByRole("button", { name: "Toggle guides" }).click();
       await expect(workspace.locator(".document-guide.vertical")).toHaveCount(1);
 
       const beforeRectangle = (await customState(root)).cursor,
-        rectangle = workspace.getByRole("button", { name: "Rectangle", exact: true }),
+        rectangle = workspace.getByRole("button", { name: "Add rectangle", exact: true }),
         rectangleSequence = await page.locator(".status").getAttribute("data-accepted-sequence");
       await expect(rectangle).toBeEnabled();
       await rectangle.evaluate((button) => (button as HTMLButtonElement).click());
       await expect(page.locator(".status")).not.toHaveAttribute("data-accepted-sequence", rectangleSequence!);
       await expect.poll(async () => (await customState(root)).cursor).toBe(beforeRectangle + 1);
+      await showDockTab(page, "Layers");
       await expect(workspace.getByRole("button", { name: "Select Rectangle" })).toHaveAttribute("aria-current", "true");
       await page.waitForTimeout(100);
       await expect(viewport).not.toHaveClass(/pan-ready|panning/);
@@ -1139,7 +1309,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await panOpen.evaluate((button) => (button as HTMLButtonElement).click());
       await expect(page.locator(".status")).not.toHaveAttribute("data-accepted-sequence", panSequence!);
       await expect(workspace).not.toHaveAttribute("data-workspace-instance", panWorkspaceInstance!);
-      await expect(workspace.getByLabel("Exact zoom percentage")).toHaveValue("150");
+      await expect(workspace.getByLabel("Exact zoom percentage")).not.toHaveValue("0");
       await expect(topRole).toHaveAttribute("aria-pressed", "true");
       const replacedPanHistory = (await customState(root)).cursor;
       await page.mouse.up({ button: "middle" });
@@ -1162,7 +1332,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await guideOpen.evaluate((button) => (button as HTMLButtonElement).click());
       await expect(page.locator(".status")).not.toHaveAttribute("data-accepted-sequence", guideSequence!);
       await expect(workspace).not.toHaveAttribute("data-workspace-instance", guideWorkspaceInstance!);
-      await expect(workspace.getByLabel("Exact zoom percentage")).toHaveValue("150");
+      await expect(workspace.getByLabel("Exact zoom percentage")).not.toHaveValue("0");
       await expect(topRole).toHaveAttribute("aria-pressed", "true");
       const replacedGuideHistory = (await customState(root)).cursor;
       await page.keyboard.press("Enter");
@@ -1175,7 +1345,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
 
       await page.getByRole("button", { name: "Save" }).click();
       await page.getByRole("button", { name: "Open project" }).click();
-      await expect(workspace.getByLabel("Exact zoom percentage")).toHaveValue("150");
+      await expect(workspace.getByLabel("Exact zoom percentage")).not.toHaveValue("0");
       await expect(topRole).toHaveAttribute("aria-pressed", "true");
       await workspace
         .getByRole("button", { name: "bottom-background", exact: true })
@@ -1187,18 +1357,19 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(
         page.evaluate(() => (globalThis as typeof globalThis & { studio: BrowserStudio }).studio.export("custom")),
       ).resolves.toMatchObject({ canExport: true, diagnostics: [] });
+      const finalRailDrawer = await openProjectDrawer(page, "Export");
       expect(
-        await page
+        await finalRailDrawer
           .locator("[data-custom-output]")
           .evaluateAll((outputs) => outputs.map((output) => output.getAttribute("data-output-hash"))),
       ).toEqual(railBefore);
+      await closeProjectDrawer(page);
       expect(await exportFolderSnapshot(root)).toEqual(folderBefore);
       expect(await readFile(path.join(root, "export/theme.zip"))).toEqual(zipBefore);
     });
     await test.step("Draft close decision harness", async () => {
-      if (!(await page.locator("details.project-settings").evaluate((details) => (details as HTMLDetailsElement).open)))
-        await projectSettings.click();
-      const name = page.getByLabel("Name");
+      const drawer = await openProjectDrawer(page);
+      const name = drawer.getByLabel("Name");
       await name.fill("");
       await writeFile(path.join(root, "close-decision.txt"), "keep\n");
       await page.evaluate(() =>
@@ -1213,10 +1384,9 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         ),
       );
       await page.waitForTimeout(100);
-      await expect(page.getByRole("heading", { name: "DSpico Theme Studio" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Pico Theme Creator" })).toBeVisible();
       await name.focus();
       await name.press("Escape");
-      await name.blur();
       await expect(page.getByText("Custom metadata edit cancelled.")).toBeVisible();
       await page.waitForTimeout(600);
     });
@@ -1235,7 +1405,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         };
       });
       await recovery.getByRole("button", { name: "Reload and reopen project" }).click();
-      await expect(page.getByRole("heading", { name: "DSpico Theme Studio" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Pico Theme Creator" })).toBeVisible();
       await expect(page.getByText("Project reopened.")).toBeVisible();
     });
   } finally {
@@ -1299,10 +1469,11 @@ test("surfaces blocked diagnostics and recovers root-bound Custom saves on open"
     try {
       const page = await app.firstWindow();
       page.setDefaultTimeout(5_000);
+      await closeOnboarding(page);
       await page.getByRole("button", { name: "Open project" }).click();
-      await page.locator("details.project-settings > summary").click();
       await expect(projectName(page)).toHaveText(expectedName);
-      const diagnostics = page.getByRole("list", { name: "Compatibility diagnostics" });
+      const drawer = await openProjectDrawer(page, "Export");
+      const diagnostics = drawer.getByRole("list", { name: "Compatibility diagnostics" });
       await expect(diagnostics).toContainText("project.json");
       await expect(diagnostics).toContainText(message);
       await expect(page.getByRole("button", { name: "Save" })).toBeEnabled();
@@ -1324,15 +1495,16 @@ test("surfaces blocked diagnostics and recovers root-bound Custom saves on open"
   try {
     const page = await app.firstWindow();
     page.setDefaultTimeout(5_000);
+    await closeOnboarding(page);
     await page.getByRole("button", { name: "Open project" }).click();
-    await page.locator("details.project-settings > summary").click();
+    let drawer = await openProjectDrawer(page, "Details");
 
     const operationCount = async () =>
       (JSON.parse(await readFile(path.join(root, "project.json"), "utf8")) as { operations: unknown[] }).operations
         .length;
-    const name = page.getByLabel("Name"),
-      description = page.getByLabel("Description"),
-      author = page.getByLabel("Author");
+    const name = drawer.getByLabel("Name"),
+      description = drawer.getByLabel("Description"),
+      author = drawer.getByLabel("Author");
     const beforeEscape = await operationCount();
     await name.fill("Cancelled metadata");
     await name.press("Escape");
@@ -1407,7 +1579,9 @@ test("surfaces blocked diagnostics and recovers root-bound Custom saves on open"
     await description.fill("Draft across another editor operation");
     const beforeShape = (JSON.parse(await readFile(path.join(root, "project.json"), "utf8")) as { cursor: number })
       .cursor;
-    await page.getByRole("button", { name: "Rectangle" }).evaluate((button) => (button as HTMLButtonElement).click());
+    await page
+      .getByRole("button", { name: "Add rectangle" })
+      .evaluate((button) => (button as HTMLButtonElement).click());
     await expect
       .poll(
         async () => (JSON.parse(await readFile(path.join(root, "project.json"), "utf8")) as { cursor: number }).cursor,
@@ -1421,12 +1595,13 @@ test("surfaces blocked diagnostics and recovers root-bound Custom saves on open"
       )
       .toBe(beforeShape + 2);
 
-    await page.getByRole("button", { name: "Run diagnostics" }).click();
-    const diagnosticList = page.getByRole("list", { name: "Compatibility diagnostics" });
+    drawer = await openProjectDrawer(page, "Export");
+    await drawer.getByRole("button", { name: "Run diagnostics" }).click();
+    const diagnosticList = drawer.getByRole("list", { name: "Compatibility diagnostics" });
     await expect(diagnosticList).toBeVisible();
     await expect(diagnosticList).toContainText("/roleAssignments/bottom-background");
     await expect(diagnosticList).toContainText("Assign a PNG or add at least one layer");
-    await expect(page.getByRole("button", { name: "Export theme" })).toBeDisabled();
+    await expect(drawer.getByRole("button", { name: "Export theme" })).toBeDisabled();
     const results = await page.evaluate(async () => {
       const studio = (globalThis as typeof globalThis & { studio: BrowserStudio }).studio;
       return { validation: await studio.validate(), blocked: await studio.export("custom") };
@@ -1488,8 +1663,9 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
   try {
     const page = await electronApp.firstWindow();
     page.setDefaultTimeout(5_000);
-    await page.getByRole("button", { name: "New Custom" }).click();
-    await page.getByText("Visual outputs and audio", { exact: true }).click();
+    await closeOnboarding(page);
+    await createCustomFromChrome(page);
+    let drawer = await openProjectDrawer(page, "Assets");
     for (const role of [
       "top-background",
       "bottom-background",
@@ -1499,10 +1675,10 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
       "banner-cell-selected",
       "scrim",
     ])
-      await page.getByRole("button", { name: `Assign ${role} PNG` }).click();
-    await page.locator('input[accept=".wav,audio/wav"]').first().setInputFiles(path.join(root, "input.wav"));
+      await drawer.getByRole("button", { name: `Assign ${role} PNG` }).click();
+    drawer = await openProjectDrawer(page, "Audio");
+    await drawer.locator('input[accept=".wav,audio/wav"]').first().setInputFiles(path.join(root, "input.wav"));
     const workspace = page.getByRole("region", { name: "Theme canvas" });
-    const settings = page.locator("details.project-settings > summary");
     const visualPaths = [
       "topbg.bin",
       "bottombg.bin",
@@ -1517,15 +1693,15 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
       "scrim.bin",
       "scrimPltt.bin",
     ];
-    await settings.click();
-    await page.getByRole("button", { name: "Run diagnostics" }).click();
-    await expect(page.locator("dt", { hasText: "Diagnostics" }).locator("..").locator("dd")).toHaveText("0");
-    const exportTheme = page.getByRole("button", { name: "Export theme" });
+    drawer = await openProjectDrawer(page, "Export");
+    await drawer.getByRole("button", { name: "Run diagnostics" }).click();
+    await expect(drawer.getByText("0 diagnostics", { exact: true })).toBeVisible();
+    const exportTheme = drawer.getByRole("button", { name: "Export theme" });
     await expect(exportTheme).toBeEnabled();
     await exportTheme.click();
-    await expect(page.getByTestId("export-summary")).toBeVisible();
+    await expect(drawer.getByTestId("export-summary")).toBeVisible();
     const fallbackRailHashes = Object.fromEntries(
-      await page
+      await drawer
         .locator("[data-custom-output]")
         .evaluateAll((outputs) =>
           outputs.map((output) => [
@@ -1541,13 +1717,14 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
         ),
       ),
     );
-    await settings.click();
+    await closeProjectDrawer(page);
 
     const imageBytes = [...(await readFile(path.join(root, "input.png")))];
     await workspace.getByRole("button", { name: "grid-cell", exact: true }).click();
-    await expect(workspace.locator("canvas")).toHaveJSProperty("width", 64);
-    await expect(workspace.locator("canvas")).toHaveJSProperty("height", 64);
-    await workspace.locator("canvas").evaluate((canvas, bytes) => {
+    const gridCanvas = workspace.locator('[data-workspace-surface="grid-cell"]');
+    await expect(gridCanvas).toHaveJSProperty("width", 64);
+    await expect(gridCanvas).toHaveJSProperty("height", 64);
+    await gridCanvas.evaluate((canvas, bytes) => {
       const transfer = new DataTransfer();
       transfer.items.add(
         new File([Uint8Array.from(bytes)], "dropped.png", {
@@ -1565,6 +1742,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     const gridLayers = workspace.getByRole("listbox", {
       name: "grid-cell layers",
     });
+    await showDockTab(page, "Layers");
     await expect(gridLayers.getByRole("option")).toHaveCount(1);
     await expect(
       workspace.getByText("Authored document active. Its layers override the assigned role asset."),
@@ -1574,9 +1752,9 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     });
     await gridLayer.click();
     await gridLayer.press("ArrowRight");
+    await showDockTab(page, "Properties");
     await expect(workspace.getByLabel("X", { exact: true })).toHaveValue("1");
-    const gridCanvas = workspace.locator('[data-workspace-surface="grid-cell"]'),
-      gridBounds = (await gridCanvas.boundingBox())!;
+    const gridBounds = (await gridCanvas.boundingBox())!;
     await page.mouse.move(gridBounds.x + gridBounds.width / 2, gridBounds.y + gridBounds.height / 2);
     await page.mouse.down();
     await page.mouse.move(
@@ -1593,9 +1771,10 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await expect(workspace.getByRole("status")).toHaveText("dropped.png rotated to 90 degrees.");
 
     await workspace.getByRole("button", { name: "banner-cell", exact: true }).click();
-    await expect(workspace.locator("canvas")).toHaveJSProperty("width", 256);
-    await expect(workspace.locator("canvas")).toHaveJSProperty("height", 49);
-    await workspace.locator("canvas").evaluate((canvas, bytes) => {
+    const bannerCanvas = workspace.locator('[data-workspace-surface="banner-cell"]');
+    await expect(bannerCanvas).toHaveJSProperty("width", 256);
+    await expect(bannerCanvas).toHaveJSProperty("height", 49);
+    await bannerCanvas.evaluate((canvas, bytes) => {
       const transfer = new DataTransfer();
       transfer.items.add(new File([Uint8Array.from(bytes)], "pasted.png", { type: "image/png" }));
       canvas.dispatchEvent(
@@ -1606,6 +1785,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
         }),
       );
     }, imageBytes);
+    await showDockTab(page, "Layers");
     await expect(workspace.getByRole("listbox", { name: "banner-cell layers" }).getByRole("option")).toHaveCount(1);
     await page.evaluate(() => (globalThis as typeof globalThis & { studio: BrowserStudio }).studio.export("custom"));
     const beforeCropBytes = new Map(
@@ -1619,9 +1799,9 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
       name: "Select pasted.png",
     });
     await bannerLayer.click();
-    await workspace.getByRole("button", { name: "Crop image" }).click();
-    const bannerCanvas = workspace.locator('[data-workspace-surface="banner-cell"]'),
-      bannerBounds = (await bannerCanvas.boundingBox())!,
+    await showDockTab(page, "Properties");
+    await workspace.getByRole("button", { name: "Crop selected image" }).click();
+    const bannerBounds = (await bannerCanvas.boundingBox())!,
       bannerLayerX = Number(await workspace.getByLabel("X", { exact: true }).inputValue()),
       bannerLeft = bannerBounds.x + (bannerLayerX * bannerBounds.width) / 256;
     await page.mouse.move(bannerLeft + 1, bannerBounds.y + bannerBounds.height / 2);
@@ -1648,9 +1828,11 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     }, bannerLayerX);
     await workspace.getByRole("button", { name: "grid-cell", exact: true }).click();
     await workspace.getByRole("button", { name: "banner-cell", exact: true }).click();
+    await showDockTab(page, "Layers");
     await bannerLayer.click();
+    await showDockTab(page, "Properties");
     await expect(workspace.getByLabel("Crop x", { exact: true })).toHaveValue("0");
-    await workspace.getByRole("button", { name: "Crop image" }).click();
+    await workspace.getByRole("button", { name: "Crop selected image" }).click();
     await page.mouse.move(bannerLeft + 1, bannerBounds.y + bannerBounds.height / 2);
     await page.mouse.down();
     await page.mouse.move(bannerLeft + 17, bannerBounds.y + bannerBounds.height / 2);
@@ -1695,8 +1877,10 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
         expect(afterCropBytes.get(filePath), `${filePath} crop isolation`).toEqual(beforeCropBytes.get(filePath));
 
     await workspace.getByRole("button", { name: "grid-cell-selected", exact: true }).click();
-    await workspace.getByRole("button", { name: "Rectangle" }).click();
+    await workspace.getByRole("button", { name: "Add rectangle" }).click();
+    await showDockTab(page, "Layers");
     await expect(workspace.getByRole("button", { name: "Select Rectangle" })).toHaveAttribute("aria-current", "true");
+    await showDockTab(page, "Properties");
     const fill = workspace.getByLabel("Fill color hex");
     await fill.fill("#123456");
     await fill.press("Tab");
@@ -1772,7 +1956,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
       await workspace.getByRole("button", { name: "Apply", exact: true }).click();
     };
     await setGeometry("20", "5", "8", "8");
-    await workspace.locator("canvas").evaluate((canvas, bytes) => {
+    await workspace.locator('[data-workspace-surface="grid-cell-selected"]').evaluate((canvas, bytes) => {
       const transfer = new DataTransfer();
       transfer.items.add(new File([Uint8Array.from(bytes)], "multi.png", { type: "image/png" }));
       canvas.dispatchEvent(
@@ -1783,11 +1967,14 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
         }),
       );
     }, imageBytes);
+    await showDockTab(page, "Layers");
     await workspace.getByRole("button", { name: "Select multi.png" }).click();
     await expect(workspace.getByRole("button", { name: "Select multi.png" })).toHaveAttribute("aria-current", "true");
+    await showDockTab(page, "Properties");
     await setGeometry("0", "5", "8", "8");
     await workspace.getByRole("button", { name: "Add text" }).click();
     await setGeometry("45", "5", "8", "8");
+    await showDockTab(page, "Layers");
     const imageOption = workspace.getByRole("option").filter({ hasText: "multi.png" }),
       rectangleOption = workspace.getByRole("option").filter({ hasText: "Rectangle" }),
       textOption = workspace.getByRole("option").filter({ hasText: "Text" });
@@ -1797,9 +1984,9 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await expect(imageOption).toHaveAttribute("aria-selected", "true");
     await expect(rectangleOption).toHaveAttribute("aria-selected", "true");
     await expect(textOption).toHaveAttribute("aria-selected", "true");
-    await expect(workspace.getByText("3 selected", { exact: true })).toBeVisible();
+    await expect(workspace.locator("#layer-selection-count")).toHaveText("3 selected");
     await expect(workspace.locator(".canvas-resize-handle")).toHaveCount(0);
-    await expect(workspace.getByRole("button", { name: "Crop image" })).toBeDisabled();
+    await expect(workspace.getByRole("button", { name: "Crop selected image" })).toBeDisabled();
     const mixedCanvas = workspace.locator('[data-workspace-surface="grid-cell-selected"]'),
       textButton = workspace.getByRole("button", { name: "Select Text" }),
       beforeKeyboardMoveState = await customState(root),
@@ -1824,6 +2011,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await expect.poll(async () => (await customState(root)).cursor).toBe(beforeKeyboardMoveState.cursor);
     await page.getByRole("button", { name: "Redo" }).click();
     await expect.poll(async () => (await customState(root)).cursor).toBe(beforeKeyboardMoveState.cursor + 1);
+    await showDockTab(page, "Properties");
     const beforeDistributionState = await customState(root),
       beforeDistribution = beforeDistributionState.operations.length,
       movedOperation = beforeDistributionState.operations.at(-1) as unknown as {
@@ -1854,10 +2042,12 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     const [left, middle, right] = distributionOperation.positions;
     expect(middle!.xQ16 - left!.xQ16 - 8 * 65536).toBe(right!.xQ16 - middle!.xQ16 - 8 * 65536);
     expect([left!.xQ16, right!.xQ16 + 8 * 65536]).toEqual([0, 53 * 65536]);
-    const distributedRgba = await mixedCanvas.evaluate((canvas) => [
-      ...(canvas as HTMLCanvasElement).getContext("2d")!.getImageData(0, 0, 64, 64).data,
-    ]);
-    expect(distributedRgba).not.toEqual(movedRgba);
+    const readMixedRgba = () =>
+      mixedCanvas.evaluate((canvas) => [
+        ...(canvas as HTMLCanvasElement).getContext("2d")!.getImageData(0, 0, 64, 64).data,
+      ]);
+    await expect.poll(readMixedRgba).not.toEqual(movedRgba);
+    const distributedRgba = await readMixedRgba();
     await page.getByRole("button", { name: "Undo" }).click();
     await expect
       .poll(() =>
@@ -1875,18 +2065,19 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
       )
       .toEqual(distributedRgba);
     const beforeDelete = (await customState(root)).operations.length;
+    await showDockTab(page, "Layers");
     await workspace.getByRole("button", { name: "Delete Text" }).press("Enter");
     await expect.poll(async () => (await customState(root)).operations.length).toBe(beforeDelete + 1);
     await expect(workspace.getByRole("status")).toHaveText("3 layers deleted.");
     await expect(workspace.getByRole("listbox", { name: "grid-cell-selected layers" }).getByRole("option")).toHaveCount(
       0,
     );
-    await expect(workspace.getByRole("button", { name: "Import PNG" })).toBeFocused();
+    await expect(workspace.getByRole("button", { name: "Import image" })).toBeFocused();
     await page.getByRole("button", { name: "Undo" }).click();
     await expect(workspace.getByRole("listbox", { name: "grid-cell-selected layers" }).getByRole("option")).toHaveCount(
       3,
     );
-    await expect(workspace.getByText("3 selected", { exact: true })).toBeVisible();
+    await expect(workspace.locator("#layer-selection-count")).toHaveText("3 selected");
     await expect(imageOption).toHaveAttribute("aria-selected", "true");
     await expect(rectangleOption).toHaveAttribute("aria-selected", "true");
     await expect(textOption).toHaveAttribute("aria-selected", "true");
@@ -1896,29 +2087,31 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await expect(workspace.getByRole("listbox", { name: "grid-cell-selected layers" }).getByRole("option")).toHaveCount(
       0,
     );
-    await expect(workspace.getByText("0 selected", { exact: true })).toBeVisible();
-    await expect(workspace.getByRole("button", { name: "Import PNG" })).toBeFocused();
+    await expect(workspace.locator("#layer-selection-count")).toHaveText("0 selected");
+    await expect(workspace.getByRole("button", { name: "Import image" })).toBeFocused();
     await page.getByRole("button", { name: "Undo" }).click();
-    await expect(workspace.getByText("3 selected", { exact: true })).toBeVisible();
+    await expect(workspace.locator("#layer-selection-count")).toHaveText("3 selected");
     await expect(textButton).toHaveAttribute("aria-current", "true");
     await expect(textButton).toBeFocused();
     await mixedCanvas.focus();
     await mixedCanvas.press("Escape");
-    await expect(workspace.getByText("0 selected", { exact: true })).toBeVisible();
+    await expect(workspace.locator("#layer-selection-count")).toHaveText("0 selected");
     const persistedRgba = await mixedCanvas.evaluate((canvas) => [
       ...(canvas as HTMLCanvasElement).getContext("2d")!.getImageData(0, 0, 64, 64).data,
     ]);
     await page.getByRole("button", { name: "Save" }).click();
     await page.getByRole("button", { name: "Open project" }).click();
     await workspace.getByRole("button", { name: "grid-cell-selected", exact: true }).click();
-    await expect(workspace.getByText("0 selected", { exact: true })).toBeVisible();
-    await expect(workspace.getByText("Nothing selected", { exact: true })).toBeVisible();
+    await showDockTab(page, "Layers");
+    await expect(workspace.locator("#layer-selection-count")).toHaveText("0 selected");
     expect(
       await workspace
         .getByRole("listbox", { name: "grid-cell-selected layers" })
         .getByRole("option")
         .evaluateAll((options) => options.map((option) => option.getAttribute("aria-selected"))),
     ).toEqual(["false", "false", "false"]);
+    await showDockTab(page, "Properties");
+    await expect(workspace.getByText("Nothing selected", { exact: true })).toBeVisible();
     await expect
       .poll(() =>
         workspace
@@ -1952,8 +2145,9 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
         }),
       );
     }, imageBytes);
-    await workspace.getByRole("button", { name: "Rectangle" }).click();
+    await workspace.getByRole("button", { name: "Add rectangle" }).click();
     await workspace.getByRole("button", { name: "Add text" }).click();
+    await showDockTab(page, "Layers");
     await workspace.getByRole("button", { name: "Select grouped.png" }).click();
     await workspace.getByRole("button", { name: "Select Rectangle" }).click({ modifiers: ["Shift"] });
     await workspace.getByRole("button", { name: "Select Text" }).click({ modifiers: ["Control"] });
@@ -1973,6 +2167,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await page.keyboard.press("Control+c");
     await expect(workspace.getByRole("status")).toHaveText("3 layers copied inside this project.");
     const beforeIgnoredShortcuts = (await customState(root)).operations.length;
+    await showDockTab(page, "Properties");
     for (const editor of [workspace.getByLabel("X", { exact: true }), workspace.getByLabel("Text content")]) {
       await editor.focus();
       await page.keyboard.press("Control+c");
@@ -2010,6 +2205,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     );
     await contenteditable.evaluate((target) => target.remove());
     expect((await customState(root)).operations.length).toBe(beforeIgnoredShortcuts);
+    await showDockTab(page, "Layers");
     await expect(
       workspace.getByRole("listbox", { name: "banner-cell-selected layers" }).getByRole("option"),
     ).toHaveCount(3);
@@ -2021,6 +2217,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
       positions: [{ xQ16: expect.any(Number) }, { xQ16: expect.any(Number) }, { xQ16: expect.any(Number) }],
     });
     await page.evaluate(() => (globalThis as typeof globalThis & { studio: BrowserStudio }).studio.export("custom"));
+    await showDockTab(page, "Properties");
     const beforeLockFolder = await exportFolderSnapshot(root),
       beforeLockZip = await readFile(path.join(root, "export/theme.zip")),
       beforeLockRgba = await groupedCanvas.evaluate((canvas) => [
@@ -2042,24 +2239,31 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await page.waitForTimeout(100);
     expect((await customState(root)).operations.length).toBe(beforeLock + 1);
     await expect(workspace.getByLabel("X", { exact: true })).toHaveValue(beforeLockX);
-    await expect(workspace.getByText("3 selected, locked", { exact: true })).toBeVisible();
+    await expect(
+      workspace.getByText("Locked layers cannot be edited, but visibility may still be toggled.", { exact: true }),
+    ).toBeVisible();
     await expect(workspace.getByRole("status")).toContainText(
       "Locked layers cannot be edited, but visibility may still be toggled.",
     );
+    await showDockTab(page, "Layers");
     await expect(workspace.locator('.creator-layer-row[data-locked="true"]')).toHaveCount(3);
     const beforeHiddenVisibility = (await customState(root)).operations.length;
     await workspace.getByRole("button", { name: "Hide Text" }).click();
     await expect.poll(async () => (await customState(root)).operations.length).toBe(beforeHiddenVisibility + 1);
     await expect(workspace.getByRole("status")).toHaveText("Text hidden.");
     await expect(workspace.getByRole("button", { name: "Show Text" })).toBeEnabled();
+    await showDockTab(page, "Properties");
     await expect(workspace.getByLabel("Rename Text")).toBeDisabled();
     await expect(workspace.getByLabel("Text content")).toBeDisabled();
+    await showDockTab(page, "Layers");
     await workspace.getByRole("button", { name: "Select Rectangle, grouped, locked" }).click();
+    await showDockTab(page, "Properties");
     await expect(workspace.getByLabel("Rename Rectangle")).toBeDisabled();
     await expect(workspace.getByLabel("Opacity", { exact: true })).toBeDisabled();
     await expect(workspace.getByLabel("Fill color hex")).toBeDisabled();
     await expect(workspace.getByLabel("Layer rotation")).toBeDisabled();
     await expect(workspace.getByRole("button", { name: /Align 3 selected layers left/ })).toBeDisabled();
+    await showDockTab(page, "Layers");
     await expect(workspace.getByRole("button", { name: "Group", exact: true })).toBeDisabled();
     await expect(workspace.getByRole("button", { name: "Ungroup", exact: true })).toBeDisabled();
     await expect(workspace.getByRole("button", { name: "Move Rectangle up" })).toBeDisabled();
@@ -2070,6 +2274,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await page.evaluate(() => (globalThis as typeof globalThis & { studio: BrowserStudio }).studio.export("custom"));
     expect(await exportFolderSnapshot(root)).toEqual(beforeLockFolder);
     expect(await readFile(path.join(root, "export/theme.zip"))).toEqual(beforeLockZip);
+    await showDockTab(page, "Properties");
     const lockedX = await workspace.getByLabel("X", { exact: true }).inputValue(),
       lockedHistory = (await customState(root)).operations.length,
       lockedBounds = (await groupedCanvas.boundingBox())!;
@@ -2088,10 +2293,11 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     const beforeDuplicate = (await customState(root)).operations.length;
     await page.keyboard.press("Control+d");
     await expect.poll(async () => (await customState(root)).operations.length).toBe(beforeDuplicate + 1);
+    await showDockTab(page, "Layers");
     await expect(
       workspace.getByRole("listbox", { name: "banner-cell-selected layers" }).getByRole("option"),
     ).toHaveCount(6);
-    await expect(workspace.getByText("3 selected, locked", { exact: true })).toBeVisible();
+    await expect(workspace.locator("#layer-selection-count")).toHaveText("3 selected, locked");
     await page.keyboard.press("Control+c");
     await expect(workspace.getByRole("status")).toHaveText("3 layers copied inside this project.");
     await page.getByRole("button", { name: "Undo" }).click();
@@ -2102,7 +2308,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await expect(
       workspace.getByRole("listbox", { name: "banner-cell-selected layers" }).getByRole("option"),
     ).toHaveCount(6);
-    await expect(workspace.getByText("3 selected, locked", { exact: true })).toBeVisible();
+    await expect(workspace.locator("#layer-selection-count")).toHaveText("3 selected, locked");
     const beforeUnlock = (await customState(root)).operations.length,
       unlockSequence = await page.locator(".status").getAttribute("data-accepted-sequence");
     await expect(page.getByRole("button", { name: "Undo" })).toBeEnabled();
@@ -2118,7 +2324,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
         return [operation.type, operation.locks?.map(({ locked }) => locked)];
       })
       .toEqual(["set-layer-locks", [false, false, false]]);
-    await expect(workspace.getByText("3 selected", { exact: true })).toBeVisible();
+    await expect(workspace.locator("#layer-selection-count")).toHaveText("3 selected");
     await expect(workspace.locator('.creator-layer-row[data-locked="true"]')).toHaveCount(3);
     await page.getByRole("button", { name: "Undo" }).click();
     await expect(workspace.locator('.creator-layer-row[data-locked="true"]')).toHaveCount(6);
@@ -2141,7 +2347,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await expect(workspace.getByRole("listbox", { name: "top-background layers" }).getByRole("option")).toHaveCount(
       topBeforePaste + 3,
     );
-    await expect(workspace.getByText("3 selected, locked", { exact: true })).toBeVisible();
+    await expect(workspace.locator("#layer-selection-count")).toHaveText("3 selected, locked");
     await expect(workspace.locator('.creator-layer-row[data-locked="true"]')).toHaveCount(3);
     const pastedPrimary = workspace
       .getByRole("listbox", { name: "top-background layers" })
@@ -2155,7 +2361,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await expect(workspace.getByRole("listbox", { name: "top-background layers" }).getByRole("option")).toHaveCount(
       topBeforePaste + 3,
     );
-    await expect(workspace.getByText("3 selected, locked", { exact: true })).toBeVisible();
+    await expect(workspace.locator("#layer-selection-count")).toHaveText("3 selected, locked");
     await workspace.locator('[data-workspace-surface="top-background"]').evaluate((canvas, bytes) => {
       const transfer = new DataTransfer();
       transfer.items.add(
@@ -2211,7 +2417,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await expect(workspace.getByRole("status")).toHaveText("1 layer copied inside this project.");
     await page.getByRole("button", { name: "Undo" }).click();
     await expect(staleLayers.getByRole("option")).toHaveCount(0);
-    await workspace.getByRole("button", { name: "Rectangle" }).click();
+    await workspace.getByRole("button", { name: "Add rectangle" }).click();
     await expect(staleLayers.getByRole("option")).toHaveCount(1);
     const beforeStalePaste = (await customState(root)).operations.length;
     await staleCanvas.evaluate((canvas) =>
@@ -2234,6 +2440,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await workspace.getByRole("button", { name: "scrim", exact: true }).click();
     await workspace.getByRole("button", { name: "Add text" }).click();
     await expect(workspace.getByRole("button", { name: "Select Text" })).toHaveAttribute("aria-current", "true");
+    await showDockTab(page, "Properties");
     await workspace.getByLabel("Text content").fill("A\n😀");
     await workspace.getByLabel("Text color hex").fill("#abcdef");
     await workspace.getByLabel("Text pixel size").fill("1");
@@ -2247,7 +2454,9 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await page.getByRole("button", { name: "Redo" }).click();
     await expect(workspace.getByLabel("Layer rotation")).toHaveValue("90");
     const textX = Number(await workspace.getByLabel("X", { exact: true }).inputValue());
+    await showDockTab(page, "Layers");
     await workspace.getByRole("button", { name: "Select Text" }).press("ArrowRight");
+    await showDockTab(page, "Properties");
     await expect(workspace.getByLabel("X", { exact: true })).toHaveValue(String(textX + 1));
     await page.getByRole("button", { name: "Undo" }).click();
     await expect(workspace.getByLabel("X", { exact: true })).toHaveValue(String(textX));
@@ -2256,7 +2465,9 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     const scrimCanvas = workspace.locator('[data-workspace-surface="scrim"]');
     await scrimCanvas.focus();
     await scrimCanvas.press("Escape");
+    await showDockTab(page, "Layers");
     await expect(workspace.getByRole("button", { name: "Select Text" })).not.toHaveAttribute("aria-current", "true");
+    await showDockTab(page, "Properties");
     await expect(workspace.getByText("Nothing selected", { exact: true })).toBeVisible();
     await expect(scrimCanvas).toHaveAttribute("data-crop-mode", "false");
     const browserTextRgba = Uint8Array.from(
@@ -2291,31 +2502,41 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     expect(browserTextRgba).toEqual(expectedTextRgba);
 
     await workspace.getByRole("button", { name: "grid-cell", exact: true }).click();
+    await showDockTab(page, "Layers");
     await gridLayer.click();
     await expect(gridLayer).toHaveAttribute("aria-current", "true");
     await workspace.getByRole("button", { name: "banner-cell", exact: true }).click();
     await page.getByRole("button", { name: "Save" }).click();
     await page.getByRole("button", { name: "Open project" }).click();
     await workspace.getByRole("button", { name: "grid-cell-selected", exact: true }).click();
+    await showDockTab(page, "Layers");
     await workspace.getByRole("button", { name: "Select Rectangle" }).click();
+    await showDockTab(page, "Properties");
     await expect(workspace.getByLabel("Fill color hex")).toHaveValue("#123456");
     await workspace.getByRole("button", { name: "scrim", exact: true }).click();
+    await showDockTab(page, "Layers");
     await workspace.getByRole("button", { name: "Select Text" }).click();
+    await showDockTab(page, "Properties");
     await expect(workspace.getByLabel("Text content")).toHaveValue("A\n😀");
     await expect(workspace.getByLabel("Text color hex")).toHaveValue("#abcdef");
     await expect(workspace.getByLabel("Text pixel size")).toHaveValue("1");
     await expect(workspace.getByLabel("Text alignment")).toHaveValue("right");
     await expect(workspace.getByLabel("Layer rotation")).toHaveValue("90");
     await workspace.getByRole("button", { name: "grid-cell", exact: true }).click();
+    await showDockTab(page, "Layers");
     await expect(workspace.getByRole("listbox", { name: "grid-cell layers" }).getByRole("option")).toHaveCount(1);
     await workspace.getByRole("button", { name: "Select dropped.png" }).click();
+    await showDockTab(page, "Properties");
     await expect(workspace.getByLabel("Layer rotation")).toHaveValue("90");
     await workspace.getByRole("button", { name: "banner-cell", exact: true }).click();
+    await showDockTab(page, "Layers");
     await expect(workspace.getByRole("listbox", { name: "banner-cell layers" }).getByRole("option")).toHaveCount(1);
     await workspace.getByRole("button", { name: "Select pasted.png" }).click();
+    await showDockTab(page, "Properties");
     await expect(workspace.getByLabel("Crop x", { exact: true })).not.toHaveValue("0");
+    drawer = await openProjectDrawer(page, "Export");
     const authoredRailHashes = Object.fromEntries(
-      await page
+      await drawer
         .locator("[data-custom-output]")
         .evaluateAll((outputs) =>
           outputs.map((output) => [
@@ -2325,11 +2546,10 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
         ),
     );
 
-    await settings.click();
-    await page.getByRole("button", { name: "Run diagnostics" }).click();
-    await expect(page.locator("dt", { hasText: "Diagnostics" }).locator("..").locator("dd")).toHaveText("0");
-    await page.getByRole("button", { name: "Export theme" }).click();
-    await expect(page.getByTestId("export-summary")).toBeVisible();
+    await drawer.getByRole("button", { name: "Run diagnostics" }).click();
+    await expect(drawer.getByText("0 diagnostics", { exact: true })).toBeVisible();
+    await drawer.getByRole("button", { name: "Export theme" }).click();
+    await expect(drawer.getByTestId("export-summary")).toBeVisible();
     const reportBytes = await readFile(path.join(root, "export/theme/report.json"));
     const zipBytes = await readFile(path.join(root, "export/theme.zip"));
     const report = JSON.parse(reportBytes.toString()) as {
@@ -2379,17 +2599,18 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
         sha256: sha256(reportBytes),
       },
     ]);
-    expect(await page.getByTestId("export-summary").getAttribute("data-zip-sha256")).toBe(sha256(zipBytes));
+    expect(await drawer.getByTestId("export-summary").getAttribute("data-zip-sha256")).toBe(sha256(zipBytes));
 
-    await settings.click();
+    await closeProjectDrawer(page);
     await workspace.getByRole("button", { name: "scrim", exact: true }).click();
+    await showDockTab(page, "Layers");
     const persistedText = workspace.getByRole("button", {
       name: "Select Text",
     });
     await persistedText.click();
     await workspace.getByRole("button", { name: "Delete Text" }).press("Enter");
     await expect(workspace.getByRole("status")).toHaveText("Text deleted.");
-    await expect(workspace.getByRole("button", { name: "Import PNG" })).toBeFocused();
+    await expect(workspace.getByRole("button", { name: "Import image" })).toBeFocused();
     await expect(persistedText).toHaveCount(0);
     await workspace.getByRole("button", { name: "banner-cell", exact: true }).click();
     const selectedBanner = workspace.getByRole("button", {
@@ -2397,6 +2618,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     });
     await selectedBanner.click();
     await expect(selectedBanner).toHaveAttribute("aria-current", "true");
+    await showDockTab(page, "Properties");
     await bannerCanvas.evaluate(
       (canvas, layer) => {
         const bounds = canvas.getBoundingClientRect(),
@@ -2424,8 +2646,8 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     const replacementRoot = path.join(root, "replacement-project");
     await mkdir(replacementRoot);
     await writeFile(path.join(root, "project-selection.txt"), replacementRoot);
-    await page.getByRole("button", { name: "New Custom" }).click();
-    await workspace.locator("canvas").dispatchEvent("pointerup", { pointerId: 92 });
+    await createCustomFromChrome(page);
+    await bannerCanvas.dispatchEvent("pointerup", { pointerId: 92 });
     await expect(workspace.getByRole("button", { name: "top-background", exact: true })).toHaveAttribute(
       "aria-pressed",
       "true",

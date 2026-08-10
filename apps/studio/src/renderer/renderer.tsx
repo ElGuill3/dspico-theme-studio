@@ -13,9 +13,20 @@ import type { ThemeSoundRoleV1, WavRecipeV1 } from "../../../../packages/dspico-
 import { CustomAssetBench } from "./custom-asset-bench.js";
 import { CustomOutputRail } from "./custom-output-rail.js";
 import { AudioWorkbench } from "./audio-workbench.js";
+import { BrandMark } from "./brand-mark.js";
 import { DraftAuthority, type DraftEdit } from "./draft-authority.js";
+import { ProjectDrawer, type ProjectDrawerTab } from "./project-drawer.js";
 import { CreatorWorkspace, importedLayerSize } from "./workspace/read-only-workspace.js";
 import { paintWorkspaceSurface, visualDocumentSurface } from "./workspace/workspace-model.js";
+import {
+  loadWorkspaceLayout,
+  saveWorkspaceLayout,
+  toggleWorkspaceFocus,
+  visibleWorkspaceLayout,
+  workspaceLayoutFromStorageEvent,
+  type WorkspaceDockTab,
+  type WorkspaceLayoutState,
+} from "./workspace/workspace-layout.js";
 import { compileEffectiveCustomVisualsV3 } from "../custom-visuals-v3.js";
 import { manualSdGuidance } from "./export-guidance.js";
 import { isCancellation, safeErrorMessage } from "../app-resilience.js";
@@ -46,6 +57,14 @@ type Draft = {
   metadata: MaterialProjectV1["metadata"];
   global: Record<ColorKey, string>;
   screens: Record<string, ScreenColors>;
+};
+
+const localPreferenceStorage = (): Storage | undefined => {
+  try {
+    return globalThis.localStorage;
+  } catch {
+    return undefined;
+  }
 };
 
 const globalColor = (project: MaterialProjectV1, key: ColorKey) =>
@@ -183,15 +202,113 @@ function PhysicalPreview({
   );
 }
 
+function DevicePreview({
+  images,
+  launcherView,
+  onLauncherView,
+  preview,
+  renderPlan,
+  busy,
+  onMode,
+}: {
+  images?: NonNullable<StudioResult["customAuthoring"]>["images"];
+  launcherView: LauncherView;
+  onLauncherView(view: LauncherView): void;
+  preview?: PreviewModel;
+  renderPlan?: ReturnType<typeof createCustomRenderPlan>;
+  busy: boolean;
+  onMode(mode: string): void;
+}) {
+  return (
+    <>
+      <div className="preview-toolbar">
+        <div>
+          <span>Device</span>
+          <h2>Live preview</h2>
+        </div>
+        <div className="preview-controls">
+          {preview && (
+            <div className="mode-switcher" role="group" aria-label="Theme scene">
+              {preview.modes.map((item) => (
+                <button
+                  className={item === preview.mode ? "active" : ""}
+                  aria-pressed={item === preview.mode}
+                  disabled={busy}
+                  key={item}
+                  onClick={() => onMode(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="mode-switcher" role="group" aria-label="Preview mode">
+            <button
+              className={launcherView === "coverflow" ? "active" : ""}
+              aria-pressed={launcherView === "coverflow"}
+              onClick={() => onLauncherView("coverflow")}
+            >
+              Coverflow
+            </button>
+            <button
+              className={launcherView === "banner-list" ? "active" : ""}
+              aria-pressed={launcherView === "banner-list"}
+              onClick={() => onLauncherView("banner-list")}
+            >
+              Banner
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className="device-stage">
+        <div className="device-shell" aria-label="DSpico dual-screen device preview">
+          <span className="device-chrome" data-preview-chrome="device-frame" aria-hidden="true" />
+          <PhysicalPreview
+            images={images}
+            launcherView={launcherView}
+            renderSurface={renderPlan?.screens[0]}
+            scene={preview?.scenes[0]}
+            screen="top"
+          />
+          <PhysicalPreview
+            images={images}
+            launcherView={launcherView}
+            renderSurface={renderPlan?.screens[1]}
+            scene={preview?.scenes[1]}
+            screen="bottom"
+          />
+        </div>
+      </div>
+      <div className="preview-caption">
+        <span className="state-dot ready" aria-hidden="true" />
+        <p>
+          <strong>Draft preview is live</strong>
+        </p>
+        <div className="fidelity-tags">
+          <span>launcher-vector-backed</span>
+          <span>Chromium approximation</span>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function Studio() {
-  const [result, setResult] = useState<StudioResult>();
+  const [result, setResult] = useState<StudioResult>({});
   const [status, setStatus] = useState("Create or open a local project to begin.");
   const [mode, setMode] = useState("home");
-  const [launcherView, setLauncherView] = useState<LauncherView>("coverflow");
+  const [layoutStorage] = useState(localPreferenceStorage);
+  const [workspaceLayout, setWorkspaceLayout] = useState<WorkspaceLayoutState>(() => ({
+    normal: loadWorkspaceLayout(layoutStorage),
+  }));
+  const launcherView: LauncherView = workspaceLayout.normal.previewMode;
+  const [projectDrawer, setProjectDrawer] = useState<{ open: boolean; tab: ProjectDrawerTab }>({
+    open: false,
+    tab: "details",
+  });
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState<Draft>({ metadata: metadataDefaults, global: colorDefaults, screens: {} });
   const [customMetadata, setCustomMetadata] = useState({ ...metadataDefaults });
-  const [customMetadataErrors, setCustomMetadataErrors] = useState<Partial<Record<MetadataFieldV3, string>>>({});
   const [workspaceIdentity, setWorkspaceIdentity] = useState(0);
   const [workspaceAuthority, setWorkspaceAuthority] = useState(0);
   const [helpMode, setHelpMode] = useState<"onboarding" | "help" | undefined>(() => {
@@ -222,6 +339,7 @@ function Studio() {
   const authorityRef = useRef<DraftAuthority | null>(null);
   const diagnosticsRef = useRef<HTMLUListElement>(null);
   const looseDrafts = useRef(new Set<HTMLElement>());
+  const pendingPanelFocus = useRef<WorkspaceDockTab | "artboard" | undefined>(undefined);
 
   useEffect(() => {
     const denyExternalNavigation = (event: MouseEvent) => {
@@ -240,6 +358,33 @@ function Studio() {
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
+  useEffect(() => saveWorkspaceLayout(layoutStorage, workspaceLayout.normal), [layoutStorage, workspaceLayout.normal]);
+  useEffect(() => {
+    const storage = (event: StorageEvent) => {
+      const layout = workspaceLayoutFromStorageEvent(event, layoutStorage);
+      if (!layout) return;
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLElement &&
+        !layout.dockOpen &&
+        document.getElementById("workspace-dock")?.contains(active)
+      )
+        pendingPanelFocus.current = "artboard";
+      setWorkspaceLayout({ normal: layout });
+    };
+    globalThis.addEventListener("storage", storage);
+    return () => globalThis.removeEventListener("storage", storage);
+  }, [layoutStorage]);
+  useEffect(() => {
+    const pending = pendingPanelFocus.current;
+    if (!pending) return;
+    const target =
+      pending === "artboard"
+        ? document.querySelector<HTMLElement>(".workspace-canvas")
+        : document.getElementById(`dock-tab-${pending}`);
+    target?.focus();
+    pendingPanelFocus.current = undefined;
+  }, [workspaceLayout]);
   useEffect(() => {
     if (result?.diagnostics?.length) diagnosticsRef.current?.focus();
   }, [result?.diagnostics]);
@@ -269,12 +414,6 @@ function Studio() {
           } else updated[field] = next.customProject!.metadata[field];
         }
         customMetadataRef.current = updated;
-        return updated;
-      });
-      setCustomMetadataErrors((current) => {
-        const updated = { ...current };
-        for (const field of ["name", "description", "author"] as const)
-          if (customMetadataFocus.current[field] === undefined) delete updated[field];
         return updated;
       });
     }
@@ -415,6 +554,30 @@ function Studio() {
       }
       if (
         !editing &&
+        Boolean(resultRef.current?.project || resultRef.current?.customProject) &&
+        !document.querySelector('[role="dialog"]') &&
+        event.key === "Tab" &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        setWorkspaceLayout((current) => {
+          const next = toggleWorkspaceFocus(current, event.shiftKey ? "dock" : "canvas"),
+            visible = visibleWorkspaceLayout(next),
+            active = document.activeElement;
+          if (
+            active instanceof HTMLElement &&
+            !visible.dockOpen &&
+            document.getElementById("workspace-dock")?.contains(active)
+          )
+            pendingPanelFocus.current = "artboard";
+          return next;
+        });
+        setStatus(event.shiftKey ? "Dock toggled." : "Tools and dock toggled.");
+      }
+      if (
+        !editing &&
         !document.querySelector('[role="dialog"]') &&
         (event.ctrlKey || event.metaKey) &&
         event.key.toLowerCase() === "z" &&
@@ -452,7 +615,6 @@ function Studio() {
   const updateCustomMetadata = (field: MetadataFieldV3, value: string) => {
     customMetadataRef.current = { ...customMetadataRef.current, [field]: value };
     setCustomMetadata(customMetadataRef.current);
-    setCustomMetadataErrors((current) => ({ ...current, [field]: metadataErrorV3(field, value) }));
     invalidateArtifacts();
     setStatus("Custom metadata has unsaved changes. Blur the field or press Enter to save.");
   };
@@ -468,7 +630,6 @@ function Studio() {
       customMetadataRef.current = { ...customMetadataRef.current, [field]: committed };
       setCustomMetadata(customMetadataRef.current);
     }
-    setCustomMetadataErrors((current) => ({ ...current, [field]: undefined }));
     customMetadataConflicts.current.delete(field);
     cancelledCustomMetadata.current.add(field);
     setStatus("Custom metadata edit cancelled.");
@@ -493,12 +654,10 @@ function Studio() {
       }
       customMetadataConflicts.current.delete(field);
       delete customMetadataFocus.current[field];
-      setCustomMetadataErrors((current) => ({ ...current, [field]: undefined }));
       setStatus("Custom metadata changed through another history action. The committed value was restored.");
       return;
     }
     const error = metadataErrorV3(field, value);
-    setCustomMetadataErrors((current) => ({ ...current, [field]: error }));
     if (error) {
       setStatus(error);
       return;
@@ -719,512 +878,430 @@ function Studio() {
       })()
     : undefined;
   const preview = project ? createPreviewModel(previewProject(project, draft, mode), mode) : undefined;
-  const livePreview = Boolean(preview || customRenderPlan);
   const loaded = Boolean(project || customProject);
+  const visibleLayout = visibleWorkspaceLayout(workspaceLayout);
+  const selectDockTab = (dockTab: WorkspaceDockTab) =>
+    setWorkspaceLayout((current) => ({ normal: { ...current.normal, dockOpen: true, dockTab } }));
+  const closeDock = () => {
+    pendingPanelFocus.current = "artboard";
+    setWorkspaceLayout((current) => ({ normal: { ...current.normal, dockOpen: false } }));
+    setStatus("Workspace dock hidden.");
+  };
+  const setLauncherView = (previewMode: LauncherView) =>
+    setWorkspaceLayout((current) => ({ normal: { ...current.normal, previewMode } }));
   const displayedMetadata = customProject ? customMetadata : draft.metadata;
   const sdGuidance = result?.publication
     ? manualSdGuidance(result.publication.folderName, result.publication.zipName, result.publication.files)
     : undefined;
 
   return (
-    <main className="studio-shell">
+    <main className={`studio-shell${loaded ? " editor-open" : ""}`}>
       <header className="studio-header">
-        <div className="brand-mark" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-          <span />
-        </div>
+        <BrandMark size={loaded ? 30 : 38} />
         <div className="brand-copy">
-          <h1 aria-label="DSpico Theme Studio">Pico Theme Creator</h1>
-          <p>Identity workshop</p>
+          <h1>Pico Theme Creator</h1>
         </div>
-        <nav className="project-actions" aria-label="Project actions">
-          <button
-            className="primary"
-            disabled={busy}
-            onClick={() =>
-              run(
-                "Local project created.",
-                () => window.studio.create({ projectId: "local-material", metadata: draftRef.current.metadata }),
-                true,
-                true,
-              )
-            }
-          >
-            New Material
-          </button>
-          {/* prettier-ignore */}
-          <button disabled={busy} onClick={() => run("Custom project created.", () => window.studio.createCustom({ projectId: "local-custom", metadata: draftRef.current.metadata }), true, true)}>New Custom</button>
-          <button disabled={busy} onClick={() => run("Project opened.", window.studio.openProject, true, true)}>
-            Open project
-          </button>
-          <button
-            disabled={!loaded || busy || result?.canEdit === false}
-            onClick={() => run("Project saved.", window.studio.save)}
-          >
-            Save
-          </button>
-          <button type="button" onClick={() => setHelpMode("help")}>
+        {loaded ? (
+          <nav className="project-actions" aria-label="Project actions">
+            <span className="current-project" title={result?.projectLocation}>
+              {displayedMetadata.name}
+            </span>
+            <details className="new-menu">
+              <summary>New</summary>
+              <button
+                aria-label="New Custom"
+                disabled={busy}
+                onClick={() =>
+                  run(
+                    "Custom project created.",
+                    () =>
+                      window.studio.createCustom({ projectId: "local-custom", metadata: draftRef.current.metadata }),
+                    true,
+                    true,
+                  )
+                }
+              >
+                Custom theme
+              </button>
+              <button
+                aria-label="New Material"
+                disabled={busy}
+                onClick={() =>
+                  run(
+                    "Local project created.",
+                    () => window.studio.create({ projectId: "local-material", metadata: draftRef.current.metadata }),
+                    true,
+                    true,
+                  )
+                }
+              >
+                Material theme
+              </button>
+            </details>
+            <button
+              aria-label="Open project"
+              disabled={busy}
+              onClick={() => run("Project opened.", window.studio.openProject, true, true)}
+            >
+              Open
+            </button>
+            <button
+              disabled={!loaded || busy || result?.canEdit === false}
+              onClick={() => run("Project saved.", window.studio.save)}
+            >
+              Save
+            </button>
+            <button
+              disabled={busy || result?.canEdit === false}
+              onClick={() => run("Undone.", window.studio.undo, true)}
+            >
+              Undo
+            </button>
+            <button
+              disabled={busy || result?.canEdit === false}
+              onClick={() => run("Redone.", window.studio.redo, true)}
+            >
+              Redo
+            </button>
+            <button type="button" onClick={() => setProjectDrawer((current) => ({ ...current, open: true }))}>
+              Project
+            </button>
+            <button type="button" onClick={() => setProjectDrawer({ open: true, tab: "export" })}>
+              Export
+            </button>
+            <button
+              type="button"
+              aria-pressed={visibleLayout.dockOpen}
+              onClick={() => setWorkspaceLayout((current) => ({ normal: { ...current.normal, dockOpen: true } }))}
+            >
+              Dock
+            </button>
+            <button type="button" onClick={() => setHelpMode("help")}>
+              Help
+            </button>
+          </nav>
+        ) : (
+          <button className="header-help" type="button" onClick={() => setHelpMode("help")}>
             Help
           </button>
-        </nav>
-        <span className="target-label">dspico-launcher-v1</span>
+        )}
       </header>
 
-      <div className="utility-bar">
-        <span className="history-label">History</span>
-        <button
-          disabled={!loaded || busy || result?.canEdit === false}
-          onClick={() => run("Undone.", window.studio.undo, true)}
-        >
-          Undo
-        </button>
-        <button
-          disabled={!loaded || busy || result?.canEdit === false}
-          onClick={() => run("Redone.", window.studio.redo, true)}
-        >
-          Redo
-        </button>
-        {result?.projectLocation && (
-          <span className="project-location" aria-label="Project folder">
-            {result.projectLocation}
-          </span>
-        )}
-        <p className="status" data-accepted-sequence={acceptedSequence.current} aria-live="polite">
-          <span aria-hidden="true" />
-          {status}
-        </p>
-      </div>
-
-      <div className="workspace">
-        <section className="editor-region" aria-labelledby="editor-region-title">
-          <div className="editor-region-bar">
-            <div>
-              <span>Authoring workspace</span>
-              <h2 id="editor-region-title">Composition</h2>
+      {!loaded ? (
+        <section className="project-launch" aria-labelledby="project-launch-title">
+          <div className="launch-card">
+            <BrandMark label="Pico Theme Creator" size={72} />
+            <span>DSteam theme workshop</span>
+            <h2 id="project-launch-title">Build every screen in one focused canvas.</h2>
+            <p>Compose seven authored theme documents, preview them on a dual-screen device, and export locally.</p>
+            <div className="launch-actions">
+              <button
+                className="primary"
+                disabled={busy}
+                onClick={() =>
+                  run(
+                    "Custom project created.",
+                    () =>
+                      window.studio.createCustom({ projectId: "local-custom", metadata: draftRef.current.metadata }),
+                    true,
+                    true,
+                  )
+                }
+              >
+                New custom
+              </button>
+              <button disabled={busy} onClick={() => run("Project opened.", window.studio.openProject, true, true)}>
+                Open project
+              </button>
+              <button
+                className="tertiary"
+                disabled={busy}
+                onClick={() =>
+                  run(
+                    "Local project created.",
+                    () => window.studio.create({ projectId: "local-material", metadata: draftRef.current.metadata }),
+                    true,
+                    true,
+                  )
+                }
+              >
+                New material
+              </button>
             </div>
-            <details className="project-settings">
-              <summary>Project settings</summary>
-              <section className="inspector" aria-labelledby="project-settings-title">
-                <div className="inspector-heading">
-                  <div>
-                    <span>Inspector</span>
-                    <h2 id="project-settings-title">Project settings</h2>
-                  </div>
-                  <strong>{project?.metadata.name ?? customProject?.metadata.name ?? "No project loaded"}</strong>
-                </div>
-                <section className="control-group" aria-labelledby="general-title">
-                  <h2 id="general-title">General</h2>
-                  <label>
-                    <span>Name</span>
-                    <input
-                      aria-label="Name"
-                      value={displayedMetadata.name}
-                      disabled={result?.canEdit === false || (busy && !customProject)}
-                      data-draft-field="metadata.name"
-                      aria-invalid={Boolean(customProject && customMetadataErrors.name)}
-                      aria-describedby={
-                        customProject && customMetadataErrors.name ? "custom-metadata-name-error" : undefined
-                      }
-                      onChange={(event) =>
-                        customProject
-                          ? updateCustomMetadata("name", event.target.value)
-                          : updateMetadata("name", event.target.value)
-                      }
-                      onFocus={() => {
-                        if (customProject) focusCustomMetadata("name");
-                      }}
-                      onBlur={() =>
-                        void (customProject ? commitCustomMetadata("name") : authority.flushField("metadata.name"))
-                      }
-                      onKeyDown={(event) => {
-                        if (customProject && event.key === "Escape") {
-                          event.preventDefault();
-                          cancelCustomMetadata("name");
-                          return;
-                        }
-                        if (customProject && event.key === "Enter") {
-                          event.preventDefault();
-                          void commitCustomMetadata("name");
-                        }
-                      }}
-                    />
-                    {customProject && customMetadataErrors.name && (
-                      <span id="custom-metadata-name-error" className="field-error" role="alert">
-                        {customMetadataErrors.name}
-                      </span>
-                    )}
-                  </label>
-                  <label>
-                    <span>Description</span>
-                    <textarea
-                      aria-label="Description"
-                      value={displayedMetadata.description}
-                      disabled={result?.canEdit === false || (busy && !customProject)}
-                      data-draft-field="metadata.description"
-                      aria-invalid={Boolean(customProject && customMetadataErrors.description)}
-                      aria-describedby={
-                        customProject && customMetadataErrors.description
-                          ? "custom-metadata-description-error"
-                          : undefined
-                      }
-                      rows={3}
-                      onChange={(event) =>
-                        customProject
-                          ? updateCustomMetadata("description", event.target.value)
-                          : updateMetadata("description", event.target.value)
-                      }
-                      onFocus={() => {
-                        if (customProject) focusCustomMetadata("description");
-                      }}
-                      onBlur={() =>
-                        void (customProject
-                          ? commitCustomMetadata("description")
-                          : authority.flushField("metadata.description"))
-                      }
-                      onKeyDown={(event) => {
-                        if (customProject && event.key === "Escape") {
-                          event.preventDefault();
-                          cancelCustomMetadata("description");
-                          return;
-                        }
-                        if (customProject && event.key === "Enter" && !event.shiftKey) {
-                          event.preventDefault();
-                          void commitCustomMetadata("description");
-                        }
-                      }}
-                    />
-                    {customProject && customMetadataErrors.description && (
-                      <span id="custom-metadata-description-error" className="field-error" role="alert">
-                        {customMetadataErrors.description}
-                      </span>
-                    )}
-                  </label>
-                  <label>
-                    <span>Author</span>
-                    <input
-                      aria-label="Author"
-                      value={displayedMetadata.author}
-                      disabled={result?.canEdit === false || (busy && !customProject)}
-                      data-draft-field="metadata.author"
-                      aria-invalid={Boolean(customProject && customMetadataErrors.author)}
-                      aria-describedby={
-                        customProject && customMetadataErrors.author ? "custom-metadata-author-error" : undefined
-                      }
-                      onChange={(event) =>
-                        customProject
-                          ? updateCustomMetadata("author", event.target.value)
-                          : updateMetadata("author", event.target.value)
-                      }
-                      onFocus={() => {
-                        if (customProject) focusCustomMetadata("author");
-                      }}
-                      onBlur={() =>
-                        void (customProject ? commitCustomMetadata("author") : authority.flushField("metadata.author"))
-                      }
-                      onKeyDown={(event) => {
-                        if (customProject && event.key === "Escape") {
-                          event.preventDefault();
-                          cancelCustomMetadata("author");
-                          return;
-                        }
-                        if (customProject && event.key === "Enter") {
-                          event.preventDefault();
-                          void commitCustomMetadata("author");
-                        }
-                      }}
-                    />
-                    {customProject && customMetadataErrors.author && (
-                      <span id="custom-metadata-author-error" className="field-error" role="alert">
-                        {customMetadataErrors.author}
-                      </span>
-                    )}
-                  </label>
-                </section>
-                <section className="control-group" aria-labelledby="material-title">
-                  <h2 id="material-title">Launcher Material</h2>
-                  <p>Only these two fields are consumed by the pinned launcher profile.</p>
-                  <label>
-                    <span>Primary color</span>
-                    <input
-                      aria-label="Primary color"
-                      type="color"
-                      disabled={!project || busy}
-                      value={(() => {
-                        const color = project?.tokens.primaryColor as
-                          { r?: unknown; g?: unknown; b?: unknown } | undefined;
-                        return color && [color.r, color.g, color.b].every((value) => Number.isInteger(value))
-                          ? `#${[color.r, color.g, color.b].map((value) => Number(value).toString(16).padStart(2, "0")).join("")}`
-                          : "#000000";
-                      })()}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        void run("Primary color saved.", () =>
-                          window.studio.edit({
-                            version: 1,
-                            type: "set-token",
-                            key: "primaryColor",
-                            value: {
-                              r: Number.parseInt(value.slice(1, 3), 16),
-                              g: Number.parseInt(value.slice(3, 5), 16),
-                              b: Number.parseInt(value.slice(5, 7), 16),
-                            },
-                          }),
-                        );
-                      }}
-                    />
-                  </label>
-                  <label>
-                    <input
-                      aria-label="Dark theme"
-                      type="checkbox"
-                      disabled={!project || busy}
-                      checked={project?.tokens.darkTheme === true}
-                      onChange={(event) =>
-                        void run("Dark theme saved.", () =>
-                          window.studio.edit({
-                            version: 1,
-                            type: "set-token",
-                            key: "darkTheme",
-                            value: event.target.checked,
-                          }),
-                        )
-                      }
-                    />
-                    <span>Dark theme</span>
-                  </label>
-                  <details>
-                    <summary>Preserved legacy migration data</summary>
-                    <p>Background, foreground, accent, and scene values are retained but not exported.</p>
-                  </details>
-                </section>
-                <section className="delivery-panel" aria-labelledby="delivery-title">
-                  <div>
-                    <span>Project delivery</span>
-                    <h2 id="delivery-title">Diagnostics &amp; export</h2>
-                  </div>
-                  <dl>
-                    <div>
-                      <dt>Project</dt>
-                      <dd>{project?.metadata.name ?? customProject?.metadata.name ?? "Not loaded"}</dd>
-                    </div>
-                    <div>
-                      <dt>Diagnostics</dt>
-                      <dd>{result?.diagnostics?.length ?? "Not run"}</dd>
-                    </div>
-                  </dl>
-                  {result?.diagnostics && result.diagnostics.length > 0 && (
-                    <ul
-                      ref={diagnosticsRef}
-                      className="diagnostic-list"
-                      aria-label="Compatibility diagnostics"
-                      aria-live="assertive"
-                      tabIndex={0}
-                    >
-                      {result.diagnostics.map((diagnostic) => (
-                        <li key={diagnostic.fingerprint} data-diagnostic-rule={diagnostic.ruleId}>
-                          <strong>{diagnostic.severity}</strong>
-                          <code>
-                            {diagnostic.location.document}
-                            {diagnostic.location.pointer || "/"}
-                          </code>
-                          <span>{diagnostic.message}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <div className="checks">
-                    <button
-                      disabled={!loaded || busy}
-                      onClick={() => run("Validation complete.", window.studio.validate)}
-                    >
-                      Run diagnostics
-                    </button>
-                    <button
-                      className="primary"
-                      disabled={!loaded || busy || result?.canExport !== true}
-                      onClick={() =>
-                        run("Local theme exported.", () => window.studio.export(customProject ? "custom" : "material"))
-                      }
-                    >
-                      Export theme
-                    </button>
-                  </div>
-                  {result?.publication && (
-                    <output
-                      data-testid="export-summary"
-                      data-reveal-id={result.publication.revealId}
-                      data-report-sha256={result.publication.reportSha256}
-                      data-zip-sha256={result.publication.zipSha256}
-                    >
-                      <strong>
-                        {customProject ? `${customProject.metadata.name} export summary` : "Export summary"}
-                      </strong>
-                      <dl className="export-destination">
-                        <div>
-                          <dt>Destination</dt>
-                          <dd>{result.publication.destination}</dd>
-                        </div>
-                        <div>
-                          <dt>Folder</dt>
-                          <dd>{result.publication.folderName}/</dd>
-                        </div>
-                        <div>
-                          <dt>ZIP</dt>
-                          <dd>{result.publication.zipName}</dd>
-                        </div>
-                      </dl>
-                      <span>{result.publication.files.join(" · ")}</span>
-                      <code>Report SHA-256: {result.publication.reportSha256}</code>
-                      <code>ZIP SHA-256: {result.publication.zipSha256}</code>
-                      <div className="reveal-actions" aria-label="Reveal exported files">
-                        <button type="button" onClick={() => void reveal("folder")}>
-                          Reveal folder
-                        </button>
-                        <button type="button" onClick={() => void reveal("zip")}>
-                          Reveal ZIP
-                        </button>
-                      </div>
-                      <section className="sd-guidance" aria-labelledby="sd-guidance-title">
-                        <strong id="sd-guidance-title">Copy to an SD card manually</strong>
-                        <ol>
-                          {sdGuidance!.steps.map((step) => (
-                            <li key={step}>{step}</li>
-                          ))}
-                        </ol>
-                        {sdGuidance!.bgm && <p>{sdGuidance!.bgm}</p>}
-                        <p>{sdGuidance!.boundary}</p>
-                        <p>{sdGuidance!.report}</p>
-                      </section>
-                    </output>
-                  )}
-                </section>
-              </section>
-            </details>
           </div>
-          <CreatorWorkspace
-            key={workspaceIdentity}
-            instance={workspaceIdentity}
-            customProject={customProject}
-            authorityVersion={workspaceAuthority}
-            images={result?.customAuthoring?.images}
-            visualDocuments={result?.customAuthoring?.visualDocuments}
-            visualSources={visualSources}
-            readOnly={result?.canEdit === false}
-            onAdd={addLayer}
-            onImport={importLayer}
-            onOperation={editLayer}
-          />
-          {customProject && (
-            <details className="custom-visual-tools">
-              <summary>Visual outputs and audio</summary>
-              <div>
+        </section>
+      ) : (
+        <>
+          <div className="workspace">
+            <section className="editor-region" aria-label="Theme composition workspace">
+              <CreatorWorkspace
+                key={workspaceIdentity}
+                instance={workspaceIdentity}
+                customProject={customProject}
+                authorityVersion={workspaceAuthority}
+                images={result?.customAuthoring?.images}
+                visualDocuments={result?.customAuthoring?.visualDocuments}
+                visualSources={visualSources}
+                readOnly={result?.canEdit === false}
+                toolbarVisible={visibleLayout.toolbarVisible}
+                dockOpen={visibleLayout.dockOpen}
+                dockTab={visibleLayout.dockTab}
+                onDockTab={selectDockTab}
+                onCloseDock={closeDock}
+                preview={
+                  <DevicePreview
+                    images={result?.customAuthoring?.images}
+                    launcherView={launcherView}
+                    onLauncherView={setLauncherView}
+                    preview={preview}
+                    renderPlan={customRenderPlan}
+                    busy={busy}
+                    onMode={setMode}
+                  />
+                }
+                status={status}
+                acceptedSequence={acceptedSequence.current}
+                onAdd={addLayer}
+                onImport={importLayer}
+                onOperation={editLayer}
+              />
+            </section>
+          </div>
+        </>
+      )}
+      {loaded && projectDrawer.open && (
+        <ProjectDrawer
+          tab={projectDrawer.tab}
+          onTab={(tab) => setProjectDrawer({ open: true, tab })}
+          onClose={() => setProjectDrawer((current) => ({ ...current, open: false }))}
+          panels={{
+            details: (
+              <div className="drawer-form">
+                <p>Project identity and local storage details. These controls do not change the canvas layout.</p>
+                {(["name", "description", "author"] as const).map((field) => (
+                  <label key={field}>
+                    <span>{field}</span>
+                    {field === "description" ? (
+                      <textarea
+                        aria-label="Description"
+                        rows={3}
+                        value={displayedMetadata[field]}
+                        disabled={result?.canEdit === false}
+                        onChange={(event) =>
+                          customProject
+                            ? updateCustomMetadata(field, event.target.value)
+                            : updateMetadata(field, event.target.value)
+                        }
+                        onFocus={() => customProject && focusCustomMetadata(field)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Escape" || !customProject) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          cancelCustomMetadata(field);
+                        }}
+                        onBlur={() =>
+                          void (customProject ? commitCustomMetadata(field) : authority.flushField(`metadata.${field}`))
+                        }
+                      />
+                    ) : (
+                      <input
+                        aria-label={field[0]!.toUpperCase() + field.slice(1)}
+                        value={displayedMetadata[field]}
+                        disabled={result?.canEdit === false}
+                        onChange={(event) =>
+                          customProject
+                            ? updateCustomMetadata(field, event.target.value)
+                            : updateMetadata(field, event.target.value)
+                        }
+                        onFocus={() => customProject && focusCustomMetadata(field)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Escape" || !customProject) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          cancelCustomMetadata(field);
+                        }}
+                        onBlur={() =>
+                          void (customProject ? commitCustomMetadata(field) : authority.flushField(`metadata.${field}`))
+                        }
+                      />
+                    )}
+                  </label>
+                ))}
+                <dl>
+                  <div>
+                    <dt>Project location</dt>
+                    <dd>{result?.projectLocation ?? "Not saved yet"}</dd>
+                  </div>
+                  <div>
+                    <dt>Format</dt>
+                    <dd>{customProject ? "Custom authored documents" : "Material"}</dd>
+                  </div>
+                </dl>
+                {project && (
+                  <div className="material-settings">
+                    <h3>Material launcher settings</h3>
+                    <p>Only primary color and dark theme are consumed by the pinned launcher profile.</p>
+                    <p>
+                      Background, foreground, accent, and scene migration values remain preserved but are not exported.
+                    </p>
+                    <label>
+                      Primary color{" "}
+                      <input
+                        aria-label="Primary color"
+                        type="color"
+                        disabled={busy}
+                        value={(() => {
+                          const color = project.tokens.primaryColor as
+                              { r?: unknown; g?: unknown; b?: unknown } | undefined,
+                            channels = [color?.r, color?.g, color?.b];
+                          return channels.every(Number.isInteger)
+                            ? `#${channels.map((value) => Number(value).toString(16).padStart(2, "0")).join("")}`
+                            : "#000000";
+                        })()}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          void run("Primary color saved.", () =>
+                            window.studio.edit({
+                              version: 1,
+                              type: "set-token",
+                              key: "primaryColor",
+                              value: {
+                                r: Number.parseInt(value.slice(1, 3), 16),
+                                g: Number.parseInt(value.slice(3, 5), 16),
+                                b: Number.parseInt(value.slice(5, 7), 16),
+                              },
+                            }),
+                          );
+                        }}
+                      />
+                    </label>
+                    <label>
+                      <input
+                        aria-label="Dark theme"
+                        type="checkbox"
+                        checked={project.tokens.darkTheme === true}
+                        onChange={(event) =>
+                          void run("Dark theme saved.", () =>
+                            window.studio.edit({
+                              version: 1,
+                              type: "set-token",
+                              key: "darkTheme",
+                              value: event.target.checked,
+                            }),
+                          )
+                        }
+                      />{" "}
+                      Dark theme
+                    </label>
+                  </div>
+                )}
+              </div>
+            ),
+            assets: customProject ? (
+              <div className="drawer-assets">
+                <h3>Optional compatibility sources</h3>
+                <p>
+                  Authored documents are primary. Assign these PNGs only as fallback sources for compatible exports.
+                </p>
                 <CustomAssetBench
                   sources={visualSources}
                   onAssign={(role) => void assignVisual(role)}
                   disabled={busy || result?.canEdit === false}
                 />
-                <CustomOutputRail visualPackage={visualPackage} />
-                <AudioWorkbench
-                  initialSounds={result.customAuthoring?.sounds}
-                  presentRoles={result.soundRoles}
-                  onPrepare={prepareSound}
-                  onRemove={removeSound}
-                  onError={(error) => setStatus(safeErrorMessage(error))}
-                  disabled={busy || result?.canEdit === false}
-                />
               </div>
-            </details>
-          )}
-        </section>
-
-        <aside className="preview-panel" aria-labelledby="preview-title">
-          <div className="preview-toolbar">
-            <div>
-              <span>Live device</span>
-              <h2 id="preview-title">DSi XL preview</h2>
-            </div>
-            <div className="preview-controls">
-              {preview && (
-                <div className="preview-control">
-                  <span id="scene-mode-label">Theme scene</span>
-                  <div className="mode-switcher" role="group" aria-labelledby="scene-mode-label">
-                    {preview.modes.map((item) => (
-                      <button
-                        className={item === preview.mode ? "active" : ""}
-                        aria-pressed={item === preview.mode}
-                        disabled={busy}
-                        key={item}
-                        onClick={() => setMode(item)}
-                      >
-                        {item}
-                      </button>
+            ) : (
+              <p>Compatibility source assignments are available for Custom projects.</p>
+            ),
+            audio: customProject ? (
+              <AudioWorkbench
+                initialSounds={result.customAuthoring?.sounds}
+                presentRoles={result.soundRoles}
+                onPrepare={prepareSound}
+                onRemove={removeSound}
+                onError={(error) => setStatus(safeErrorMessage(error))}
+                disabled={busy || result?.canEdit === false}
+              />
+            ) : (
+              <p>Audio authoring is available for Custom projects.</p>
+            ),
+            export: (
+              <div className="drawer-export">
+                <div className="export-summary">
+                  <span>{result?.diagnostics?.length ?? "Not run"} diagnostics</span>
+                  <span>{visualPackage?.totalBytes?.toLocaleString() ?? 0} visual bytes</span>
+                </div>
+                {result?.diagnostics && result.diagnostics.length > 0 && (
+                  <ul
+                    ref={diagnosticsRef}
+                    className="diagnostic-list"
+                    aria-label="Compatibility diagnostics"
+                    tabIndex={0}
+                  >
+                    {result.diagnostics.map((diagnostic) => (
+                      <li key={diagnostic.fingerprint}>
+                        <strong>{diagnostic.severity}</strong>
+                        <code>
+                          {diagnostic.location.document}
+                          {diagnostic.location.pointer || "/"}
+                        </code>
+                        <span>{diagnostic.message}</span>
+                      </li>
                     ))}
-                  </div>
-                </div>
-              )}
-              <div className="preview-control">
-                <span id="launcher-view-label">Preview view</span>
-                <div className="mode-switcher" role="group" aria-labelledby="launcher-view-label">
-                  <button
-                    className={launcherView === "coverflow" ? "active" : ""}
-                    aria-pressed={launcherView === "coverflow"}
-                    onClick={() => setLauncherView("coverflow")}
-                  >
-                    Coverflow
+                  </ul>
+                )}
+                {customProject && <CustomOutputRail visualPackage={visualPackage} />}
+                <div className="checks">
+                  <button disabled={busy} onClick={() => run("Validation complete.", window.studio.validate)}>
+                    Run diagnostics
                   </button>
                   <button
-                    className={launcherView === "banner-list" ? "active" : ""}
-                    aria-pressed={launcherView === "banner-list"}
-                    onClick={() => setLauncherView("banner-list")}
+                    className="primary"
+                    disabled={busy || result?.canExport !== true}
+                    onClick={() =>
+                      run("Local theme exported.", () => window.studio.export(customProject ? "custom" : "material"))
+                    }
                   >
-                    Banner list
+                    Export theme
                   </button>
                 </div>
+                {result?.publication && (
+                  <output
+                    data-testid="export-summary"
+                    data-reveal-id={result.publication.revealId}
+                    data-report-sha256={result.publication.reportSha256}
+                    data-zip-sha256={result.publication.zipSha256}
+                  >
+                    <strong>Export ready</strong>
+                    <span>{result.publication.destination}</span>
+                    <span>{result.publication.folderName}/</span>
+                    <span>{result.publication.zipName}</span>
+                    <span>{result.publication.files.join(" · ")}</span>
+                    <code>Report SHA-256: {result.publication.reportSha256}</code>
+                    <code>ZIP SHA-256: {result.publication.zipSha256}</code>
+                    <div className="reveal-actions">
+                      <button onClick={() => void reveal("folder")}>Reveal folder</button>
+                      <button onClick={() => void reveal("zip")}>Reveal ZIP</button>
+                    </div>
+                    {sdGuidance && (
+                      <section className="sd-guidance">
+                        <strong>Copy to an SD card manually</strong>
+                        <ol>
+                          {sdGuidance.steps.map((step) => (
+                            <li key={step}>{step}</li>
+                          ))}
+                        </ol>
+                        {sdGuidance.bgm && <p>{sdGuidance.bgm}</p>}
+                        <p>{sdGuidance.boundary}</p>
+                        <p>{sdGuidance.report}</p>
+                      </section>
+                    )}
+                  </output>
+                )}
               </div>
-            </div>
-          </div>
-          <div className="device-stage">
-            <div className="device-shell" aria-label="DSpico dual-screen device preview">
-              <span className="device-chrome" data-preview-chrome="device-frame" aria-hidden="true" />
-              <PhysicalPreview
-                images={result?.customAuthoring?.images}
-                launcherView={launcherView}
-                renderSurface={customRenderPlan?.screens[0]}
-                scene={preview?.scenes[0]}
-                screen="top"
-              />
-              <PhysicalPreview
-                images={result?.customAuthoring?.images}
-                launcherView={launcherView}
-                renderSurface={customRenderPlan?.screens[1]}
-                scene={preview?.scenes[1]}
-                screen="bottom"
-              />
-            </div>
-          </div>
-          <div className="preview-caption">
-            <span className={livePreview ? "state-dot ready" : "state-dot"} aria-hidden="true" />
-            <p>
-              <strong>{livePreview ? "Draft preview is live" : "Preview ready"}</strong>
-              {livePreview
-                ? "Local edits appear immediately; validated exports remain authoritative."
-                : "Create or open a local project to begin authoring."}
-            </p>
-            {livePreview && (
-              <div className="fidelity-tags">
-                <span>launcher-vector-backed</span>
-                <span>Chromium approximation</span>
-              </div>
-            )}
-          </div>
-        </aside>
-      </div>
-      <footer>
-        <span>DSpico Theme Studio</span>
-        <span>Local files only · Material authoring · No cloud or AI services</span>
-      </footer>
+            ),
+          }}
+        />
+      )}
       {helpMode && (
         <HelpDialog
           mode={helpMode}

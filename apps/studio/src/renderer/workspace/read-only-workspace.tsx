@@ -19,6 +19,17 @@ import type {
 import type { ImportedPngV1 } from "../../png-import.js";
 import { shortcutTitle } from "../shortcuts.js";
 import {
+  cacheInspectorDraft,
+  createInspectorDraft,
+  inspectorDraftKey,
+  inspectorLayerRevision,
+  pruneInspectorDrafts,
+  readInspectorDraft,
+  type InspectorDraft,
+  type InspectorDraftCache,
+  type InspectorPropertyKey,
+} from "./inspector-drafts.js";
+import {
   MAX_BATCH_LAYER_EDITS_V3,
   MAX_DOCUMENT_GUIDES_V3,
   MAX_DOCUMENT_LAYERS_V3,
@@ -87,9 +98,8 @@ const LOCKED_EDIT_EXPLANATION = "Locked layers cannot be edited, but visibility 
 
 type Screen = "top" | "bottom";
 type Commit = (operation: VisualDocumentOperationV3, announcement: string) => void;
-type PropertyKey = "x" | "y" | "width" | "height" | "cropX" | "cropY" | "cropWidth" | "cropHeight" | "opacity";
 const propertyFields: readonly {
-  key: PropertyKey;
+  key: InspectorPropertyKey;
   label: string;
   min?: number;
   max?: number;
@@ -104,17 +114,6 @@ const propertyFields: readonly {
   { key: "cropHeight", label: "Crop height", min: 1 },
   { key: "opacity", label: "Opacity", min: 0, max: 100 },
 ] as const;
-const propertyDraft = (layer: VisualLayerV3): Record<PropertyKey, string> => ({
-  x: String(layer.xQ16 / 65536),
-  y: String(layer.yQ16 / 65536),
-  width: String(layer.widthQ16 / 65536),
-  height: String(layer.heightQ16 / 65536),
-  cropX: String(isImageLayerV3(layer) ? layer.crop.x : 0),
-  cropY: String(isImageLayerV3(layer) ? layer.crop.y : 0),
-  cropWidth: String(isImageLayerV3(layer) ? layer.crop.width : 1),
-  cropHeight: String(isImageLayerV3(layer) ? layer.crop.height : 1),
-  opacity: String(Math.round((layer.opacity * 100) / 65536)),
-});
 function LayerInspector({
   layer,
   selectedLayers,
@@ -122,6 +121,9 @@ function LayerInspector({
   commit,
   announce,
   documentSize,
+  onClose,
+  draft,
+  onDraft,
 }: {
   layer: VisualLayerV3;
   selectedLayers: VisualLayerV3[];
@@ -129,44 +131,14 @@ function LayerInspector({
   commit: Commit;
   announce(message: string): void;
   documentSize: { width: number; height: number };
+  onClose(): void;
+  draft: InspectorDraft;
+  onDraft(draft: InspectorDraft): void;
 }) {
-  const [name, setName] = useState(layer.name);
   const locked = selectedLayers.some(layerLockedV3);
-  const [draft, setDraft] = useState(() => propertyDraft(layer));
-  const [fill, setFill] = useState(isShapeLayerV3(layer) ? layer.fill : "#000000");
-  const [text, setText] = useState(() =>
-    isTextLayerV3(layer)
-      ? {
-          content: layer.content,
-          fill: layer.fill,
-          scale: String(layer.scale),
-          alignment: layer.alignment,
-        }
-      : {
-          content: "",
-          fill: "#ffffff",
-          scale: "1",
-          alignment: "left" as const,
-        },
-  );
-  useEffect(() => {
-    setName(layer.name);
-    setDraft(propertyDraft(layer));
-    setFill(isShapeLayerV3(layer) ? layer.fill : "#000000");
-    setText(
-      isTextLayerV3(layer)
-        ? {
-            content: layer.content,
-            fill: layer.fill,
-            scale: String(layer.scale),
-            alignment: layer.alignment,
-          }
-        : { content: "", fill: "#ffffff", scale: "1", alignment: "left" },
-    );
-  }, [layer]);
   const rename = () => {
-    const next = name.trim();
-    if (!next || next === layer.name) return setName(layer.name);
+    const next = draft.name.trim();
+    if (!next || next === layer.name) return onDraft({ ...draft, name: layer.name });
     commit(
       {
         version: 2,
@@ -257,10 +229,9 @@ function LayerInspector({
   };
   const apply = (event: React.FormEvent) => {
     event.preventDefault();
-    const value = Object.fromEntries(Object.entries(draft).map(([key, entry]) => [key, Number(entry)])) as Record<
-      PropertyKey,
-      number
-    >;
+    const value = Object.fromEntries(
+      Object.entries(draft.properties).map(([key, entry]) => [key, Number(entry)]),
+    ) as Record<InspectorPropertyKey, number>;
     const valid =
       Object.values(value).every(Number.isSafeInteger) &&
       value.width > 0 &&
@@ -297,20 +268,38 @@ function LayerInspector({
     );
   };
   return (
-    <aside className="layer-inspector" aria-labelledby="layer-inspector-title">
+    <>
       <div className="editor-panel-heading">
         <span>Inspector</span>
         <strong id="layer-inspector-title">{layer.name}</strong>
+        <button
+          type="button"
+          data-panel-close="inspector"
+          aria-label="Close Inspector panel"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={onClose}
+        >
+          Close
+        </button>
       </div>
       {locked && <p className="locked-explanation">{LOCKED_EDIT_EXPLANATION}</p>}
-      <form onSubmit={apply}>
+      <form
+        onSubmit={apply}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          event.stopPropagation();
+          onDraft(createInspectorDraft(layer));
+          announce(`${layer.name} draft reset.`);
+        }}
+      >
         <fieldset className="layer-inspector-fields" disabled={locked}>
           <label className="layer-name-field">
             <span>Name</span>
             <input
               aria-label={`Rename ${layer.name}`}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
+              value={draft.name}
+              onChange={(event) => onDraft({ ...draft, name: event.target.value })}
               onBlur={rename}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
@@ -332,12 +321,12 @@ function LayerInspector({
                   step="1"
                   min={min}
                   max={max}
-                  value={draft[key]}
+                  value={draft.properties[key]}
                   onChange={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      [key]: event.target.value,
-                    }))
+                    onDraft({
+                      ...draft,
+                      properties: { ...draft.properties, [key]: event.target.value },
+                    })
                   }
                 />
               </label>
@@ -400,9 +389,9 @@ function LayerInspector({
                 <input
                   type="color"
                   aria-label="Fill color picker"
-                  value={fill}
+                  value={draft.fill}
                   onChange={(event) => {
-                    setFill(event.target.value);
+                    onDraft({ ...draft, fill: event.target.value });
                     commit(
                       {
                         version: 3,
@@ -417,8 +406,8 @@ function LayerInspector({
                 <input
                   aria-label="Fill color hex"
                   pattern="#[0-9a-f]{6}"
-                  value={fill}
-                  onChange={(event) => setFill(event.target.value)}
+                  value={draft.fill}
+                  onChange={(event) => onDraft({ ...draft, fill: event.target.value })}
                   onBlur={(event) => {
                     const fill = event.currentTarget.value;
                     if (/^#[0-9a-f]{6}$/.test(fill) && fill !== layer.fill)
@@ -431,7 +420,7 @@ function LayerInspector({
                         },
                         `${layer.name} fill updated.`,
                       );
-                    else setFill(layer.fill);
+                    else onDraft({ ...draft, fill: layer.fill });
                   }}
                 />
               </span>
@@ -445,13 +434,8 @@ function LayerInspector({
                   aria-label="Text content"
                   rows={4}
                   maxLength={512}
-                  value={text.content}
-                  onChange={(event) =>
-                    setText((current) => ({
-                      ...current,
-                      content: event.target.value,
-                    }))
-                  }
+                  value={draft.text.content}
+                  onChange={(event) => onDraft({ ...draft, text: { ...draft.text, content: event.target.value } })}
                 />
               </label>
               <label className="text-fill-field">
@@ -459,13 +443,8 @@ function LayerInspector({
                 <input
                   aria-label="Text color hex"
                   pattern="#[0-9a-f]{6}"
-                  value={text.fill}
-                  onChange={(event) =>
-                    setText((current) => ({
-                      ...current,
-                      fill: event.target.value,
-                    }))
-                  }
+                  value={draft.text.fill}
+                  onChange={(event) => onDraft({ ...draft, text: { ...draft.text, fill: event.target.value } })}
                 />
               </label>
               <label>
@@ -477,25 +456,20 @@ function LayerInspector({
                   min="1"
                   max="16"
                   step="1"
-                  value={text.scale}
-                  onChange={(event) =>
-                    setText((current) => ({
-                      ...current,
-                      scale: event.target.value,
-                    }))
-                  }
+                  value={draft.text.scale}
+                  onChange={(event) => onDraft({ ...draft, text: { ...draft.text, scale: event.target.value } })}
                 />
               </label>
               <label>
                 <span>Alignment</span>
                 <select
                   aria-label="Text alignment"
-                  value={text.alignment}
+                  value={draft.text.alignment}
                   onChange={(event) =>
-                    setText((current) => ({
-                      ...current,
-                      alignment: event.target.value as TextLayerV3["alignment"],
-                    }))
+                    onDraft({
+                      ...draft,
+                      text: { ...draft.text, alignment: event.target.value as TextLayerV3["alignment"] },
+                    })
                   }
                 >
                   <option value="left">Left</option>
@@ -506,10 +480,10 @@ function LayerInspector({
               <button
                 type="button"
                 onClick={() => {
-                  const scale = Number(text.scale);
+                  const scale = Number(draft.text.scale);
                   if (
-                    !validTextContentV1(text.content) ||
-                    !/^#[0-9a-f]{6}$/.test(text.fill) ||
+                    !validTextContentV1(draft.text.content) ||
+                    !/^#[0-9a-f]{6}$/.test(draft.text.fill) ||
                     !Number.isInteger(scale) ||
                     scale < 1 ||
                     scale > 16
@@ -520,10 +494,10 @@ function LayerInspector({
                       version: 3,
                       type: "set-text-properties",
                       layerId: layer.id,
-                      content: text.content,
-                      fill: text.fill,
+                      content: draft.text.content,
+                      fill: draft.text.fill,
                       scale,
-                      alignment: text.alignment,
+                      alignment: draft.text.alignment,
                     },
                     `${layer.name} updated.`,
                   );
@@ -536,7 +510,7 @@ function LayerInspector({
           <button type="submit">Apply</button>
         </fieldset>
       </form>
-    </aside>
+    </>
   );
 }
 
@@ -632,6 +606,8 @@ type SurfaceProps = {
   screen: Screen;
   viewport: DocumentViewport;
   onViewport(viewport: DocumentViewport, announcement?: string): void;
+  autoFit: boolean;
+  onAutoFit(viewport: DocumentViewport, announcement?: string): void;
   grid: boolean;
   snap: boolean;
   snapGrid: 1 | 2 | 4 | 8;
@@ -645,6 +621,8 @@ type SurfaceProps = {
   onPasteLayers(): void;
   commit: Commit;
   announce(message: string): void;
+  activeTool: EditingTool;
+  onTool(tool: EditingTool): void;
 };
 
 type CanvasGesture =
@@ -739,6 +717,8 @@ function Artboard({
   screen,
   viewport,
   onViewport,
+  autoFit,
+  onAutoFit,
   grid,
   snap,
   snapGrid,
@@ -752,20 +732,31 @@ function Artboard({
   onPasteLayers,
   commit,
   announce,
+  activeTool,
+  onTool,
 }: SurfaceProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const viewportElement = useRef<HTMLDivElement>(null);
   const planeElement = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef(viewport);
+  const autoFitRef = useRef(autoFit);
+  const onAutoFitRef = useRef(onAutoFit);
+  viewportRef.current = viewport;
+  autoFitRef.current = autoFit;
+  onAutoFitRef.current = onAutoFit;
+  const manualViewport = (next: DocumentViewport, message?: string) => {
+    autoFitRef.current = false;
+    onViewport(next, message);
+  };
   const drag = useRef<CanvasGesture | undefined>(undefined);
   const pan = useRef<{ pointerId: number; x: number; y: number; viewport: DocumentViewport } | undefined>(undefined);
   const authorityKey = gestureAuthorityKey(documentKey, authorityVersion);
-  const [cropMode, setCropMode] = useState(false);
+  const cropMode = activeTool === "crop";
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [panning, setPanning] = useState(false);
   const selectedLayers = selection.ids.flatMap((id) => layers.find((layer) => layer.id === id) ?? []),
     selectedLayer = layers.find(({ id }) => id === selection.active),
     selectionLocked = selectedLayers.some(layerLockedV3),
-    canCrop = selectedLayers.length === 1 && isImageLayerV3(selectedLayer) && !selectionLocked,
     displayScale = viewport.zoom / 100,
     displaySize = {
       width: width * displayScale,
@@ -793,7 +784,6 @@ function Artboard({
     guideDrag.current = undefined;
     setTransient(undefined);
     setGuides([]);
-    setCropMode(false);
     setPanning(false);
     setGuideDraft(undefined);
   }, [documentKey]);
@@ -811,8 +801,8 @@ function Artboard({
     drag.current = undefined;
     setTransient(undefined);
     setGuides([]);
-    setCropMode(false);
-  }, [selectionLocked]);
+    onTool("select");
+  }, [onTool, selectionLocked]);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
         if (event.code === "Space" && !editingTarget(event.target)) setSpaceHeld(true);
@@ -844,6 +834,7 @@ function Artboard({
     if (!element) return;
     const wheel = (event: WheelEvent) => {
       event.preventDefault();
+      const currentViewport = viewportRef.current;
       if (event.ctrlKey || event.metaKey) {
         const bounds = planeElement.current?.getBoundingClientRect();
         if (!bounds) return;
@@ -851,16 +842,33 @@ function Artboard({
             x: event.clientX - bounds.left,
             y: event.clientY - bounds.top,
           },
-          next = zoomViewportAtPoint(viewport, viewport.zoom * Math.pow(2, -event.deltaY / 300), pointer);
-        onViewport(next, `Zoom ${next.zoom} percent.`);
+          next = zoomViewportAtPoint(currentViewport, currentViewport.zoom * Math.pow(2, -event.deltaY / 300), pointer);
+        manualViewport(next, `Zoom ${next.zoom} percent.`);
       } else {
-        const next = panViewport(viewport, -event.deltaX, -event.deltaY);
-        onViewport(next, `Viewport panned to ${Math.round(next.panX)}, ${Math.round(next.panY)}.`);
+        const next = panViewport(currentViewport, -event.deltaX, -event.deltaY);
+        manualViewport(next, `Viewport panned to ${Math.round(next.panX)}, ${Math.round(next.panY)}.`);
       }
     };
     element.addEventListener("wheel", wheel, { passive: false });
     return () => element.removeEventListener("wheel", wheel);
   }, [onViewport, viewport]);
+  useEffect(() => {
+    const plane = planeElement.current;
+    if (!plane || !autoFit) return;
+    const fit = () => {
+      if (!autoFitRef.current) return;
+      const bounds = plane.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0) return;
+      const next = fitViewport({ width, height }, bounds),
+        current = viewportRef.current;
+      if (next.zoom === current.zoom && next.panX === current.panX && next.panY === current.panY) return;
+      onAutoFitRef.current(next);
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(plane);
+    return () => observer.disconnect();
+  }, [autoFit, documentKey, height, width]);
   useEffect(() => {
     const context = canvas.current?.getContext("2d");
     if (!context) return;
@@ -907,7 +915,7 @@ function Artboard({
     setGuideDraft(undefined);
   };
   const pointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (event.button === 1 || (event.button === 0 && spaceHeld)) {
+    if (event.button === 1 || (event.button === 0 && (spaceHeld || activeTool === "hand"))) {
       event.preventDefault();
       pan.current = {
         pointerId: event.pointerId,
@@ -1044,7 +1052,7 @@ function Artboard({
     if (pan.current?.pointerId === event.pointerId) {
       if (event.buttons === 0) return cancelGesture();
       const next = panViewport(pan.current.viewport, event.clientX - pan.current.x, event.clientY - pan.current.y);
-      onViewport(next, `Viewport panned to ${Math.round(next.panX)}, ${Math.round(next.panY)}.`);
+      manualViewport(next, `Viewport panned to ${Math.round(next.panX)}, ${Math.round(next.panY)}.`);
       return;
     }
     updateGesture(point(event));
@@ -1383,94 +1391,27 @@ function Artboard({
     horizontalTicks = rulerTicks(width, viewport.zoom),
     verticalTicks = rulerTicks(height, viewport.zoom);
   return (
-    <div className="artboard-stage">
+    <div className={`artboard-stage${viewport.showGuides ? " guides-visible" : ""}`}>
       <div className="artboard-label">
         <strong>{label}</strong>
         <span>
           {width} × {height} px
         </span>
-        <div className="viewport-controls" role="group" aria-label="Viewport zoom and fit">
-          <button
-            type="button"
-            aria-label="Zoom out"
-            onClick={() =>
-              onViewport(
-                zoomViewportAtPoint(viewport, viewport.zoom / 2, {
-                  x: 0,
-                  y: 0,
-                }),
-                `Zoom ${Math.round(viewport.zoom / 2)} percent.`,
-              )
-            }
-          >
-            −
-          </button>
-          <label>
-            <span className="sr-only">Exact zoom percentage</span>
-            <input
-              aria-label="Exact zoom percentage"
-              type="number"
-              min="25"
-              max="1600"
-              step="1"
-              value={viewport.zoom}
-              onChange={(event) =>
-                onViewport(
-                  zoomViewportAtPoint(viewport, Number(event.target.value), {
-                    x: 0,
-                    y: 0,
-                  }),
-                )
-              }
-            />
-          </label>
-          <button
-            type="button"
-            aria-label="Zoom in"
-            onClick={() =>
-              onViewport(
-                zoomViewportAtPoint(viewport, viewport.zoom * 2, {
-                  x: 0,
-                  y: 0,
-                }),
-                `Zoom ${Math.round(viewport.zoom * 2)} percent.`,
-              )
-            }
-          >
-            +
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              onViewport(normalizeViewport({ ...viewport, zoom: 100, panX: 0, panY: 0 }), "Zoom 100 percent.")
-            }
-          >
-            100%
-          </button>
-          <button
-            type="button"
-            data-fit-view="true"
-            onClick={() => {
-              const bounds = planeElement.current?.getBoundingClientRect();
-              if (!bounds) return;
-              onViewport(fitViewport({ width, height }, bounds), "Fit to view.");
-            }}
-          >
-            Fit
-          </button>
-        </div>
         <button
+          className="sr-only"
           type="button"
-          aria-pressed={cropMode}
-          disabled={!canCrop}
-          onClick={() => setCropMode((active) => !active)}
+          data-fit-view="true"
+          onClick={() => {
+            const bounds = planeElement.current?.getBoundingClientRect();
+            if (bounds) onAutoFit(fitViewport({ width, height }, bounds), "Fit to view.");
+          }}
         >
-          {cropMode ? "Done cropping" : "Crop image"}
+          Fit
         </button>
       </div>
       <div
         ref={viewportElement}
-        className={`artboard-viewport${spaceHeld ? " pan-ready" : ""}${panning ? " panning" : ""}`}
+        className={`artboard-viewport${spaceHeld || activeTool === "hand" ? " pan-ready" : ""}${panning ? " panning" : ""}`}
         aria-label={`Viewport at ${viewport.zoom} percent, pan ${Math.round(viewport.panX)}, ${Math.round(viewport.panY)}`}
       >
         <div className="ruler-corner" aria-hidden="true" />
@@ -1558,7 +1499,7 @@ function Artboard({
                   const active = Boolean(drag.current);
                   cancelGesture();
                   if (!active) {
-                    setCropMode(false);
+                    onTool("select");
                     onSelect(undefined, false);
                   }
                   return;
@@ -1851,6 +1792,44 @@ const mutatedLayerIds = (operation: VisualDocumentOperationV3): string[] => {
   return [operation.layerId];
 };
 
+export type EditingTool = "select" | "crop" | "hand";
+export type CreatorDockTab = "layers" | "properties" | "preview";
+
+function ToolIcon({
+  name,
+}: {
+  name: "select" | "import" | "rectangle" | "ellipse" | "text" | "crop" | "hand" | "guides";
+}) {
+  const common = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.7,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      {name === "select" && <path {...common} d="m5 3 13 9-6 2-3 6z" />}
+      {name === "import" && (
+        <>
+          <path {...common} d="M4 15v4h16v-4M12 4v11m-4-4 4 4 4-4" />
+        </>
+      )}
+      {name === "rectangle" && <rect {...common} x="4" y="5" width="16" height="14" rx="1" />}
+      {name === "ellipse" && <ellipse {...common} cx="12" cy="12" rx="8" ry="7" />}
+      {name === "text" && <path {...common} d="M5 5h14M12 5v14m-4 0h8" />}
+      {name === "crop" && <path {...common} d="M7 3v14a2 2 0 0 0 2 2h12M3 7h14a2 2 0 0 1 2 2v12" />}
+      {name === "hand" && (
+        <path
+          {...common}
+          d="M7 12V7a2 2 0 0 1 4 0v4-6a2 2 0 0 1 4 0v6-4a2 2 0 0 1 4 0v7c0 5-3 7-7 7-3 0-5-2-7-5l-2-3a2 2 0 0 1 4-1z"
+        />
+      )}
+      {name === "guides" && <path {...common} d="M4 3v18M3 7h18M8 3v4m4-4v4m4-4v4M4 12h4m-4 5h4" />}
+    </svg>
+  );
+}
+
 export function CreatorWorkspace({
   customProject,
   authorityVersion,
@@ -1859,6 +1838,14 @@ export function CreatorWorkspace({
   visualDocuments,
   visualSources = {},
   readOnly = false,
+  toolbarVisible,
+  dockOpen,
+  dockTab,
+  onDockTab,
+  onCloseDock,
+  preview,
+  status,
+  acceptedSequence,
   onAdd,
   onImport,
   onOperation,
@@ -1870,16 +1857,27 @@ export function CreatorWorkspace({
   visualDocuments?: Record<CustomVisualRoleV1, VisualDocumentV3>;
   visualSources?: Partial<Record<CustomVisualRoleV1, CustomVisualSourceV1>>;
   readOnly?: boolean;
+  toolbarVisible: boolean;
+  dockOpen: boolean;
+  dockTab: CreatorDockTab;
+  onDockTab(tab: CreatorDockTab): void;
+  onCloseDock(): void;
+  preview: React.ReactNode;
+  status: string;
+  acceptedSequence: number;
   onAdd(role: CustomVisualRoleV1): void;
   onImport(role: CustomVisualRoleV1, file: File): Promise<void>;
   onOperation(role: CustomVisualRoleV1, operation: VisualDocumentOperationV3): void;
 }) {
   const [role, setRole] = useState<CustomVisualRoleV1>("top-background");
   const [viewports, setViewports] = useState<Partial<Record<CustomVisualRoleV1, DocumentViewport>>>({});
+  const [autoFitRoles, setAutoFitRoles] = useState<Partial<Record<CustomVisualRoleV1, boolean>>>({});
   const [grid, setGrid] = useState(false);
   const [snap, setSnap] = useState(true);
   const [snapGrid, setSnapGrid] = useState<1 | 2 | 4 | 8>(1);
+  const [activeTool, setActiveTool] = useState<EditingTool>("select");
   const [selections, setSelections] = useState<Partial<Record<CustomVisualRoleV1, LayerSelection>>>({});
+  const [inspectorDrafts, setInspectorDrafts] = useState<InspectorDraftCache>(new Map());
   const [announcement, setAnnouncement] = useState("");
   const pendingSelection = useRef<{ role: CustomVisualRoleV1; ids: string[] } | undefined>(undefined);
   const pendingFocus = useRef<{ role: CustomVisualRoleV1; removed: string[]; target?: string } | undefined>(undefined);
@@ -1893,16 +1891,28 @@ export function CreatorWorkspace({
   const layerButtons = useRef(new Map<string, HTMLButtonElement>());
   const addLayerButton = useRef<HTMLButtonElement>(null);
   const document = visualDocuments?.[role];
-  const viewport = viewports[role] ?? normalizeViewport({ zoom: 150 });
+  const viewport = viewports[role] ?? normalizeViewport();
+  const autoFit = autoFitRoles[role] ?? true;
   const layers = document?.layers ?? [];
   const selection = selections[role] ?? { ids: [] };
   const selectedLayers = selection.ids.flatMap((id) => layers.find((layer) => layer.id === id) ?? []);
   const selectedLayer = layers.find(({ id }) => id === selection.active);
+  const selectedDraftKey =
+    customProject && selectedLayer ? inspectorDraftKey(customProject.projectId, role, selectedLayer.id) : undefined;
+  const selectedDraft =
+    selectedLayer && selectedDraftKey
+      ? readInspectorDraft(inspectorDrafts, selectedDraftKey, selectedLayer)
+      : undefined;
   const selectionLocked = selectedLayers.some(layerLockedV3);
+  const canCrop = selectedLayers.length === 1 && isImageLayerV3(selectedLayer) && !selectionLocked;
   const assigned = visualSources[role];
   const width = document?.width ?? CUSTOM_VISUAL_DOCUMENTS_V1[role].width;
   const height = document?.height ?? CUSTOM_VISUAL_DOCUMENTS_V1[role].height;
   const renderSurface: WorkspaceSurface = visualDocumentSurface({ width, height, layers }, assigned);
+  const updateInspectorDraft = (next: InspectorDraft) => {
+    if (!selectedLayer || !selectedDraftKey) return;
+    setInspectorDrafts((current) => cacheInspectorDraft(current, selectedDraftKey, selectedLayer, next));
+  };
   const commit: Commit = (operation, message) => {
     if (readOnly) {
       setAnnouncement("This project is read-only until recovery diagnostics are resolved.");
@@ -1920,6 +1930,17 @@ export function CreatorWorkspace({
     onOperation(role, operation);
     setAnnouncement(message);
   };
+  useEffect(() => {
+    const revisions = new Map<string, string>();
+    if (customProject)
+      for (const documentRole of CUSTOM_VISUAL_ROLES_V1)
+        for (const layer of visualDocuments?.[documentRole]?.layers ?? [])
+          revisions.set(
+            inspectorDraftKey(customProject.projectId, documentRole, layer.id),
+            inspectorLayerRevision(layer),
+          );
+    setInspectorDrafts((current) => pruneInspectorDrafts(current, revisions));
+  }, [customProject?.projectId, visualDocuments]);
   useEffect(() => {
     if (
       pendingSelection.current?.role === role &&
@@ -1974,14 +1995,37 @@ export function CreatorWorkspace({
     clipboard.current = { pasteCount: 0 };
     selectionFocus.current = undefined;
     setSelections({});
+    setInspectorDrafts(new Map());
     setViewports({});
+    setAutoFitRoles({});
     setRole("top-background");
+    setActiveTool("select");
   }, [customProject?.projectId]);
-  const updateViewport = (next: DocumentViewport, message?: string) => {
-    setViewports((current) => ({
-      ...current,
-      [role]: normalizeViewport(next),
-    }));
+  useEffect(() => {
+    if (activeTool === "crop" && !canCrop) setActiveTool("select");
+  }, [activeTool, canCrop]);
+  const storeViewport = (next: DocumentViewport) => {
+    const normalized = normalizeViewport(next);
+    setViewports((current) => {
+      const existing = current[role];
+      return existing &&
+        existing.zoom === normalized.zoom &&
+        existing.panX === normalized.panX &&
+        existing.panY === normalized.panY &&
+        existing.showGuides === normalized.showGuides &&
+        existing.lockGuides === normalized.lockGuides
+        ? current
+        : { ...current, [role]: normalized };
+    });
+  };
+  const updateViewport = (next: DocumentViewport, message?: string, geometryChanged = true) => {
+    storeViewport(next);
+    if (geometryChanged) setAutoFitRoles((current) => ({ ...current, [role]: false }));
+    if (message) setAnnouncement(message);
+  };
+  const autoFitViewport = (next: DocumentViewport, message?: string) => {
+    storeViewport(next);
+    setAutoFitRoles((current) => (current[role] === true ? current : { ...current, [role]: true }));
     if (message) setAnnouncement(message);
   };
   const remove = (layer?: VisualLayerV3) => {
@@ -2331,257 +2375,93 @@ export function CreatorWorkspace({
   });
   return (
     <section className="creator-workspace" data-workspace-instance={instance} aria-labelledby="creator-workspace-title">
-      <header className="creator-toolbar">
-        <div>
-          <span>Visual editor</span>
-          <h2 id="creator-workspace-title">Theme canvas</h2>
-        </div>
-        <div className="creator-tools">
-          <div className="document-switcher" role="group" aria-label="Visual document">
-            {CUSTOM_VISUAL_ROLES_V1.map((item) => (
-              <button
-                key={item}
-                className={role === item ? "active" : ""}
-                aria-pressed={role === item}
-                onClick={() => setRole(item)}
+      <h2 className="sr-only" id="creator-workspace-title">
+        Theme canvas
+      </h2>
+      <nav className="document-switcher" aria-label="Theme documents">
+        {CUSTOM_VISUAL_ROLES_V1.map((item) => {
+          const label: Record<CustomVisualRoleV1, string> = {
+            "top-background": "Top",
+            "bottom-background": "Bottom",
+            "grid-cell": "Grid",
+            "grid-cell-selected": "Grid selected",
+            "banner-cell": "Banner",
+            "banner-cell-selected": "Banner selected",
+            scrim: "Scrim",
+          };
+          return (
+            <button
+              key={item}
+              aria-label={item}
+              className={role === item ? "active" : ""}
+              aria-pressed={role === item}
+              onClick={() => {
+                setRole(item);
+                setActiveTool("select");
+              }}
+            >
+              {label[item]}
+            </button>
+          );
+        })}
+      </nav>
+      <div className="context-options" aria-label="Tool options">
+        <strong>{activeTool === "select" ? "Select" : activeTool === "crop" ? "Crop image" : "Hand"}</strong>
+        {activeTool === "select" && (
+          <>
+            <label>
+              <input type="checkbox" checked={grid} onChange={(event) => setGrid(event.target.checked)} /> Grid
+            </label>
+            <label>
+              <input
+                aria-label="Enable snapping"
+                type="checkbox"
+                checked={snap}
+                onChange={(event) => setSnap(event.target.checked)}
+              />{" "}
+              Snap
+            </label>
+            <label>
+              Grid size{" "}
+              <select
+                aria-label="Snap grid size"
+                value={snapGrid}
+                onChange={(event) => setSnapGrid(Number(event.target.value) as 1 | 2 | 4 | 8)}
               >
-                {item}
-              </button>
-            ))}
-          </div>
-          <label className="grid-toggle">
-            <input
-              aria-label="Show guides"
-              type="checkbox"
-              checked={viewport.showGuides}
-              onChange={(event) =>
-                updateViewport(
-                  { ...viewport, showGuides: event.target.checked },
-                  event.target.checked ? "Guides shown." : "Guides hidden; hidden guides do not snap.",
-                )
-              }
-            />{" "}
-            Show guides
-          </label>
-          <label className="grid-toggle">
-            <input
-              aria-label="Lock guides"
-              type="checkbox"
-              checked={viewport.lockGuides}
-              onChange={(event) =>
-                updateViewport(
-                  { ...viewport, lockGuides: event.target.checked },
-                  event.target.checked ? "Guides locked." : "Guides unlocked.",
-                )
-              }
-            />{" "}
-            Lock guides
-          </label>
-          <label className="grid-toggle">
-            <input type="checkbox" checked={grid} onChange={(event) => setGrid(event.target.checked)} /> Grid
-          </label>
-          <label className="grid-toggle">
-            <input
-              aria-label="Enable snapping"
-              type="checkbox"
-              checked={snap}
-              onChange={(event) => setSnap(event.target.checked)}
-            />{" "}
-            Snap
-          </label>
-          <label>
-            <span>Snap grid</span>
-            <select
-              aria-label="Snap grid size"
-              value={snapGrid}
-              onChange={(event) => setSnapGrid(Number(event.target.value) as 1 | 2 | 4 | 8)}
-            >
-              {[1, 2, 4, 8].map((size) => (
-                <option key={size} value={size}>
-                  {size} px
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </header>
-      <div className="creator-editor">
-        <aside className="layers-panel" aria-labelledby="layers-title">
-          <div className="editor-panel-heading">
-            <span>Stack</span>
-            <strong id="layers-title">Layers</strong>
-            <span id="layer-selection-count">
-              {selection.ids.length} selected{selectionLocked ? ", locked" : ""}
-            </span>
-          </div>
-          <div className="layer-command-tools" role="group" aria-label="Layer commands">
-            <button
-              disabled={selection.ids.length < 2 || selectionLocked}
-              title={shortcutTitle("group")}
-              onClick={group}
-            >
-              Group
-            </button>
-            <button
-              disabled={selectionLocked || !selectedLayers.some(({ groupId }) => Boolean(groupId))}
-              title={shortcutTitle("ungroup")}
-              onClick={ungroup}
-            >
-              Ungroup
-            </button>
-            <button disabled={!selection.ids.length} title={shortcutTitle("duplicate")} onClick={duplicate}>
-              Duplicate
-            </button>
-            <button disabled={!selection.ids.length} title={shortcutTitle("copy")} onClick={copy}>
-              Copy
-            </button>
-            <button
-              disabled={!selection.ids.length || selectedLayers.every(layerLockedV3)}
-              title={shortcutTitle("lock")}
-              onClick={() => setLocks(orderedSelection(), true)}
-            >
-              Lock selection
-            </button>
-            <button
-              disabled={!selection.ids.length || selectedLayers.every((layer) => !layerLockedV3(layer))}
-              title={shortcutTitle("unlock")}
-              onClick={() => setLocks(orderedSelection(), false)}
-            >
-              Unlock selection
-            </button>
-            <button
-              disabled={
-                !validClipboard() ||
-                layers.length + (clipboard.current.snapshot?.layers.length ?? 0) > MAX_DOCUMENT_LAYERS_V3
-              }
-              title={shortcutTitle("paste")}
-              onClick={paste}
-            >
-              Paste
-            </button>
-          </div>
-          <div
-            className="creator-layer-list"
-            role="listbox"
-            aria-label={`${role} layers`}
-            aria-describedby="layer-selection-count"
-            aria-multiselectable="true"
-          >
-            {[...layers].reverse().map((layer) => {
-              const index = layers.indexOf(layer),
-                rowGroup = layer.groupId ? layers.filter(({ groupId }) => groupId === layer.groupId) : [layer],
-                protectedByLock = rowGroup.some(layerLockedV3);
-              return (
-                <LayerRow
-                  key={layer.id}
-                  layer={layer}
-                  index={index}
-                  count={layers.length}
-                  protectedByLock={protectedByLock}
-                  selected={selection.ids.includes(layer.id)}
-                  active={selection.active === layer.id}
-                  onSelect={(event) => {
-                    select(layer.id, event.shiftKey || event.ctrlKey || event.metaKey);
-                  }}
-                  onMove={(toIndex) => {
-                    const reorder = reorderLayerBlock(layers, layer.id, toIndex > index ? 1 : -1);
-                    if (!reorder) return;
-                    commit(
-                      { version: 3, type: "reorder-layers", ...reorder },
-                      `${reorder.layerIds.length} layer${reorder.layerIds.length === 1 ? "" : "s"} reordered.`,
-                    );
-                  }}
-                  onKeyMove={(event) => {
-                    if (event.repeat && event.key.startsWith("Arrow")) {
-                      event.preventDefault();
-                      return;
-                    }
-                    const delta = keyboardMoveDelta(event.key, event.shiftKey, event.repeat);
-                    if (!delta) return;
-                    event.preventDefault();
-                    const movingLayers = selection.ids.includes(layer.id)
-                        ? selectedLayers
-                        : layer.groupId
-                          ? layers.filter(({ groupId }) => groupId === layer.groupId)
-                          : [layer],
-                      positions = translateLayerPositionsQ16(movingLayers, {
-                        xQ16: delta[0] * 65536,
-                        yQ16: delta[1] * 65536,
-                      });
-                    if (movingLayers.some(layerLockedV3)) {
-                      setAnnouncement("Unlock the complete selection before moving it.");
-                      return;
-                    }
-                    commit(
-                      movingLayers.length === 1
-                        ? {
-                            version: 2,
-                            type: "move-layer",
-                            screen: "top",
-                            ...positions[0]!,
-                          }
-                        : {
-                            version: 3,
-                            type: "set-layer-positions",
-                            positions,
-                          },
-                      `${movingLayers.length} layer${movingLayers.length === 1 ? "" : "s"} moved.`,
-                    );
-                  }}
-                  onToggle={() =>
-                    commit(
-                      {
-                        version: 2,
-                        type: "set-layer-visibility",
-                        screen: "top",
-                        layerId: layer.id,
-                        visible: !layer.visible,
-                      },
-                      `${layer.name} ${layer.visible ? "hidden" : "shown"}.`,
+                {[1, 2, 4, 8].map((size) => (
+                  <option key={size} value={size}>
+                    {size} px
+                  </option>
+                ))}
+              </select>
+            </label>
+            {viewport.showGuides && (
+              <label>
+                <input
+                  aria-label="Lock guides"
+                  type="checkbox"
+                  checked={viewport.lockGuides}
+                  onChange={(event) =>
+                    updateViewport(
+                      { ...viewport, lockGuides: event.target.checked },
+                      event.target.checked ? "Guides locked." : "Guides unlocked.",
+                      false,
                     )
                   }
-                  onLock={() => setLocks(rowGroup, !rowGroup.every(layerLockedV3))}
-                  onRemove={() => remove(layer)}
-                  selectRef={(node) => {
-                    if (node) layerButtons.current.set(layer.id, node);
-                    else layerButtons.current.delete(layer.id);
-                  }}
-                />
-              );
-            })}
-            {!layers.length && (
-              <p className="empty-layers">
-                {assigned
-                  ? "Using the assigned role asset. Import or paste a PNG to author an override."
-                  : "Import, drop, or paste a PNG to start this document."}
-              </p>
+                />{" "}
+                Lock guides
+              </label>
             )}
-            {layers.length > 0 && assigned && (
-              <p className="document-authority">
-                Authored document active. Its layers override the assigned role asset.
-              </p>
-            )}
-          </div>
-          <div className="add-layer-tools">
-            <button
-              ref={addLayerButton}
-              className="primary add-layer"
-              disabled={!customProject || readOnly}
-              onClick={() => onAdd(role)}
-            >
-              Import PNG
-            </button>
-            <button disabled={!customProject} onClick={() => addShape("rectangle")}>
-              Rectangle
-            </button>
-            <button disabled={!customProject} onClick={() => addShape("ellipse")}>
-              Ellipse
-            </button>
-            <button aria-label="Add text" disabled={!customProject} onClick={addText}>
-              Text
-            </button>
-          </div>
-        </aside>
+          </>
+        )}
+        {activeTool === "crop" && (
+          <button type="button" onClick={() => setActiveTool("select")}>
+            Done cropping
+          </button>
+        )}
+        {activeTool === "hand" && <span>Drag the artboard to pan</span>}
+      </div>
+      <div className={`creator-editor${toolbarVisible ? " toolbar-visible" : ""}${dockOpen ? " dock-visible" : ""}`}>
         <Artboard
           renderSurface={renderSurface}
           documentKey={`${customProject?.projectId ?? "none"}:${role}`}
@@ -2592,6 +2472,8 @@ export function CreatorWorkspace({
           screen="top"
           viewport={viewport}
           onViewport={updateViewport}
+          autoFit={autoFit}
+          onAutoFit={autoFitViewport}
           grid={grid}
           snap={snap}
           snapGrid={snapGrid}
@@ -2605,29 +2487,399 @@ export function CreatorWorkspace({
           onPasteLayers={paste}
           commit={commit}
           announce={setAnnouncement}
+          activeTool={activeTool}
+          onTool={setActiveTool}
         />
-        {selectedLayer ? (
-          <LayerInspector
-            layer={selectedLayer}
-            selectedLayers={selectedLayers}
-            screen="top"
-            commit={commit}
-            announce={setAnnouncement}
-            documentSize={{ width, height }}
-          />
-        ) : (
-          <aside className="layer-inspector empty">
-            <div className="editor-panel-heading">
-              <span>Inspector</span>
-              <strong>Nothing selected</strong>
+        {toolbarVisible && (
+          <nav className="tool-rail" aria-label="Editing tools">
+            <button
+              type="button"
+              aria-label="Select and move"
+              title="Select and move"
+              aria-pressed={activeTool === "select"}
+              onClick={() => setActiveTool("select")}
+            >
+              <ToolIcon name="select" />
+            </button>
+            <button
+              ref={addLayerButton}
+              type="button"
+              aria-label="Import image"
+              title="Import image"
+              disabled={!customProject || readOnly}
+              onClick={() => onAdd(role)}
+            >
+              <ToolIcon name="import" />
+            </button>
+            <button
+              type="button"
+              aria-label="Add rectangle"
+              title="Add rectangle"
+              disabled={!customProject || readOnly}
+              onClick={() => addShape("rectangle")}
+            >
+              <ToolIcon name="rectangle" />
+            </button>
+            <button
+              type="button"
+              aria-label="Add ellipse"
+              title="Add ellipse"
+              disabled={!customProject || readOnly}
+              onClick={() => addShape("ellipse")}
+            >
+              <ToolIcon name="ellipse" />
+            </button>
+            <button
+              type="button"
+              aria-label="Add text"
+              title="Add text"
+              disabled={!customProject || readOnly}
+              onClick={addText}
+            >
+              <ToolIcon name="text" />
+            </button>
+            <button
+              type="button"
+              aria-label="Crop selected image"
+              title="Crop selected image"
+              aria-pressed={activeTool === "crop"}
+              disabled={!canCrop}
+              onClick={() => setActiveTool("crop")}
+            >
+              <ToolIcon name="crop" />
+            </button>
+            <button
+              type="button"
+              aria-label="Hand pan tool"
+              title="Hand pan tool"
+              aria-pressed={activeTool === "hand"}
+              onClick={() => setActiveTool("hand")}
+            >
+              <ToolIcon name="hand" />
+            </button>
+            <button
+              type="button"
+              aria-label="Toggle guides"
+              title="Toggle guides"
+              aria-pressed={viewport.showGuides}
+              onClick={() =>
+                updateViewport(
+                  { ...viewport, showGuides: !viewport.showGuides },
+                  viewport.showGuides ? "Guides hidden; hidden guides do not snap." : "Guides shown.",
+                  false,
+                )
+              }
+            >
+              <ToolIcon name="guides" />
+            </button>
+          </nav>
+        )}
+        {dockOpen && (
+          <aside id="workspace-dock" className="workspace-dock" aria-label="Workspace dock">
+            <div className="dock-tabs" role="tablist" aria-label="Workspace panels">
+              {(["layers", "properties", "preview"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  id={`dock-tab-${tab}`}
+                  role="tab"
+                  aria-selected={dockTab === tab}
+                  aria-controls={`dock-panel-${tab}`}
+                  tabIndex={dockTab === tab ? 0 : -1}
+                  onClick={() => onDockTab(tab)}
+                >
+                  {tab[0]!.toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
+              <button type="button" className="dock-close" aria-label="Close workspace dock" onClick={onCloseDock}>
+                Close
+              </button>
             </div>
-            <p>Select a layer on the canvas or in the stack.</p>
+            {dockTab === "layers" && (
+              <section
+                id="dock-panel-layers"
+                className="layers-panel"
+                role="tabpanel"
+                aria-labelledby="dock-tab-layers"
+              >
+                <>
+                  <div className="editor-panel-heading">
+                    <span>Stack</span>
+                    <strong id="layers-title">Layers</strong>
+                    <span id="layer-selection-count">
+                      {selection.ids.length} selected{selectionLocked ? ", locked" : ""}
+                    </span>
+                    <button
+                      type="button"
+                      data-panel-close="layers"
+                      aria-label="Close Layers panel"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={onCloseDock}
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div className="layer-command-tools" role="group" aria-label="Layer commands">
+                    <button
+                      disabled={selection.ids.length < 2 || selectionLocked}
+                      title={shortcutTitle("group")}
+                      onClick={group}
+                    >
+                      Group
+                    </button>
+                    <button
+                      disabled={selectionLocked || !selectedLayers.some(({ groupId }) => Boolean(groupId))}
+                      title={shortcutTitle("ungroup")}
+                      onClick={ungroup}
+                    >
+                      Ungroup
+                    </button>
+                    <button disabled={!selection.ids.length} title={shortcutTitle("duplicate")} onClick={duplicate}>
+                      Duplicate
+                    </button>
+                    <button disabled={!selection.ids.length} title={shortcutTitle("copy")} onClick={copy}>
+                      Copy
+                    </button>
+                    <button
+                      disabled={!selection.ids.length || selectedLayers.every(layerLockedV3)}
+                      title={shortcutTitle("lock")}
+                      onClick={() => setLocks(orderedSelection(), true)}
+                    >
+                      Lock selection
+                    </button>
+                    <button
+                      disabled={!selection.ids.length || selectedLayers.every((layer) => !layerLockedV3(layer))}
+                      title={shortcutTitle("unlock")}
+                      onClick={() => setLocks(orderedSelection(), false)}
+                    >
+                      Unlock selection
+                    </button>
+                    <button
+                      disabled={
+                        !validClipboard() ||
+                        layers.length + (clipboard.current.snapshot?.layers.length ?? 0) > MAX_DOCUMENT_LAYERS_V3
+                      }
+                      title={shortcutTitle("paste")}
+                      onClick={paste}
+                    >
+                      Paste
+                    </button>
+                  </div>
+                  <div
+                    className="creator-layer-list"
+                    role="listbox"
+                    aria-label={`${role} layers`}
+                    aria-describedby="layer-selection-count"
+                    aria-multiselectable="true"
+                  >
+                    {[...layers].reverse().map((layer) => {
+                      const index = layers.indexOf(layer),
+                        rowGroup = layer.groupId ? layers.filter(({ groupId }) => groupId === layer.groupId) : [layer],
+                        protectedByLock = rowGroup.some(layerLockedV3);
+                      return (
+                        <LayerRow
+                          key={layer.id}
+                          layer={layer}
+                          index={index}
+                          count={layers.length}
+                          protectedByLock={protectedByLock}
+                          selected={selection.ids.includes(layer.id)}
+                          active={selection.active === layer.id}
+                          onSelect={(event) => {
+                            select(layer.id, event.shiftKey || event.ctrlKey || event.metaKey);
+                          }}
+                          onMove={(toIndex) => {
+                            const reorder = reorderLayerBlock(layers, layer.id, toIndex > index ? 1 : -1);
+                            if (!reorder) return;
+                            commit(
+                              { version: 3, type: "reorder-layers", ...reorder },
+                              `${reorder.layerIds.length} layer${reorder.layerIds.length === 1 ? "" : "s"} reordered.`,
+                            );
+                          }}
+                          onKeyMove={(event) => {
+                            if (event.repeat && event.key.startsWith("Arrow")) {
+                              event.preventDefault();
+                              return;
+                            }
+                            const delta = keyboardMoveDelta(event.key, event.shiftKey, event.repeat);
+                            if (!delta) return;
+                            event.preventDefault();
+                            const movingLayers = selection.ids.includes(layer.id)
+                                ? selectedLayers
+                                : layer.groupId
+                                  ? layers.filter(({ groupId }) => groupId === layer.groupId)
+                                  : [layer],
+                              positions = translateLayerPositionsQ16(movingLayers, {
+                                xQ16: delta[0] * 65536,
+                                yQ16: delta[1] * 65536,
+                              });
+                            if (movingLayers.some(layerLockedV3)) {
+                              setAnnouncement("Unlock the complete selection before moving it.");
+                              return;
+                            }
+                            commit(
+                              movingLayers.length === 1
+                                ? {
+                                    version: 2,
+                                    type: "move-layer",
+                                    screen: "top",
+                                    ...positions[0]!,
+                                  }
+                                : {
+                                    version: 3,
+                                    type: "set-layer-positions",
+                                    positions,
+                                  },
+                              `${movingLayers.length} layer${movingLayers.length === 1 ? "" : "s"} moved.`,
+                            );
+                          }}
+                          onToggle={() =>
+                            commit(
+                              {
+                                version: 2,
+                                type: "set-layer-visibility",
+                                screen: "top",
+                                layerId: layer.id,
+                                visible: !layer.visible,
+                              },
+                              `${layer.name} ${layer.visible ? "hidden" : "shown"}.`,
+                            )
+                          }
+                          onLock={() => setLocks(rowGroup, !rowGroup.every(layerLockedV3))}
+                          onRemove={() => remove(layer)}
+                          selectRef={(node) => {
+                            if (node) layerButtons.current.set(layer.id, node);
+                            else layerButtons.current.delete(layer.id);
+                          }}
+                        />
+                      );
+                    })}
+                    {!layers.length && (
+                      <p className="empty-layers">
+                        {assigned
+                          ? "Using the assigned role asset. Import or paste a PNG to author an override."
+                          : "Import, drop, or paste a PNG to start this document."}
+                      </p>
+                    )}
+                    {layers.length > 0 && assigned && (
+                      <p className="document-authority">
+                        Authored document active. Its layers override the assigned role asset.
+                      </p>
+                    )}
+                  </div>
+                </>
+              </section>
+            )}
+            {dockTab === "properties" && (
+              <section
+                id="dock-panel-properties"
+                className={`layer-inspector${selectedLayer ? "" : " empty"}`}
+                role="tabpanel"
+                aria-labelledby="dock-tab-properties"
+              >
+                {selectedLayer && selectedDraft ? (
+                  <LayerInspector
+                    layer={selectedLayer}
+                    selectedLayers={selectedLayers}
+                    screen="top"
+                    commit={commit}
+                    announce={setAnnouncement}
+                    documentSize={{ width, height }}
+                    onClose={onCloseDock}
+                    draft={selectedDraft}
+                    onDraft={updateInspectorDraft}
+                  />
+                ) : (
+                  <>
+                    <div className="editor-panel-heading">
+                      <span>Inspector</span>
+                      <strong id="empty-inspector-title">Nothing selected</strong>
+                      <button
+                        type="button"
+                        data-panel-close="inspector"
+                        aria-label="Close Inspector panel"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={onCloseDock}
+                      >
+                        Close
+                      </button>
+                    </div>
+                    <p>Select a layer on the canvas or in the stack.</p>
+                  </>
+                )}
+              </section>
+            )}
+            {dockTab === "preview" && (
+              <section
+                id="dock-panel-preview"
+                className="dock-preview"
+                role="tabpanel"
+                aria-labelledby="dock-tab-preview"
+              >
+                {preview}
+              </section>
+            )}
           </aside>
         )}
       </div>
-      <p className="workspace-announcement" role="status" aria-live="polite">
-        {announcement}
-      </p>
+      <footer className="workspace-status">
+        <span>
+          {width} × {height} px
+        </span>
+        <div className="status-zoom" role="group" aria-label="Viewport zoom and fit">
+          <button
+            type="button"
+            aria-label="Zoom out"
+            onClick={() => updateViewport(zoomViewportAtPoint(viewport, viewport.zoom / 2, { x: 0, y: 0 }))}
+          >
+            −
+          </button>
+          <label>
+            <span className="sr-only">Exact zoom percentage</span>
+            <input
+              aria-label="Exact zoom percentage"
+              type="number"
+              min="25"
+              max="1600"
+              value={viewport.zoom}
+              onChange={(event) =>
+                updateViewport(zoomViewportAtPoint(viewport, Number(event.target.value), { x: 0, y: 0 }))
+              }
+            />
+            %
+          </label>
+          <button
+            type="button"
+            aria-label="Zoom in"
+            onClick={() => updateViewport(zoomViewportAtPoint(viewport, viewport.zoom * 2, { x: 0, y: 0 }))}
+          >
+            +
+          </button>
+          <button
+            type="button"
+            onClick={() => updateViewport(normalizeViewport({ ...viewport, zoom: 100, panX: 0, panY: 0 }))}
+          >
+            100%
+          </button>
+          <button
+            type="button"
+            onClick={() => globalThis.document.querySelector<HTMLButtonElement>('[data-fit-view="true"]')?.click()}
+          >
+            Fit
+          </button>
+        </div>
+        <span>
+          {snap ? `Snap ${snapGrid}px` : "Snap off"}
+          {grid ? " · Grid" : ""}
+          {viewport.showGuides ? " · Guides" : ""}
+        </span>
+        <span>{selection.ids.length} selected</span>
+        <span className="workspace-announcement" role="status" aria-live="polite">
+          {announcement}
+        </span>
+        <span className="status" data-accepted-sequence={acceptedSequence} aria-live="polite">
+          {status}
+        </span>
+      </footer>
     </section>
   );
 }

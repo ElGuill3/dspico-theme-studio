@@ -15,8 +15,8 @@ export function CustomAssetBench({
 }) {
   return (
     <section className="custom-asset-bench" aria-labelledby="custom-asset-bench-title">
-      <h2 id="custom-asset-bench-title">Seven visual source roles</h2>
-      <div className="custom-role-grid" role="list" aria-label="Seven custom visual roles">
+      <h2 id="custom-asset-bench-title">Fallback source assignments</h2>
+      <div className="custom-role-grid" role="list" aria-label="Optional compatibility source roles">
         {roles.map((role) => {
           const source = sources[role];
           return (

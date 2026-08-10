@@ -28,8 +28,8 @@ describe("renderer shell", () => {
   it("labels only primaryColor and darkTheme as active Material authority", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
     const preview = readFileSync(path.join(root, "packages/theme-core/src/preview.ts"), "utf8");
-    expect(renderer).toContain("Only these two fields are consumed by the pinned launcher profile.");
-    expect(renderer).toContain("Preserved legacy migration data");
+    expect(renderer).toContain("Only primary color and dark theme are consumed by the pinned launcher profile.");
+    expect(renderer).toContain("scene migration values remain preserved but are not exported");
     expect(preview).toContain('properties: ["dimensions", "primaryColor", "darkTheme"]');
     expect(preview).not.toContain('"Material colors"');
   });
@@ -38,8 +38,8 @@ describe("renderer shell", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
     const css = readFileSync(path.join(rendererRoot, "studio.css"), "utf8");
 
-    expect(renderer).toContain('useState<LauncherView>("coverflow")');
-    expect(renderer).toContain('role="group" aria-labelledby="launcher-view-label"');
+    expect(renderer).toContain("workspaceLayout.normal.previewMode");
+    expect(renderer).toContain('role="group" aria-label="Preview mode"');
     expect(renderer).toContain('aria-pressed={launcherView === "coverflow"}');
     expect(renderer).toContain('aria-pressed={launcherView === "banner-list"}');
     expect(renderer).toContain("data-launcher-overlay={`${launcherView}-${screen}`}");
@@ -63,7 +63,7 @@ describe("renderer shell", () => {
     expect(renderer).toContain("<CreatorWorkspace");
     expect(workspace).toContain("width={width}");
     expect(workspace).toContain("height={height}");
-    expect(workspace).toMatch(/role="group" aria-label="Visual document"/);
+    expect(workspace).toContain('aria-label="Theme documents"');
     expect(workspace).toContain("onPaste=");
     expect(workspace).toContain("onDrop=");
     expect(renderer).toContain('data-preview-chrome="device-frame"');
@@ -72,20 +72,94 @@ describe("renderer shell", () => {
     expect(css).toContain("pointer-events: none");
   });
 
-  it("prioritizes the editor beside a persistent preview and keeps settings compact", () => {
+  it("uses a launch screen before rendering the full-viewport editor shell", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
     const css = readFileSync(path.join(rendererRoot, "studio.css"), "utf8");
 
-    expect(renderer.indexOf('className="editor-region"')).toBeLessThan(renderer.indexOf('className="preview-panel"'));
-    expect(renderer).toMatch(/<details className="project-settings">\s*<summary>Project settings<\/summary>/);
-    expect(renderer).toContain('className="inspector" aria-labelledby="project-settings-title"');
-    expect(renderer).toMatch(/className="editor-region"[\s\S]*<CreatorWorkspace[\s\S]*className="preview-panel"/);
-    expect(renderer).toMatch(/target\?\.closest\("details"\)\?\.setAttribute\("open", ""\);[\s\S]*target\?\.focus\(\)/);
-    expect(css).toMatch(/\.studio-shell \{[\s\S]*?width: 100%;/);
-    expect(css).toMatch(/\.workspace \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) minmax\(390px, 32vw\);/);
-    expect(css).toMatch(/\.inspector \{[\s\S]*?top: 69px;[\s\S]*?bottom: 14px;[\s\S]*?overflow-y: auto;/);
-    expect(css).toMatch(/\.preview-panel \{[\s\S]*?position: sticky;/);
-    expect(css).toContain("summary:focus-visible");
+    expect(renderer).toContain('className="project-launch"');
+    expect(renderer).toContain("{!loaded ? (");
+    expect(renderer).toContain("<ProjectDrawer");
+    expect(renderer).toContain("dockOpen={visibleLayout.dockOpen}");
+    expect(renderer).toContain("toolbarVisible={visibleLayout.toolbarVisible}");
+    expect(css).toMatch(/html,\s*body,\s*#root \{[\s\S]*?height: 100dvh;[\s\S]*?overflow: hidden;/);
+    expect(css).toMatch(/\.studio-shell \{[\s\S]*?height: 100dvh;/);
+    expect(css).toMatch(/\.creator-workspace \{[\s\S]*?grid-template-rows:/);
+    expect(css).toContain(".project-drawer-content");
+    expect(css).not.toMatch(/gradient\(/);
+  });
+
+  it("keeps the artboard first and mounts one tabbed dock panel at a time", () => {
+    const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8"),
+      workspace = readFileSync(path.join(rendererRoot, "workspace/read-only-workspace.tsx"), "utf8"),
+      css = readFileSync(path.join(rendererRoot, "studio.css"), "utf8"),
+      artboard = workspace.indexOf("<Artboard"),
+      dock = workspace.indexOf('id="workspace-dock"');
+    expect(artboard).toBeGreaterThan(0);
+    expect(artboard).toBeLessThan(dock);
+    expect(workspace).toContain('role="tablist" aria-label="Workspace panels"');
+    expect(workspace).toContain('dockTab === "layers"');
+    expect(workspace).toContain('dockTab === "properties"');
+    expect(workspace).toContain('dockTab === "preview"');
+    expect(renderer).toContain('pendingPanelFocus.current = "artboard"');
+    expect(renderer).toContain('document.querySelector<HTMLElement>(".workspace-canvas")');
+    expect(css).toContain(".workspace-dock");
+  });
+
+  it("keeps Inspector drafts outside unmounted panel content and synchronizes layout storage events", () => {
+    const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8"),
+      workspace = readFileSync(path.join(rendererRoot, "workspace/read-only-workspace.tsx"), "utf8");
+    expect(workspace).toContain("useState<InspectorDraftCache>");
+    expect(workspace).toContain("readInspectorDraft(inspectorDrafts");
+    expect(workspace).toContain("pruneInspectorDrafts(current, revisions)");
+    expect(renderer).toContain("workspaceLayoutFromStorageEvent(event, layoutStorage)");
+    expect(renderer).toContain('globalThis.addEventListener("storage", storage)');
+    expect(renderer).toContain('globalThis.removeEventListener("storage", storage)');
+  });
+
+  it("uses a source-local accessible original logo in chrome and launch", () => {
+    const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8"),
+      brand = readFileSync(path.join(rendererRoot, "brand-mark.tsx"), "utf8"),
+      logo = readFileSync(path.join(rendererRoot, "assets/pico-theme-creator.svg"), "utf8");
+    expect(renderer).toContain("<BrandMark");
+    expect(renderer).toContain('label="Pico Theme Creator"');
+    expect(brand).toContain('alt={label ?? ""}');
+    expect(logo).toContain("Abstract dual-screen clamshell");
+    expect(logo).toContain("#53d5e4");
+    expect(logo).toContain("#ef4c9a");
+    expect(logo).not.toMatch(/nintendo|ds xl/i);
+  });
+
+  it("routes toolbar actions through the existing workspace operations once", () => {
+    const workspace = readFileSync(path.join(rendererRoot, "workspace/read-only-workspace.tsx"), "utf8");
+    expect(workspace).toMatch(/aria-label="Import image"[\s\S]{0,220}onClick=\{\(\) => onAdd\(role\)\}/);
+    expect(workspace).toMatch(/aria-label="Add rectangle"[\s\S]{0,220}addShape\("rectangle"\)/);
+    expect(workspace).toMatch(/aria-label="Add ellipse"[\s\S]{0,220}addShape\("ellipse"\)/);
+    expect(workspace).toMatch(/aria-label="Add text"[\s\S]{0,220}onClick=\{addText\}/);
+    expect(workspace).toContain('aria-pressed={activeTool === "crop"}');
+    expect(workspace).toContain('aria-pressed={activeTool === "hand"}');
+  });
+
+  it("keeps project administration in a focus-trapped internally scrolling drawer", () => {
+    const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8"),
+      drawer = readFileSync(path.join(rendererRoot, "project-drawer.tsx"), "utf8"),
+      css = readFileSync(path.join(rendererRoot, "studio.css"), "utf8");
+    expect(renderer).toContain('tab: "details"');
+    expect(renderer).toContain('tab: "export"');
+    expect(renderer).toContain("Optional compatibility sources");
+    expect(drawer).toContain('role="dialog"');
+    expect(drawer).toContain('role="tablist"');
+    expect(drawer).toContain('event.key !== "Tab"');
+    expect(drawer).toContain('event.key === "Escape"');
+    expect(drawer).toContain("returnTo?.focus()");
+    expect(css).toMatch(/\.project-drawer-content \{[\s\S]*?overflow: auto;/);
+  });
+
+  it("overlays the single dock at narrow widths without enabling body overflow", () => {
+    const css = readFileSync(path.join(rendererRoot, "studio.css"), "utf8");
+    expect(css).toMatch(
+      /@media \(max-width: 1100px\)[\s\S]*?\.creator-editor \.workspace-dock[\s\S]*?position: absolute;/,
+    );
+    expect(css).toMatch(/body,\s*#root[\s\S]*?overflow: hidden;/);
   });
 
   it("keeps layer manipulation in independent accessible DOM controls", () => {
@@ -175,7 +249,7 @@ describe("renderer shell", () => {
       "Exact zoom percentage",
       "100%",
       "Fit",
-      'aria-label="Show guides"',
+      'aria-label="Toggle guides"',
       'aria-label="Lock guides"',
       "Add vertical",
       "Add horizontal",
@@ -203,7 +277,7 @@ describe("renderer shell", () => {
     const workspace = readFileSync(path.join(rendererRoot, "workspace/read-only-workspace.tsx"), "utf8");
 
     expect(renderer).toContain("createCustomRenderPlan(customProject)");
-    expect(renderer).toContain("renderSurface={customRenderPlan");
+    expect(renderer).toContain("renderPlan={customRenderPlan}");
     expect(workspace).toContain("visualDocuments");
     expect(workspace).toContain("CUSTOM_VISUAL_ROLES_V1.map");
     expect(workspace).not.toContain("LauncherView");
@@ -212,10 +286,8 @@ describe("renderer shell", () => {
   it("exposes path-precise diagnostics for Material and Custom projects", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
 
-    expect(renderer).toMatch(/disabled=\{!loaded \|\| busy\}[\s\S]{0,120}run\("Validation complete\."/);
-    expect(renderer).toMatch(
-      /disabled=\{!loaded \|\| busy \|\| result\?\.canExport !== true\}[\s\S]{0,180}window\.studio\.export/,
-    );
+    expect(renderer).toMatch(/disabled=\{busy\}[\s\S]{0,120}run\("Validation complete\."/);
+    expect(renderer).toMatch(/disabled=\{busy \|\| result\?\.canExport !== true\}[\s\S]{0,220}window\.studio\.export/);
     expect(renderer).toContain("result.diagnostics.map");
     expect(renderer).toContain("diagnostic.location.document");
     expect(renderer).toContain("diagnostic.location.pointer");
@@ -225,11 +297,11 @@ describe("renderer shell", () => {
   it("uses one folder-oriented open action and capability-based export reveal", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
     const preload = readFileSync(path.join(root, "apps/studio/src/preload.ts"), "utf8");
-    expect(renderer).toContain("New Material");
-    expect(renderer).toContain("New Custom");
+    expect(renderer).toContain("Material theme");
+    expect(renderer).toContain("Custom theme");
     expect(renderer).toContain("Open project");
     expect(renderer).not.toContain(">Open custom<");
-    expect(renderer).toContain('aria-label="Project folder"');
+    expect(renderer).toContain("Project location");
     expect(renderer).toContain("Reveal folder");
     expect(renderer).toContain("Reveal ZIP");
     expect(preload).toContain('call({ kind: "reveal-export", revealId, target })');
@@ -270,6 +342,8 @@ describe("renderer shell", () => {
     expect(help).toContain('event.key === "Escape"');
     expect(help).toContain("SHORTCUTS.filter");
     expect(shortcuts).toContain('id: "guides"');
+    expect(shortcuts).toContain('id: "focus"');
+    expect(shortcuts).toContain('id: "editor-focus"');
     expect(recovery).toContain('window.addEventListener("unhandledrejection"');
     expect(recovery).toContain("Committed work is saved in the project folder");
   });

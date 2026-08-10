@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="title description">
+  <title id="title">Pico Theme Creator</title>
+  <desc id="description">Abstract dual-screen clamshell with a cyan screen and magenta pixel spark</desc>
+  <g fill="none" stroke="#edf2f7" stroke-linejoin="round" stroke-width="2.5">
+    <rect x="7" y="5" width="34" height="16" rx="4"/>
+    <rect x="7" y="27" width="34" height="16" rx="4"/>
+    <path d="M18 24h12" stroke-linecap="round"/>
+  </g>
+  <rect x="12" y="9" width="24" height="8" rx="2" fill="#53d5e4"/>
+  <path fill="#ef4c9a" d="M31 30h5v4h4v5h-5v-4h-4z"/>
+</svg>

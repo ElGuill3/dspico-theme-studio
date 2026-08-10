@@ -14,7 +14,7 @@ export function CustomOutputRail({ visualPackage }: { visualPackage?: CustomVisu
       data-testid="custom-output-rail"
       aria-labelledby="custom-output-rail-title"
     >
-      <h2 id="custom-output-rail-title">12-file output rail</h2>
+      <h2 id="custom-output-rail-title">Compiled outputs</h2>
       <p>
         <span>{CUSTOM_PREVIEW_LABELS.postCodec}</span> · <span>{CUSTOM_PREVIEW_LABELS.fidelity}</span> ·{" "}
         <span>{CUSTOM_PREVIEW_LABELS.limitation}</span>

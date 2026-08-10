@@ -18,7 +18,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: "ungroup", keys: "Ctrl/Cmd + Shift + G", label: "Ungroup", group: "Edit" },
   { id: "lock", keys: "Ctrl/Cmd + Alt + L", label: "Lock selection", group: "Edit" },
   { id: "unlock", keys: "Ctrl/Cmd + Alt + Shift + L", label: "Unlock selection", group: "Edit" },
-  { id: "crop", keys: "Crop image, then drag", label: "Crop the selected image", group: "Edit" },
+  { id: "tools", keys: "Left tool rail", label: "Import images and add shapes or text", group: "Edit" },
+  { id: "crop", keys: "Crop tool, then drag", label: "Crop the selected image", group: "Edit" },
   { id: "rotate", keys: "Rotate left / Rotate right", label: "Rotate the selection 90 degrees", group: "Edit" },
   { id: "delete", keys: "Delete / Backspace", label: "Delete the selection or active guide", group: "Edit" },
   { id: "escape", keys: "Escape", label: "Cancel the active crop, drag, or field edit", group: "Edit" },
@@ -26,6 +27,14 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: "fit", keys: "0", label: "Fit the document; Shift + 0 resets to 100%", group: "View" },
   { id: "pan", keys: "Space + drag or middle drag", label: "Pan the canvas", group: "View" },
   { id: "guides", keys: "Rulers and guide controls", label: "Add, move, lock, or clear guides", group: "View" },
+  { id: "focus", keys: "Tab", label: "Hide or restore the tool rail and dock", group: "View" },
+  {
+    id: "editor-focus",
+    keys: "Shift + Tab",
+    label: "Hide or restore the workspace dock",
+    group: "View",
+  },
+  { id: "panels", keys: "Dock tabs", label: "Switch between Layers, Properties, and Preview", group: "View" },
   { id: "help", keys: "? or F1", label: "Open Help and shortcuts", group: "View" },
 ] as const;
 

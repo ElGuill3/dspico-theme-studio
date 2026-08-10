@@ -27,6 +27,9 @@ describe("help registry", () => {
       "fit",
       "pan",
       "guides",
+      "focus",
+      "editor-focus",
+      "panels",
       "delete",
       "escape",
     ])
