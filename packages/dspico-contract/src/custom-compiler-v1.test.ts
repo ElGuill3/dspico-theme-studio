@@ -12,7 +12,6 @@ import {
   packRgba8ToDspico15,
   validateThemeProjectV2,
 } from "./index.js";
-import { LAUNCHER_V1_VISUAL_FILES } from "./profile-v1-3.js";
 import {
   CUSTOM_VISUAL_ROLES_V1,
   CUSTOM_VISUAL_SLOTS_V1,
@@ -93,21 +92,6 @@ const source = (character: string, width: number, height: number, pixels: number
   pixels: new Uint8Array(pixels),
 });
 const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
-const zipEntries = (zip: Uint8Array) => {
-  const entries: Record<string, Uint8Array> = {},
-    view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
-  let offset = 0;
-  while (view.getUint32(offset, true) === 0x04034b50) {
-    const size = view.getUint32(offset + 18, true),
-      nameLength = view.getUint16(offset + 26, true),
-      start = offset + 30 + nameLength;
-    const name = new TextDecoder().decode(zip.slice(offset + 30, start));
-    entries[name] = zip.slice(start, start + size);
-    offset = start + size;
-  }
-  return entries;
-};
-
 describe("Custom background 15bpp compiler", () => {
   it("matches pinned XBGR555 packing, alpha, and quantization bytes", () => {
     expect(hex(packRgba8ToDspico15(new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 9, 8, 7, 0])))).toBe(
@@ -185,60 +169,21 @@ describe("Custom background 15bpp compiler", () => {
     );
   });
 
-  it("builds deterministic ordered Custom files, ZIP parity, and provenance lineage", () => {
+  it("blocks V2 Custom publication instead of emitting transparent role placeholders", () => {
     const top = layer("top", "e", { x: 0, y: 0, width: 1, height: 1 }, { x: 0, y: 0, width: 1, height: 1 });
     const bottom = { ...top, id: "bottom" };
     const input = project([top], [bottom], [record("e", 1, 1)]),
       plan = createCustomRenderPlan(input);
     const sources = [source("e", 1, 1, [255, 0, 0, 255])];
 
-    const first = compileCustomThemeExportV1(input, plan, sources),
-      second = compileCustomThemeExportV1(input, plan, sources);
-
-    expect(first.files.map(({ path }) => path)).toEqual(["theme.json", ...LAUNCHER_V1_VISUAL_FILES, "report.json"]);
-    expect(first).toEqual(second);
-    expect(zipEntries(first.zipBytes)).toEqual(Object.fromEntries(first.files.map((file) => [file.path, file.bytes])));
-    const report = JSON.parse(new TextDecoder().decode(first.files.at(-1)!.bytes));
-    expect(report.files.map(({ path }: { path: string }) => path)).toEqual(["theme.json", ...LAUNCHER_V1_VISUAL_FILES]);
-    expect(
-      report.files
-        .filter(({ path }: { path: string }) => path !== "theme.json")
-        .reduce((total: number, file: { bytes: number }) => total + file.bytes, 0),
-    ).toBe(230_496);
-    expect(report.compatibility).toMatchObject({ profileId: "dspico-launcher-v1", projectFormatVersion: 2 });
-    expect(report.policies).toMatchObject({
-      packing: "le-xbgr1555-alpha128-round-half-up-no-dither-v1",
-      resize: "nearest-center-floor-v1",
-    });
-    expect(report.sources).toEqual([hash("e")]);
-    expect(
-      report.lineage.map(({ screen, layerId }: { screen: string; layerId: string }) => ({ screen, layerId })),
-    ).toEqual([
-      { screen: "top", layerId: "top" },
-      { screen: "bottom", layerId: "bottom" },
-    ]);
-    expect(report.credits[0]).toMatchObject({ name: "Author", source: "https://example.test/e.png" });
-    expect(report.licenses[0]).toMatchObject({ name: "CC-BY-4.0", notice: "Copyright Author" });
-  }, 15_000);
-
-  it("scenario 28: separates software fixture evidence from physical hardware claims", () => {
-    const top = layer("top", "e", { x: 0, y: 0, width: 1, height: 1 }, { x: 0, y: 0, width: 1, height: 1 });
-    const input = project([top], [{ ...top, id: "bottom" }], [record("e", 1, 1)]);
-    const report = JSON.parse(
-      new TextDecoder().decode(
-        compileCustomThemeExportV1(input, createCustomRenderPlan(input), [
-          source("e", 1, 1, [255, 0, 0, 255]),
-        ]).files.at(-1)!.bytes,
-      ),
-    );
-
-    expect(report.compatibility.evidence).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ kind: "source", path: "docs/Themes.md" }),
-        expect.objectContaining({ kind: "fixture", path: "_pico/themes/raspberry/theme.json" }),
-      ]),
-    );
-    expect(report.evidenceBoundary).toEqual({ softwareFixtureOnly: true, hardwareParityClaimed: false });
+    expect(() => compileCustomThemeExportV1(input, plan, sources)).toThrow(CustomCompileBlockedError);
+    try {
+      compileCustomThemeExportV1(input, plan, sources);
+    } catch (error) {
+      expect(error).toMatchObject({
+        diagnostics: [expect.objectContaining({ ruleId: "custom.export-blocked", severity: "error" })],
+      });
+    }
   });
 });
 

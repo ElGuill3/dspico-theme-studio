@@ -1165,108 +1165,12 @@ export function compileThemeExport(input: unknown, acknowledgments: readonly str
   return { files, zipBytes: storedZip(files), reportSha256: sha256(reportBytes), diagnostics: validation.diagnostics };
 }
 
-const transparentImage = (width: number, height: number): RgbaImageV1 => ({
-  width,
-  height,
-  pixels: new Uint8Array(width * height * 4),
-});
-const unpackDspico15 = (bytes: Uint8Array, width: number, height: number): RgbaImageV1 => {
-  const pixels = new Uint8Array(width * height * 4);
-  for (let input = 0, output = 0; output < pixels.length; input += 2, output += 4) {
-    const word = bytes[input]! | (bytes[input + 1]! << 8);
-    const expand = (value: number) => Math.round((value * 255) / 31);
-    pixels[output] = expand(word & 31);
-    pixels[output + 1] = expand((word >>> 5) & 31);
-    pixels[output + 2] = expand((word >>> 10) & 31);
-    pixels[output + 3] = word & 0x8000 ? 255 : 0;
-  }
-  return { width, height, pixels };
-};
-
 export function compileCustomThemeExportV1(
-  projectInput: unknown,
-  plan: CustomRenderPlanV1,
-  sourceAssets: readonly NormalizedRgbaAssetV1[],
-  acknowledgments?: readonly string[],
+  _projectInput: unknown,
+  _plan: CustomRenderPlanV1,
+  _sourceAssets: readonly NormalizedRgbaAssetV1[],
+  _acknowledgments?: readonly string[],
 ): ExportPlanV1 {
-  const compiled = compileCustomBackgroundsV1(projectInput, plan, sourceAssets, acknowledgments);
-  const validation = validateThemeProjectV2(projectInput, acknowledgments);
-  const project = objectValue(projectInput)!;
-  const metadata = objectValue(project.metadata)!;
-  const records = (project.assets as unknown[]).map(objectValue).filter(Boolean);
-  const tokens = objectValue(project.tokens);
-  const primaryColor = objectValue(tokens?.primaryColor) ?? { r: 0, g: 0, b: 0 };
-  const themeBytes = canonicalJson({
-    type: "custom",
-    name: metadata.name,
-    description: metadata.description,
-    author: metadata.author,
-    primaryColor,
-    darkTheme: tokens?.darkTheme === true,
-  });
-  const visual = encodeV13VisualFiles({
-    top: unpackDspico15(compiled.top, 256, 192),
-    bottom: unpackDspico15(compiled.bottom, 256, 192),
-    gridcell: transparentImage(64, 64),
-    gridcellSelected: transparentImage(64, 64),
-    bannerListCell: transparentImage(256, 49),
-    bannerListCellSelected: transparentImage(256, 49),
-    scrim: transparentImage(8, 42),
-  });
-  const payloads = [
-    { path: "theme.json", bytes: themeBytes },
-    ...LAUNCHER_V1_VISUAL_FILES.map((path) => ({ path, bytes: visual[path] })),
-  ];
-  const provenance = records.map((record) => objectValue(record!.provenance)!).filter(Boolean);
-  const report = {
-    reportVersion: 1,
-    compatibility: {
-      profileId: DSPICO_LAUNCHER_V1.profileId,
-      tag: DSPICO_LAUNCHER_V1.tag,
-      launcherCommit: DSPICO_LAUNCHER_V1.launcherCommit,
-      manifestSha256: DSPICO_LAUNCHER_V1.manifestSha256,
-      compilerVersion: "custom-compiler-v1",
-      projectFormatVersion: 2,
-      evidence: reportEvidence(),
-    },
-    evidenceBoundary: softwareFixtureBoundary,
-    policies: {
-      composition: "fixed-integer-source-over-v1",
-      resize: "nearest-center-floor-v1",
-      packing: compiled.packing,
-      dithering: "disabled",
-    },
-    diagnostics: validation.diagnostics,
-    acknowledgmentFingerprints: validation.acknowledgedFingerprints,
-    sources: [...new Set(records.map((record) => String(record!.sourceSha256)))].sort(lexical),
-    lineage: plan.screens.flatMap((surface) =>
-      surface.layers.map((layer) => ({
-        screen: surface.screen,
-        layerId: layer.id,
-        order: layer.order,
-        sourceSha256: layer.asset.sha256,
-        crop: layer.source,
-        destinationQ16: layer.destinationQ16,
-        opacity: layer.opacity,
-      })),
-    ),
-    files: payloads.map((file) => ({ path: file.path, bytes: file.bytes.length, sha256: sha256(file.bytes) })),
-    credits: provenance
-      .map((item) => ({ name: String(item.credit), role: String(item.intendedUse), source: String(item.source) }))
-      .sort((a, b) => lexical(a.name, b.name) || lexical(a.source, b.source)),
-    licenses: provenance
-      .map((item) => ({
-        name: String(item.license),
-        spdx: String(item.license),
-        source: String(item.source),
-        notice: String(item.notice),
-      }))
-      .sort((a, b) => lexical(a.name, b.name) || lexical(a.source, b.source)),
-    notices: [...new Set([...(project.notices as string[]), ...provenance.map((item) => String(item.notice))])].sort(
-      lexical,
-    ),
-  };
-  const reportBytes = canonicalJson(report);
-  const files = [...payloads, { path: "report.json", bytes: reportBytes }];
-  return { files, zipBytes: storedZip(files), reportSha256: sha256(reportBytes), diagnostics: validation.diagnostics };
+  void [_projectInput, _plan, _sourceAssets, _acknowledgments];
+  throw new CustomCompileBlockedError([customExportBlockedDiagnostic()]);
 }
