@@ -193,13 +193,13 @@ const materialTheme = (project: MaterialProjectV1) => {
     darkTheme: project.tokens.darkTheme,
   };
 };
-const customPublication = async (project: ThemeProjectV3) => {
+const customPublication = async (project: ThemeProjectV3, requireVisualReceipt = true) => {
   if (!customStore) throw new Error("Open or create a Custom project first");
-  return compileCustomPublicationV3(project, customMedia);
+  return compileCustomPublicationV3(project, customMedia, { requireVisualReceipt });
 };
 
 const publicationHandoffCustom = async (project: ThemeProjectV3) => {
-  const publication = await customPublication(project);
+  const publication = await customPublication(project, false);
   const files = publication.files.map((file) => ({
     path: file.path,
     sha256: sha256(file.bytes),

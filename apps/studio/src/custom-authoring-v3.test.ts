@@ -3,6 +3,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CUSTOM_VISUAL_ROLES_V1,
+  CUSTOM_VISUAL_SLOTS_V1,
+  codecPolicySha256V1,
   compositeProfileSha256V1,
   prepareThemeSoundV1,
   sha256,
@@ -22,6 +24,7 @@ import {
   compileEffectiveCustomVisualsV3,
   customAuthoringSnapshotV3,
   diagnoseCustomPublicationV3,
+  legacyCustomProjectV3,
 } from "./custom-authoring-v3.js";
 import { importPng } from "./png-import.js";
 
@@ -46,6 +49,46 @@ const wav = () =>
       "hex",
     ),
   );
+const visualReceipt = (project: ReturnType<typeof currentProjectV3>, media: ReadonlyMap<string, Uint8Array>) => {
+  const visual = compileEffectiveCustomVisualsV3(customAuthoringSnapshotV3(project, media));
+  const legacy = legacyCustomProjectV3(project);
+  const themeBytes = new TextEncoder().encode(
+    `${JSON.stringify({ author: project.metadata.author, darkTheme: legacy.tokens.darkTheme, description: project.metadata.description, name: project.metadata.name, primaryColor: legacy.tokens.primaryColor, type: "custom" })}\n`,
+  );
+  return {
+    version: 1,
+    schema: "dspico-visual-receipt-v1" as const,
+    component: "visual" as const,
+    tester: "Ada",
+    device: "DSi",
+    cartridge: "cart",
+    launcherBuild: "build",
+    testedAt: "2026-08-08T00:00:00.000Z",
+    profile: {
+      id: LAUNCHER_V1_PROFILE.profileId,
+      tag: LAUNCHER_V1_PROFILE.tag,
+      commit: LAUNCHER_V1_PROFILE.launcherCommit,
+      sha256: compositeProfileSha256V1(),
+    },
+    codecPolicy: { id: "le-xbgr555-a3i5-a5i3-round-half-up-median-cut-v1", sha256: codecPolicySha256V1() },
+    themeJsonSha256: sha256(themeBytes),
+    manifest: CUSTOM_VISUAL_SLOTS_V1.map(({ path }) => ({
+      path,
+      sha256: sha256(visual.files[path as keyof typeof visual.files]),
+    })),
+    observations: ["Fixture visual package inspected."],
+    pass: true,
+  };
+};
+const withVisualEvidence = (state: ReturnType<typeof createProjectV3>, media: ReadonlyMap<string, Uint8Array>) =>
+  applyOperationV3(state, {
+    version: 3,
+    type: "set-component-evidence",
+    component: "visual",
+    receipt: visualReceipt(currentProjectV3(state), media),
+  });
+const compileVerified = (state: ReturnType<typeof createProjectV3>, media: ReadonlyMap<string, Uint8Array>) =>
+  compileCustomPublicationV3(currentProjectV3(withVisualEvidence(state, media)), media);
 
 const complete = () => {
   const pngBytes = new Uint8Array(
@@ -154,11 +197,12 @@ const complete = () => {
       pass: true,
     },
   });
+  state = withVisualEvidence(state, media);
   return { state, media, png, sound, bcstmRef };
 };
 
 describe("active V3 Custom package", () => {
-  it("returns path-precise diagnostics for incomplete visuals without requiring a visual receipt", () => {
+  it("requires an exact current visual receipt before publication", () => {
     const legacy = createProjectV2({ projectId: "custom", metadata, themeKind: "custom" });
     const incomplete = createProjectV3({
       projectId: "custom",
@@ -175,9 +219,18 @@ describe("active V3 Custom package", () => {
       }),
     );
 
-    const completed = complete();
-    expect(currentProjectV3(completed.state).componentEvidence.visual).toBeUndefined();
+    const completed = complete(),
+      withoutReceipt = applyOperationV3(completed.state, {
+        version: 3,
+        type: "set-component-evidence",
+        component: "visual",
+      });
+    expect(diagnoseCustomPublicationV3(currentProjectV3(withoutReceipt), completed.media)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ ruleId: "custom.visual-receipt-required" })]),
+    );
+    expect(() => compileCustomPublicationV3(currentProjectV3(withoutReceipt), completed.media)).toThrow();
     expect(diagnoseCustomPublicationV3(currentProjectV3(completed.state), completed.media)).toEqual([]);
+    expect(() => compileCustomPublicationV3(currentProjectV3(completed.state), completed.media)).not.toThrow();
   });
 
   it("diagnoses missing media, optional WAV failure, malformed documents, and stale BGM evidence", () => {
@@ -231,7 +284,7 @@ describe("active V3 Custom package", () => {
   });
   it("publishes assigned visual outputs and deterministic WAV/BCSTM paths without placeholders", () => {
     const { state, media, sound, bcstmRef } = complete();
-    const plan = compileCustomPublicationV3(currentProjectV3(state), media);
+    const plan = compileVerified(state, media);
     expect(plan.expectation.profileSha256).toBe(compositeProfileSha256V1());
     expect(plan.files.find(({ path }) => path === "sounds/navigation.wav")?.bytes).toEqual(sound.prepared.bytes);
     expect(plan.files.find(({ path }) => path === `bgm/${bcstmRef.sha256}.bcstm`)?.bytes).toEqual(
@@ -243,7 +296,7 @@ describe("active V3 Custom package", () => {
 
   it("changes only the corresponding exported background when creator composition moves", () => {
     const { state, media } = complete();
-    const before = compileCustomPublicationV3(currentProjectV3(state), media);
+    const before = compileVerified(state, media);
     const legacy = currentProjectV3(state).legacyComposition as ReturnType<typeof createProjectV2>;
     const moved = applyOperationV3(state, {
       version: 3,
@@ -257,7 +310,7 @@ describe("active V3 Custom package", () => {
         yQ16: 0,
       }),
     });
-    const after = compileCustomPublicationV3(currentProjectV3(moved), media);
+    const after = compileVerified(moved, media);
     const output = (plan: typeof before, path: string) => plan.files.find((file) => file.path === path)!.bytes;
 
     expect(output(after, "topbg.bin")).not.toEqual(output(before, "topbg.bin"));
@@ -266,7 +319,7 @@ describe("active V3 Custom package", () => {
 
   it("lets an authored role document override only that role's assigned output", () => {
     const completed = complete();
-    const before = compileCustomPublicationV3(currentProjectV3(completed.state), completed.media);
+    const before = compileVerified(completed.state, completed.media);
     const beforeRail = compileEffectiveCustomVisualsV3(
       customAuthoringSnapshotV3(currentProjectV3(completed.state), completed.media),
     );
@@ -290,7 +343,7 @@ describe("active V3 Custom package", () => {
       role: "grid-cell",
       operation: { version: 2, type: "add-layer", screen: "top", layer },
     });
-    const after = compileCustomPublicationV3(currentProjectV3(authored), completed.media);
+    const after = compileVerified(authored, completed.media);
     const rail = compileEffectiveCustomVisualsV3(
       customAuthoringSnapshotV3(currentProjectV3(authored), completed.media),
     );
@@ -313,7 +366,7 @@ describe("active V3 Custom package", () => {
 
   it("changes only one role's exported bytes when a native shape changes", () => {
     const completed = complete(),
-      before = compileCustomPublicationV3(currentProjectV3(completed.state), completed.media),
+      before = compileVerified(completed.state, completed.media),
       added = applyOperationV3(completed.state, {
         version: 3,
         type: "edit-visual-document",
@@ -336,7 +389,7 @@ describe("active V3 Custom package", () => {
           },
         },
       }),
-      after = compileCustomPublicationV3(currentProjectV3(added), completed.media),
+      after = compileVerified(added, completed.media),
       changed = new Set(["gridcellSelected.bin", "gridcellSelectedPltt.bin", "report.json"]);
     for (const file of before.files) {
       const next = after.files.find(({ path: filePath }) => filePath === file.path)!;
@@ -374,7 +427,7 @@ describe("active V3 Custom package", () => {
           },
         },
       });
-    const before = compileCustomPublicationV3(currentProjectV3(state), completed.media),
+    const before = compileVerified(state, completed.media),
       beforeRail = compileEffectiveCustomVisualsV3(customAuthoringSnapshotV3(currentProjectV3(state), completed.media)),
       grouped = applyOperationV3(state, {
         version: 3,
@@ -402,7 +455,7 @@ describe("active V3 Custom package", () => {
           ],
         },
       }),
-      after = compileCustomPublicationV3(currentProjectV3(locked), completed.media),
+      after = compileVerified(locked, completed.media),
       afterRail = compileEffectiveCustomVisualsV3(customAuthoringSnapshotV3(currentProjectV3(locked), completed.media));
     expect(after.files).toEqual(before.files);
     expect(after.zipBytes).toEqual(before.zipBytes);
@@ -433,7 +486,7 @@ describe("active V3 Custom package", () => {
 
   it("changes only one role's rail and exported bytes when text is authored", () => {
     const completed = complete(),
-      before = compileCustomPublicationV3(currentProjectV3(completed.state), completed.media),
+      before = compileVerified(completed.state, completed.media),
       beforeRail = compileEffectiveCustomVisualsV3(
         customAuthoringSnapshotV3(currentProjectV3(completed.state), completed.media),
       ),
@@ -461,7 +514,7 @@ describe("active V3 Custom package", () => {
           },
         },
       }),
-      after = compileCustomPublicationV3(currentProjectV3(authored), completed.media),
+      after = compileVerified(authored, completed.media),
       rail = compileEffectiveCustomVisualsV3(customAuthoringSnapshotV3(currentProjectV3(authored), completed.media)),
       changed = new Set(["scrim.bin", "scrimPltt.bin", "report.json"]);
     for (const file of before.files) {
@@ -500,7 +553,7 @@ describe("active V3 Custom package", () => {
         role: "banner-cell",
         operation: { version: 2, type: "add-layer", screen: "top", layer: imageLayer },
       }),
-      before = compileCustomPublicationV3(currentProjectV3(authored), completed.media),
+      before = compileVerified(authored, completed.media),
       cropped = applyOperationV3(authored, {
         version: 3,
         type: "edit-visual-document",
@@ -518,7 +571,7 @@ describe("active V3 Custom package", () => {
           crop: { x: 8, y: 0, width: completed.png.width - 8, height: completed.png.height },
         },
       }),
-      after = compileCustomPublicationV3(currentProjectV3(cropped), completed.media),
+      after = compileVerified(cropped, completed.media),
       changed = new Set(["bannerListCell.bin", "bannerListCellPltt.bin", "report.json"]);
     for (const file of before.files) {
       const next = after.files.find(({ path: filePath }) => filePath === file.path)!;
@@ -556,7 +609,7 @@ describe("active V3 Custom package", () => {
       role: "scrim",
       mediaSha256: png.sourceSha256,
     });
-    expect(currentProjectV3(visualEdit).componentEvidence).toEqual({});
+    expect(currentProjectV3(visualEdit).componentEvidence).toEqual({ bcstm: { id: "bcstm" } });
     const bgmEdit = applyOperationV3(state, {
       version: 3,
       type: "assign-role",
@@ -589,7 +642,7 @@ describe("active V3 Custom package", () => {
         role: "grid-cell",
         operation: { version: 2, type: "add-layer", screen: "top", layer: imageLayer },
       }),
-      before = compileCustomPublicationV3(currentProjectV3(authored), completed.media),
+      before = compileVerified(authored, completed.media),
       rotated = applyOperationV3(authored, {
         version: 3,
         type: "edit-visual-document",
@@ -597,7 +650,7 @@ describe("active V3 Custom package", () => {
         operation: { version: 3, type: "set-layer-rotation", layerId: imageLayer.id, rotation: 90 },
       }),
       snapshot = customAuthoringSnapshotV3(currentProjectV3(rotated), completed.media),
-      after = compileCustomPublicationV3(currentProjectV3(rotated), completed.media),
+      after = compileVerified(rotated, completed.media),
       rail = compileEffectiveCustomVisualsV3(snapshot);
     expect(publicationBytes(after, "gridcell.bin")).not.toEqual(publicationBytes(before, "gridcell.bin"));
     for (const file of before.files)

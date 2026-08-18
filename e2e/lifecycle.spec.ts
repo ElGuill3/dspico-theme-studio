@@ -7,6 +7,7 @@ import { _electron as electron } from "playwright";
 import { compositeCustomLayersV1 } from "../packages/dspico-contract/src/index.js";
 import { applyOperationV3, createProjectV2, createProjectV3 } from "../packages/theme-core/src/index.js";
 import { PortableProjectStore } from "../apps/studio/src/portable-project-store.js";
+import { certifyCurrentVisual } from "./visual-receipt.js";
 
 test.describe.configure({ mode: "serial" });
 
@@ -748,6 +749,12 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       ]);
       drawer = await openProjectDrawer(page, "Export");
       await drawer.getByRole("button", { name: "Run diagnostics" }).click();
+      await expect(drawer.getByText("1 diagnostics", { exact: true })).toBeVisible();
+      await expect(drawer.getByRole("button", { name: "Export theme" })).toBeDisabled();
+      await closeProjectDrawer(page);
+      await certifyCurrentVisual(page, customRoot);
+      drawer = await openProjectDrawer(page, "Export");
+      await drawer.getByRole("button", { name: "Run diagnostics" }).click();
       await expect(drawer.getByText("0 diagnostics", { exact: true })).toBeVisible();
       await closeProjectDrawer(page);
       await showDockTab(page, "Layers");
@@ -881,9 +888,18 @@ test("completes the offline Material and Custom lifecycles through the hardened 
     await test.step("Custom diagnostics and export", async () => {
       await workspace.getByRole("button", { name: "bottom-background", exact: true }).click();
       await workspace.getByRole("button", { name: "Import image" }).click();
-      const drawer = await openProjectDrawer(page, "Export");
+      let drawer = await openProjectDrawer(page, "Export");
+      await drawer.getByRole("button", { name: "Run diagnostics" }).click();
+      await expect(drawer.getByText("1 diagnostics", { exact: true })).toBeVisible();
+      await expect(drawer.getByRole("button", { name: "Export theme" })).toBeDisabled();
+      await closeProjectDrawer(page);
+      await certifyCurrentVisual(page, customRoot);
+      drawer = await openProjectDrawer(page, "Export");
       await drawer.getByRole("button", { name: "Run diagnostics" }).click();
       await expect(drawer.getByText("0 diagnostics", { exact: true })).toBeVisible();
+      await closeProjectDrawer(page);
+      await workspace.getByRole("button", { name: "bottom-background", exact: true }).click();
+      drawer = await openProjectDrawer(page, "Export");
       await rm(path.join(root, "export/theme"), {
         recursive: true,
         force: true,
@@ -1354,6 +1370,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(verticalGuidePosition).toHaveValue("48");
       expect(await canvas.evaluate((node) => (node as HTMLCanvasElement).toDataURL())).toBe(browserBefore);
 
+      await certifyCurrentVisual(page, customRoot);
       await expect(
         page.evaluate(() => (globalThis as typeof globalThis & { studio: BrowserStudio }).studio.export("custom")),
       ).resolves.toMatchObject({ canExport: true, diagnostics: [] });
@@ -1695,8 +1712,20 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     ];
     drawer = await openProjectDrawer(page, "Export");
     await drawer.getByRole("button", { name: "Run diagnostics" }).click();
-    await expect(drawer.getByText("0 diagnostics", { exact: true })).toBeVisible();
+    await expect(drawer.getByText("1 diagnostics", { exact: true })).toBeVisible();
     const exportTheme = drawer.getByRole("button", { name: "Export theme" });
+    await expect(exportTheme).toBeDisabled();
+    const blocked = await page.evaluate(() =>
+      (globalThis as typeof globalThis & { studio: BrowserStudio }).studio.export("custom"),
+    );
+    expect(blocked.canExport).toBe(false);
+    expect(blocked.diagnostics).toHaveLength(1);
+    expect(await readdir(path.join(root, "export"))).toEqual([]);
+    await closeProjectDrawer(page);
+    await certifyCurrentVisual(page, projectRoot);
+    drawer = await openProjectDrawer(page, "Export");
+    await drawer.getByRole("button", { name: "Run diagnostics" }).click();
+    await expect(drawer.getByText("0 diagnostics", { exact: true })).toBeVisible();
     await expect(exportTheme).toBeEnabled();
     await exportTheme.click();
     await expect(drawer.getByTestId("export-summary")).toBeVisible();
@@ -1787,6 +1816,9 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     }, imageBytes);
     await showDockTab(page, "Layers");
     await expect(workspace.getByRole("listbox", { name: "banner-cell layers" }).getByRole("option")).toHaveCount(1);
+    await certifyCurrentVisual(page, projectRoot);
+    await workspace.getByRole("button", { name: "banner-cell", exact: true }).click();
+    await showDockTab(page, "Layers");
     await page.evaluate(() => (globalThis as typeof globalThis & { studio: BrowserStudio }).studio.export("custom"));
     const beforeCropBytes = new Map(
       await Promise.all(
@@ -1863,6 +1895,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     expect((await customState(root)).cursor).toBe(beforeCropCursor);
     await expect(workspace.getByLabel("Crop x", { exact: true })).not.toHaveValue("0");
     await workspace.getByRole("button", { name: "Done cropping" }).click();
+    await certifyCurrentVisual(page, projectRoot);
     await page.evaluate(() => (globalThis as typeof globalThis & { studio: BrowserStudio }).studio.export("custom"));
     const afterCropBytes = new Map(
       await Promise.all(
@@ -2216,6 +2249,12 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
       type: "set-layer-positions",
       positions: [{ xQ16: expect.any(Number) }, { xQ16: expect.any(Number) }, { xQ16: expect.any(Number) }],
     });
+    await certifyCurrentVisual(page, projectRoot);
+    await workspace.getByRole("button", { name: "banner-cell-selected", exact: true }).click();
+    await showDockTab(page, "Layers");
+    await workspace.getByRole("button", { name: /^Select grouped\.png/ }).click();
+    await workspace.getByRole("button", { name: /^Select Rectangle/ }).click({ modifiers: ["Shift"] });
+    await workspace.getByRole("button", { name: /^Select Text/ }).click({ modifiers: ["Control"] });
     await page.evaluate(() => (globalThis as typeof globalThis & { studio: BrowserStudio }).studio.export("custom"));
     await showDockTab(page, "Properties");
     const beforeLockFolder = await exportFolderSnapshot(root),
@@ -2271,6 +2310,10 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await expect(workspace.locator(".canvas-resize-handle")).toHaveCount(0);
     await workspace.getByRole("button", { name: "Show Text" }).click();
     await expect(workspace.getByRole("status")).toHaveText("Text shown.");
+    await certifyCurrentVisual(page, projectRoot);
+    await workspace.getByRole("button", { name: "banner-cell-selected", exact: true }).click();
+    await showDockTab(page, "Layers");
+    await workspace.getByRole("button", { name: "Select Rectangle, grouped, locked" }).click();
     await page.evaluate(() => (globalThis as typeof globalThis & { studio: BrowserStudio }).studio.export("custom"));
     expect(await exportFolderSnapshot(root)).toEqual(beforeLockFolder);
     expect(await readFile(path.join(root, "export/theme.zip"))).toEqual(beforeLockZip);
@@ -2546,6 +2589,12 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
         ),
     );
 
+    await drawer.getByRole("button", { name: "Run diagnostics" }).click();
+    await expect(drawer.getByText("1 diagnostics", { exact: true })).toBeVisible();
+    await expect(drawer.getByRole("button", { name: "Export theme" })).toBeDisabled();
+    await closeProjectDrawer(page);
+    await certifyCurrentVisual(page, projectRoot);
+    drawer = await openProjectDrawer(page, "Export");
     await drawer.getByRole("button", { name: "Run diagnostics" }).click();
     await expect(drawer.getByText("0 diagnostics", { exact: true })).toBeVisible();
     await drawer.getByRole("button", { name: "Export theme" }).click();

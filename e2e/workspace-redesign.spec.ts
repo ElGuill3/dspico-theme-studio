@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { _electron as electron } from "playwright";
+import { certifyCurrentVisual } from "./visual-receipt.js";
 
 test("owns the viewport with one dock and an overlay project drawer", async () => {
   test.setTimeout(120_000);
@@ -132,9 +133,16 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
     await expect(drawer.locator('[data-audio-role="navigation"]')).toHaveAttribute("data-state", "prepared");
     await drawer.getByRole("tab", { name: "Export" }).click();
     await drawer.getByRole("button", { name: "Run diagnostics" }).click();
-    await expect(drawer.getByRole("button", { name: "Export theme" })).toBeEnabled();
-    await drawer.getByRole("button", { name: "Export theme" }).click();
-    await expect(drawer.getByTestId("export-summary")).toBeVisible();
+    await expect(drawer.getByRole("button", { name: "Export theme" })).toBeDisabled();
+    await drawer.getByRole("button", { name: "Close Project drawer" }).click();
+    await certifyCurrentVisual(page, projectRoot);
+    await page.getByRole("button", { name: "Project", exact: true }).click();
+    const certifiedDrawer = page.getByRole("dialog", { name: "Project" });
+    await certifiedDrawer.getByRole("tab", { name: "Export" }).click();
+    await certifiedDrawer.getByRole("button", { name: "Run diagnostics" }).click();
+    await expect(certifiedDrawer.getByRole("button", { name: "Export theme" })).toBeEnabled();
+    await certifiedDrawer.getByRole("button", { name: "Export theme" }).click();
+    await expect(certifiedDrawer.getByTestId("export-summary")).toBeVisible();
     if (screenshots) await page.screenshot({ path: path.join(screenshots, "project-export-drawer.png") });
     await drawer.getByRole("tab", { name: "Details" }).click();
     const name = drawer.getByLabel("Name");

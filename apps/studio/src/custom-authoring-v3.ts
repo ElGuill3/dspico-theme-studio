@@ -5,6 +5,7 @@ import {
   DSPICO_LAUNCHER_V1,
   compositeProfileSha256V1,
   customDiagnosticV1,
+  receiptMatchesV1,
   sha256,
   storedZip,
   validateBcstmReceiptV13,
@@ -49,12 +50,36 @@ export class CustomPublicationError extends Error {
     this.name = "CustomPublicationError";
   }
 }
+type CustomPublicationOptionsV3 = { requireVisualReceipt?: boolean };
 
 const visualRoles = new Set<string>(CUSTOM_VISUAL_ROLES_V1);
 const bytesFor = (media: ReadonlyMap<string, Uint8Array>, sha: string): Uint8Array => {
   const bytes = media.get(sha);
   if (!bytes || sha256(bytes) !== sha) throw new Error(`Missing or corrupt Custom media: ${sha}`);
   return bytes;
+};
+const customThemeBytesV3 = (project: ThemeProjectV3): Uint8Array => {
+  const legacy = legacyCustomProjectV3(project);
+  return new TextEncoder().encode(
+    `${JSON.stringify({ author: project.metadata.author, darkTheme: legacy.tokens.darkTheme, description: project.metadata.description, name: project.metadata.name, primaryColor: legacy.tokens.primaryColor, type: "custom" })}\n`,
+  );
+};
+const visualReceiptExpectationV3 = (
+  project: ThemeProjectV3,
+  visual: ReturnType<typeof compileEffectiveCustomVisualsV3>,
+) => {
+  const themeBytes = customThemeBytesV3(project);
+  return {
+    themeBytes,
+    expectation: {
+      profileSha256: compositeProfileSha256V1(),
+      themeJsonSha256: sha256(themeBytes),
+      manifest: CUSTOM_VISUAL_SLOTS_V1.map(({ path }) => ({
+        path,
+        sha256: sha256(visual.files[path as keyof typeof visual.files]),
+      })),
+    } satisfies ReceiptExpectationV1,
+  };
 };
 const assetFor = (project: ThemeProjectV3, role: string): MediaAssetV3 | undefined => {
   const sha = project.roleAssignments[role as keyof ThemeProjectV3["roleAssignments"]];
@@ -64,6 +89,7 @@ const assetFor = (project: ThemeProjectV3, role: string): MediaAssetV3 | undefin
 export function diagnoseCustomPublicationV3(
   project: ThemeProjectV3,
   media: ReadonlyMap<string, Uint8Array>,
+  options: CustomPublicationOptionsV3 = {},
 ): DiagnosticV1[] {
   const diagnostics: DiagnosticV1[] = [],
     add = (code: string, pointer: string, message: string, document = "project.json") =>
@@ -193,7 +219,16 @@ export function diagnoseCustomPublicationV3(
   }
   if (diagnostics.length || !documents) return diagnostics;
   try {
-    compileEffectiveCustomVisualsV3(customAuthoringSnapshotV3(project, media));
+    const visual = compileEffectiveCustomVisualsV3(customAuthoringSnapshotV3(project, media));
+    if (
+      options.requireVisualReceipt !== false &&
+      !receiptMatchesV1(project.componentEvidence.visual, visualReceiptExpectationV3(project, visual).expectation)
+    )
+      add(
+        "custom.visual-receipt-required",
+        "/componentEvidence/visual",
+        "A current exact visual compatibility record is required before Custom publication. Generate a NOT READY cartridge-test handoff, complete physical testing, and save a matching record.",
+      );
   } catch {
     add(
       "custom.codec-failure",
@@ -308,15 +343,13 @@ export function customAuthoringSnapshotV3(
 export function compileCustomPublicationV3(
   project: ThemeProjectV3,
   media: ReadonlyMap<string, Uint8Array>,
+  options: CustomPublicationOptionsV3 = {},
 ): CustomPublicationV3 {
-  const diagnostics = diagnoseCustomPublicationV3(project, media);
+  const diagnostics = diagnoseCustomPublicationV3(project, media, options);
   if (diagnostics.length) throw new CustomPublicationError(diagnostics);
   const snapshot = customAuthoringSnapshotV3(project, media);
   const visual = compileEffectiveCustomVisualsV3(snapshot);
-  const legacy = legacyCustomProjectV3(project);
-  const themeBytes = new TextEncoder().encode(
-    `${JSON.stringify({ author: project.metadata.author, darkTheme: legacy.tokens.darkTheme, description: project.metadata.description, name: project.metadata.name, primaryColor: legacy.tokens.primaryColor, type: "custom" })}\n`,
-  );
+  const { themeBytes, expectation } = visualReceiptExpectationV3(project, visual);
   const payloads = [
     { path: "theme.json", bytes: themeBytes },
     ...CUSTOM_VISUAL_SLOTS_V1.map(({ path }) => ({
@@ -336,14 +369,7 @@ export function compileCustomPublicationV3(
     files,
     zipBytes: storedZip(files),
     reportSha256: sha256(reportBytes),
-    expectation: {
-      profileSha256: compositeProfileSha256V1(),
-      themeJsonSha256: sha256(themeBytes),
-      manifest: CUSTOM_VISUAL_SLOTS_V1.map(({ path }) => ({
-        path,
-        sha256: sha256(payloads.find((file) => file.path === path)!.bytes),
-      })),
-    },
+    expectation,
   };
 }
 
