@@ -4,25 +4,25 @@
 
 ### Requirement: Export gate and reproducible bundle
 
-The exporter MUST refuse a ready bundle when validation has an error or an unacknowledged warning. The first useful release MUST export Material only; every Custom export entry point MUST return a blocking capability diagnostic and MUST write no ready or partial output. Custom export MAY become available only after the complete `custom-visual-authoring` capability and its v1.3.0 evidence gate pass. BCSTM MAY be included only in the later audio release after that visual baseline. A successful export MUST produce equivalent canonical folder and ZIP outputs with `theme.json`, an ordered report, provenance, diagnostics, acknowledgments, credits, licenses, and file SHA-256 values. Reports MUST preserve source/fixture evidence `kind`; without a physical receipt they MUST explicitly state `softwareFixtureOnly: true` and `hardwareParityClaimed: false`.
+The exporter MUST fail closed when any included component has an error, unacknowledged warning, incomplete rights/provenance, stale required evidence, or unsupported feature. The Material-first release boundary MUST remain: every Custom entry point MUST return a blocking capability diagnostic and MUST write no ready or partial output until the exact 12-file visual contract and its required receipt pass. Optional prepared WAVs MAY use installed-target capability evidence without a per-project WAV receipt; one BCSTM MAY proceed only after the visual receipt and its separate BCSTM receipt pass. The `NOT READY — CARTRIDGE TEST ONLY` handoff MUST never become a ready ZIP or export approval. Successful folder and ZIP output MUST be equivalent and MUST contain `theme.json`, an ordered report, provenance, diagnostics, acknowledgments, credits, licenses, and file SHA-256 values. Reports MUST preserve source/fixture evidence `kind`; without a physical receipt they MUST state `softwareFixtureOnly: true` and `hardwareParityClaimed: false`.
 
-#### Scenario: Export a valid Material project
+#### Scenario: Publish a valid composite project
 
 - GIVEN a canonical Material project with no errors and all warnings acknowledged
-- WHEN the user exports a folder and ZIP against the immutable v1.3.0 profile
+- WHEN the user exports a folder or ZIP against the immutable v1.3.0 profile
 - THEN both outputs MUST contain equivalent files, report ordering, and self-consistent checksums
 
 #### Scenario: Block unsafe or premature export
 
-- GIVEN validation contains an error, an unacknowledged warning, or the request targets Custom before visual readiness
+- GIVEN an error, unacknowledged warning, missing rights, stale required receipt, excluded feature, not-ready handoff, or a Custom request before visual readiness
 - WHEN the user requests folder or ZIP export
-- THEN no ready-to-copy output MUST be committed and the blocking diagnostics MUST be returned
+- THEN no ready or partial output MUST be committed and diagnostics MUST identify the blocking component
 
-#### Scenario: Permit dependent Custom export only when complete
+#### Scenario: Permit a complete composite export
 
-- GIVEN the complete Custom visual contract, exact manifest, evidence, and validation all pass
+- GIVEN the complete Custom visual contract, exact manifest, evidence, and validation pass, with optional WAVs valid and any included BCSTM having a separate receipt
 - WHEN the dependent Custom release exports the project
-- THEN it MUST publish only the complete package and its deterministic report
+- THEN it MUST publish only the complete deterministic package; a second or unreceipted BCSTM MUST remain blocked
 
 ### Requirement: Byte determinism
 

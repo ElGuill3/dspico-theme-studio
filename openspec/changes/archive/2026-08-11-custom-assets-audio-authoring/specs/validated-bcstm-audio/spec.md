@@ -1,14 +1,11 @@
-# Validated BCSTM Audio Specification
+# Delta for Validated BCSTM Audio
 
-## Purpose
-
-Define the later, evidence-backed BCSTM capability without weakening the first useful Material release or the dependent Custom visual safety gate.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Visual-parity dependency
 
 BCSTM authoring, import, playback metadata, and export MUST remain unavailable until the immutable composite profile is valid, the complete 12-file Custom visual contract is proven, and the visual release has its required cartridge receipt. BCSTM MUST remain a later capability, never a prerequisite for Material or visual export. After that prerequisite, the first BCSTM capability MUST accept exactly one source and MUST remain independent of Material and visual bytes.
+(Previously: The later BCSTM capability was gated by visual parity but did not define the composite profile or single-source boundary.)
 
 #### Scenario: Block audio before visual receipt
 
@@ -25,6 +22,7 @@ BCSTM authoring, import, playback metadata, and export MUST remain unavailable u
 ### Requirement: Evidence-backed BCSTM package handling
 
 The later capability MUST accept exactly one evidence-supported BCSTM DSP-ADPCM source for the v1.3.0 theme BGM location `/_pico/themes/<theme>/bgm/`, validate its container and supported metadata against pinned launcher evidence, preserve its bytes and deterministic path, and issue or consume a separate source-hash receipt for its own playback/loop validation. It MUST distinguish pass-through evidence from unsupported conversion, MUST NOT convert or decode for audition, and MUST NOT claim Studio playback parity. WAV UI sounds and every excluded audio feature MUST remain separate.
+(Previously: The capability accepted a BCSTM file in a BGM set and required source matching without an explicit separate receipt.)
 
 #### Scenario: Accept one pass-through BGM
 
@@ -37,13 +35,3 @@ The later capability MUST accept exactly one evidence-supported BCSTM DSP-ADPCM 
 - GIVEN no visual receipt, more than one BCSTM, malformed data, or unsupported audio
 - WHEN validation runs
 - THEN import/export MUST be blocked and no conversion or audition claim MUST be implied
-
-### Requirement: Deterministic audio evidence
-
-Repeated handling of identical BCSTM source bytes, profile, and capability version MUST produce identical metadata, manifest entries, diagnostics, and output bytes on Linux x64. Reports MUST identify the exact v1.3.0 evidence and MUST NOT claim cartridge playback parity without a corresponding physical receipt; macOS/Windows are outside the current supported-host set until separately evidenced.
-
-#### Scenario: Repeat BCSTM handling
-
-- GIVEN identical BCSTM bytes and immutable profile evidence
-- WHEN the later capability processes them twice
-- THEN the resulting metadata, hashes, and package entries MUST be byte-identical

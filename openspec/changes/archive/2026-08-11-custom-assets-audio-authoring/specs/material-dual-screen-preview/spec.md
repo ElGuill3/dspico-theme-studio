@@ -1,10 +1,11 @@
 # Delta for Material Dual-Screen Preview
 
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Physical screen and mode identity
 
 The preview MUST render separate 256×192 physical `top` and `bottom` screens. Material v1.3.0 authority remains limited to `primaryColor` and `darkTheme`; generic tokens, per-mode scenes, `background`, `foreground`, and `accent` MUST NOT be presented as launcher-exportable semantics, though legacy values MAY remain migration evidence. After the dependent visual gate is complete, Custom preview MUST expose the seven source roles, selected/unselected states, all 12 compiled output statuses, and decoded post-codec results without presenting them as hardware authority. WAV audition MUST remain a separate audio surface.
+(Previously: Custom preview controls were unavailable, and the requirement described only Material fields.)
 
 #### Scenario: Preview launcher-consumed Material fields
 
@@ -27,6 +28,7 @@ The preview MUST render separate 256×192 physical `top` and `bottom` screens. M
 ### Requirement: Honest fidelity labels
 
 The preview MUST visibly label evidence-backed dimensions, bounds, inheritance, wrapping, safe areas, and Material `primaryColor`/`darkTheme` behavior as `launcher-vector-backed` only when supported by v1.3.0 vectors or fixtures. Other rendering MUST be labeled `Chromium approximation`. Custom decoded output MUST identify software-only or hardware-unknown properties. WAV waveform and local playback MUST be labeled `Desktop audition`; BCSTM MUST expose metadata only. Preview MUST NOT claim DS pixel, font/palette/blending/VRAM, timing, audio, or cartridge parity and MUST NOT determine export compatibility.
+(Previously: The preview prohibited codec and audio fidelity claims but did not define Custom post-codec output or WAV desktop audition.)
 
 #### Scenario: Show source-backed fidelity
 
