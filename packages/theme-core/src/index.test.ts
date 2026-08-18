@@ -26,6 +26,18 @@ const created = () =>
   });
 
 describe("theme-core canonical lifecycle", () => {
+  it("defaults new Material projects to canonical launcher settings", () => {
+    const project = currentProject(
+      createProject({
+        projectId: "defaults",
+        metadata: { name: "Theme", description: "Offline theme", author: "Author" },
+        targetProfileId: "dspico-launcher-v1",
+      }),
+    );
+
+    expect(project.tokens).toEqual({ primaryColor: { r: 0, g: 0, b: 0 }, darkTheme: false });
+  });
+
   it("creates, saves, and reopens identical canonical state", () => {
     const state = applyOperation(created(), { version: 1, type: "set-token", key: "accent", value: "#112233" });
     const bytes = saveProject(state);

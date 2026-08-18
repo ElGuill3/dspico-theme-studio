@@ -1,7 +1,20 @@
 import { Type, type Static } from "@sinclair/typebox";
 
 const noExtra = { additionalProperties: false } as const;
-const Token = Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()]);
+const Token = Type.Union([
+  Type.String(),
+  Type.Number(),
+  Type.Boolean(),
+  Type.Null(),
+  Type.Object(
+    {
+      r: Type.Integer({ minimum: 0, maximum: 255 }),
+      g: Type.Integer({ minimum: 0, maximum: 255 }),
+      b: Type.Integer({ minimum: 0, maximum: 255 }),
+    },
+    noExtra,
+  ),
+]);
 const Metadata = Type.Object({ name: Type.String(), description: Type.String(), author: Type.String() }, noExtra);
 const Scene = Type.Object(
   {

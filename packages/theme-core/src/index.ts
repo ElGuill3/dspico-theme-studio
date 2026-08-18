@@ -143,7 +143,7 @@ export function createProject(input: {
     projectId: input.projectId,
     metadata: clone(input.metadata),
     targetProfileId: input.targetProfileId,
-    tokens: clone(input.tokens ?? {}),
+    tokens: { primaryColor: { r: 0, g: 0, b: 0 }, darkTheme: false, ...clone(input.tokens ?? {}) },
     scenes: clone(input.scenes ?? []),
     assetManifest: clone(input.assetManifest ?? []),
     acknowledgments: [],
