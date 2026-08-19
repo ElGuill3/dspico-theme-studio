@@ -88,6 +88,33 @@ const withVisualEvidence = (state: ReturnType<typeof createProjectV3>, media: Re
   });
 const compileVerified = (state: ReturnType<typeof createProjectV3>, media: ReadonlyMap<string, Uint8Array>) =>
   compileCustomPublicationV3(currentProjectV3(withVisualEvidence(state, media)), media);
+const addSound = (
+  state: ReturnType<typeof createProjectV3>,
+  media: Map<string, Uint8Array>,
+  role: "select" | "back",
+) => {
+  const sound = prepareThemeSoundV1({
+    role,
+    sourceBytes: wav(),
+    provenance: { ...provenance, intendedUse: `${role} sound` },
+  });
+  media.set(sound.source.sha256, sound.source.bytes);
+  media.set(sound.prepared.sha256, sound.prepared.bytes);
+  return applyOperationV3(state, {
+    version: 3,
+    type: "set-theme-sound",
+    role: `${role}-sound`,
+    asset: {
+      id: `wav:${role}`,
+      media: createMediaRefV3(sound.source.bytes, "audio/wav"),
+      prepared: createMediaRefV3(sound.prepared.bytes, "audio/wav"),
+      role: `${role}-sound`,
+      provenance: sound.source.provenance,
+      rightsToExport: true,
+      recipe: { wav: sound.recipe, audition: sound.audition },
+    },
+  });
+};
 
 const complete = () => {
   const pngBytes = new Uint8Array(
@@ -200,6 +227,44 @@ const complete = () => {
 };
 
 describe("active V3 Custom package", () => {
+  const canonicalSoundSubsets: readonly (readonly [
+    readonly ("navigation" | "select" | "back")[],
+    readonly string[],
+  ])[] = [
+    [[], []],
+    [["navigation"], ["sounds/navigation.wav"]],
+    [["select"], ["sounds/select.wav"]],
+    [["back"], ["sounds/back.wav"]],
+    [
+      ["navigation", "select"],
+      ["sounds/navigation.wav", "sounds/select.wav"],
+    ],
+    [
+      ["navigation", "back"],
+      ["sounds/navigation.wav", "sounds/back.wav"],
+    ],
+    [
+      ["select", "back"],
+      ["sounds/select.wav", "sounds/back.wav"],
+    ],
+    [
+      ["navigation", "select", "back"],
+      ["sounds/navigation.wav", "sounds/select.wav", "sounds/back.wav"],
+    ],
+  ];
+  it.each(canonicalSoundSubsets)("exports only the assigned canonical sound subset %j", (roles, expected) => {
+    const completed = complete();
+    let state = roles.includes("navigation")
+      ? completed.state
+      : applyOperationV3(completed.state, { version: 3, type: "set-theme-sound", role: "navigation-sound" });
+    if (roles.includes("select")) state = addSound(state, completed.media, "select");
+    if (roles.includes("back")) state = addSound(state, completed.media, "back");
+    expect(
+      compileVerified(state, completed.media)
+        .files.filter(({ path }) => path.startsWith("sounds/"))
+        .map(({ path }) => path),
+    ).toEqual(expected);
+  });
   it("requires an exact current visual receipt before publication", () => {
     const legacy = createProjectV2({ projectId: "custom", metadata, themeKind: "custom" });
     const incomplete = createProjectV3({

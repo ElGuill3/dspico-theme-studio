@@ -66,6 +66,17 @@ describe("project folder lifecycle", () => {
       label: "custom",
     });
     await openedCustom.authority.close();
+    const legacy = path.join(parent, "legacy");
+    await mkdir(legacy);
+    const oldBytes = JSON.parse(saveProjectV3(createProjectV3({ projectId: "legacy", metadata })));
+    oldBytes.initial.profile.manifestSha256 = "068f1efdc2bda015bacc70a94473ac79c0754938ff96823368206b13bf5ceb46";
+    const source = `${JSON.stringify(oldBytes)}\n`;
+    await writeFile(path.join(legacy, "project.json"), source);
+    const openedLegacy = await openProjectFolder(legacy);
+    if (openedLegacy.type !== "custom") throw new Error("Expected a Custom project.");
+    expect(openedLegacy.state.project.profile.manifestSha256).not.toBe(oldBytes.initial.profile.manifestSha256);
+    expect(await readFile(path.join(legacy, "project.json"), "utf8")).toBe(source);
+    await openedLegacy.authority.close();
   });
 
   it.each([
