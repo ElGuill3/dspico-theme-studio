@@ -1094,10 +1094,17 @@ function Studio() {
                         }
                         onFocus={() => customProject && focusCustomMetadata(field)}
                         onKeyDown={(event) => {
-                          if (event.key !== "Escape" || !customProject) return;
-                          event.preventDefault();
-                          event.stopPropagation();
-                          cancelCustomMetadata(field);
+                          if (!customProject) return;
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            cancelCustomMetadata(field);
+                            return;
+                          }
+                          if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            void commitCustomMetadata(field);
+                          }
                         }}
                         onBlur={() =>
                           void (customProject ? commitCustomMetadata(field) : authority.flushField(`metadata.${field}`))
@@ -1115,10 +1122,17 @@ function Studio() {
                         }
                         onFocus={() => customProject && focusCustomMetadata(field)}
                         onKeyDown={(event) => {
-                          if (event.key !== "Escape" || !customProject) return;
-                          event.preventDefault();
-                          event.stopPropagation();
-                          cancelCustomMetadata(field);
+                          if (!customProject) return;
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            cancelCustomMetadata(field);
+                            return;
+                          }
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void commitCustomMetadata(field);
+                          }
                         }}
                         onBlur={() =>
                           void (customProject ? commitCustomMetadata(field) : authority.flushField(`metadata.${field}`))

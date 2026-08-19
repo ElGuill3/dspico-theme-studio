@@ -23,6 +23,8 @@ describe("renderer shell", () => {
     expect(renderer).toContain("new DraftAuthority");
     expect(renderer).toContain('data-testid="export-summary"');
     expect(renderer).toContain("window.studio.importPngBytes");
+    expect(renderer).toMatch(/event\.key === "Enter" && !event\.shiftKey[\s\S]{0,100}commitCustomMetadata\(field\)/);
+    expect(renderer).toMatch(/event\.key === "Enter"\)[\s\S]{0,100}commitCustomMetadata\(field\)/);
   });
 
   it("labels only primaryColor and darkTheme as active Material authority", () => {
