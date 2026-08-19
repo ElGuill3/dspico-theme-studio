@@ -5,6 +5,15 @@ export const PALETTE_POLICY_V1 = "locked-median-cut-v1" as const;
 export type RgbaImageV1 = { width: number; height: number; pixels: Uint8Array };
 export type IndexedCodecV1 = { indices: Uint8Array; palette: Uint8Array; palettePolicy: typeof PALETTE_POLICY_V1 };
 export type V13VisualFilesV1 = Record<(typeof LAUNCHER_V1_VISUAL_FILES)[number], Uint8Array>;
+export class VisualCodecDecodeError extends Error {
+  constructor(
+    readonly code: "dimensions" | "pixels" | "palette",
+    message: string,
+  ) {
+    super(message);
+    this.name = "VisualCodecDecodeError";
+  }
+}
 
 type Color = { r: number; g: number; b: number };
 type Point = Color & { count: number };
@@ -23,6 +32,20 @@ const assertImage = (image: RgbaImageV1, name: string, width?: number, height?: 
 
 const word = ({ r, g, b }: Color, transparent = false) =>
   transparent ? 0 : 0x8000 | q5(r) | (q5(g) << 5) | (q5(b) << 10);
+const q8 = (value: number, bits: number) => Math.floor((value * 255 + ((1 << bits) - 1) / 2) / ((1 << bits) - 1));
+const decodeDimensions = (width: number, height: number) => {
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0)
+    throw new VisualCodecDecodeError("dimensions", "Codec dimensions must be safe positive integers.");
+  return width * height;
+};
+const decodePalette = (palette: Uint8Array, slots: number) => {
+  if (!(palette instanceof Uint8Array) || palette.length !== slots * 2)
+    throw new VisualCodecDecodeError("palette", `Codec palette must contain exactly ${slots * 2} bytes.`);
+  return palette;
+};
+const decodeWord = (bytes: Uint8Array, offset: number) => bytes[offset]! | (bytes[offset + 1]! << 8);
+const decodeColor = (value: number) =>
+  [q8(value & 31, 5), q8((value >>> 5) & 31, 5), q8((value >>> 10) & 31, 5)] as const;
 const writePalette = (colors: readonly Color[], slots: number): Uint8Array => {
   const output = new Uint8Array(slots * 2);
   colors.slice(0, slots - 1).forEach((color, index) => {
@@ -131,6 +154,49 @@ export function encodeXbgr555(image: RgbaImageV1): Uint8Array {
 
 export const encodeA3I5 = (image: RgbaImageV1): IndexedCodecV1 => encodeIndexed(image, 3, 5, 32);
 export const encodeA5I3 = (image: RgbaImageV1): IndexedCodecV1 => encodeIndexed(image, 5, 3, 8);
+
+export function decodeXbgr555(bytes: Uint8Array, width: number, height: number): RgbaImageV1 {
+  const count = decodeDimensions(width, height);
+  if (!(bytes instanceof Uint8Array) || bytes.length !== count * 2)
+    throw new VisualCodecDecodeError("pixels", "XBGR1555 pixels have an invalid length.");
+  const pixels = new Uint8Array(count * 4);
+  for (let index = 0; index < count; index += 1) {
+    const value = decodeWord(bytes, index * 2),
+      offset = index * 4,
+      [r, g, b] = decodeColor(value);
+    pixels.set([r, g, b, value & 0x8000 ? 255 : 0], offset);
+  }
+  return { width, height, pixels };
+}
+
+const decodeIndexed = (
+  bytes: Uint8Array,
+  palette: Uint8Array,
+  width: number,
+  height: number,
+  alphaBits: number,
+  indexBits: number,
+) => {
+  const count = decodeDimensions(width, height),
+    slots = 1 << indexBits;
+  if (!(bytes instanceof Uint8Array) || bytes.length !== count)
+    throw new VisualCodecDecodeError("pixels", "Indexed codec pixels have an invalid length.");
+  decodePalette(palette, slots);
+  const pixels = new Uint8Array(count * 4),
+    indexMask = slots - 1;
+  for (let index = 0; index < count; index += 1) {
+    const value = bytes[index]!,
+      offset = index * 4,
+      [r, g, b] = decodeColor(decodeWord(palette, (value & indexMask) * 2));
+    pixels.set([r, g, b, q8(value >>> indexBits, alphaBits)], offset);
+  }
+  return { width, height, pixels } satisfies RgbaImageV1;
+};
+
+export const decodeA3I5 = (bytes: Uint8Array, palette: Uint8Array, width: number, height: number) =>
+  decodeIndexed(bytes, palette, width, height, 3, 5);
+export const decodeA5I3 = (bytes: Uint8Array, palette: Uint8Array, width: number, height: number) =>
+  decodeIndexed(bytes, palette, width, height, 5, 3);
 
 export function encodeV13VisualFiles(input: {
   top: RgbaImageV1;

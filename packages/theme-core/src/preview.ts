@@ -21,6 +21,7 @@ export type PreviewModel = {
     label: "preserved legacy migration data";
     exported: false;
     sourceHash: string;
+    sourceBytes: string;
     formatVersion: 1 | 2;
     mappings: Partial<Record<string, string>>;
     exclusions: string[];
@@ -36,6 +37,7 @@ const migrationEvidence = (project: LauncherParityProjectV1): PreviewModel["lega
           label: "preserved legacy migration data",
           exported: false,
           sourceHash: legacy.sourceHash,
+          sourceBytes: legacy.sourceBytes,
           formatVersion: legacy.formatVersion,
           mappings: { ...legacy.mappings },
           exclusions: [...legacy.exclusions],
