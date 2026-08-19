@@ -49,6 +49,41 @@ describe("V3 legacy migration", () => {
     expect(result.candidate.project.legacyEvidence?.sourceFormat).toBe("parity");
   });
 
+  it("migrates the exact old profile through initial, snapshots, and the redo tail without changing media", () => {
+    const bytes = Uint8Array.of(82, 73, 70, 70, 0, 0, 0, 0, 87, 65, 86, 69),
+      media = createMediaRefV3(bytes, "audio/wav");
+    const state = applyOperationV3(createProjectV3({ projectId: "old-sounds", metadata }), {
+      version: 3,
+      type: "set-theme-sound",
+      role: "navigation-sound",
+      asset: {
+        id: "wav:navigation",
+        media,
+        role: "navigation-sound",
+        provenance: { originalName: "launch.wav" },
+        rightsToExport: true,
+      },
+    });
+    const source = JSON.parse(saveProjectV3(state)) as Record<string, any>;
+    const rewrite = (value: unknown): unknown =>
+      JSON.parse(
+        JSON.stringify(value).replaceAll("navigation-sound", "launch-sound").replaceAll("wav:navigation", "wav:launch"),
+      );
+    source.initial = rewrite(state.project);
+    source.operations = rewrite(source.operations);
+    source.snapshots = [{ revision: 0, project: structuredClone(source.initial) }];
+    source.cursor = 0;
+    source.initial.profile.manifestSha256 = "068f1efdc2bda015bacc70a94473ac79c0754938ff96823368206b13bf5ceb46";
+    source.snapshots[0].project.profile.manifestSha256 = source.initial.profile.manifestSha256;
+
+    const migrated = migrateProfileV3(`${JSON.stringify(source)}\n`);
+    expect(migrated.migrated).toBe(true);
+    expect(migrated.state.initial.roleAssignments["select-sound"]).toBe(media.sha256);
+    expect(migrated.state.snapshots[0]?.project.assets[0]).toMatchObject({ id: "wav:select", media });
+    expect(migrated.state.operations).toMatchObject([{ role: "select-sound", asset: { id: "wav:select", media } }]);
+    expect(migrateProfileV3(saveProjectV3(migrated.state))).toMatchObject({ migrated: false });
+  });
+
   it("rejects incompatible Launch and Select operations across the redo tail but retains equal convergence", () => {
     const sound = (role: "navigation" | "select", value: number) => {
       const media = createMediaRefV3(Uint8Array.of(82, 73, 70, 70, value), "audio/wav");

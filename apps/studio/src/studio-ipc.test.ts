@@ -119,6 +119,19 @@ describe("secure studio IPC sequences", () => {
     await expect(api.restoreProject()).resolves.toEqual({ cancelled: true });
   });
 
+  it("routes pre-migration restore through the production authority and clears the active state", async () => {
+    let restored = 0;
+    const handler = createStudioHandler(trusted, {
+      ...dependencies([]),
+      restorePreMigrationV3: async () => void (restored += 1),
+    });
+    const api = createStudioApi((_channel, request) => handler(event, request));
+    await api.openCustom();
+    await expect(api.restorePreMigrationV3()).resolves.toEqual({ restored: true });
+    expect(restored).toBe(1);
+    await expect(api.validate()).rejects.toThrow("Open or create a project first");
+  });
+
   it("treats project dialog cancellation as a non-error and preserves the active project", async () => {
     const handler = createStudioHandler(trusted, {
       ...dependencies([]),

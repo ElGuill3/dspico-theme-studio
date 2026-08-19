@@ -474,7 +474,7 @@ export function validateVisualReceiptV1(
     visualReceiptDiagnostic(
       "custom.visual-receipt-invalid",
       receipt as JsonValue,
-      "Historical tag-bearing compatibility evidence is stale and cannot authorize current output.",
+      "Historical tag-bearing compatibility source is stale and cannot authorize current output.",
     ),
   ];
 }
