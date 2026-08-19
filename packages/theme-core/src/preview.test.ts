@@ -40,6 +40,7 @@ describe("Material preview fidelity", () => {
         label: "preserved legacy migration data",
         exported: false,
         sourceHash: project.evidence.legacy?.sourceHash,
+        sourceBytes: project.evidence.legacy?.sourceBytes,
         formatVersion: 1,
         exclusions: expect.arrayContaining(["background", "scenes"]),
       }),

@@ -2,7 +2,17 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { LAUNCHER_V1_VISUAL_FILES } from "./profile-v1-3.js";
-import { encodeA3I5, encodeA5I3, encodeV13VisualFiles, encodeXbgr555, type RgbaImageV1 } from "./index.js";
+import {
+  decodeA3I5,
+  decodeA5I3,
+  decodeXbgr555,
+  encodeA3I5,
+  encodeA5I3,
+  encodeV13VisualFiles,
+  encodeXbgr555,
+  VisualCodecDecodeError,
+  type RgbaImageV1,
+} from "./index.js";
 
 const golden = JSON.parse(
   readFileSync(path.join(process.cwd(), "packages/test-fixtures/goldens/codecs-v1-3/codec-v1.json"), "utf8"),
@@ -27,6 +37,22 @@ describe("v1.3 deterministic codecs", () => {
     expect(hex(encodeXbgr555(image(4, 1, [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 9, 8, 7, 0])))).toBe(
       golden.directHex,
     );
+  });
+
+  it("decodes little-endian XBGR1555 words without accepting short buffers", () => {
+    expect(decodeXbgr555(Uint8Array.from([0x1f, 0x80, 0xe0, 0x83]), 2, 1).pixels).toEqual(
+      Uint8Array.from([255, 0, 0, 255, 0, 255, 0, 255]),
+    );
+    expect(() => decodeXbgr555(Uint8Array.from([0x1f]), 1, 1)).toThrow(VisualCodecDecodeError);
+  });
+
+  it("decodes A3I5 and A5I3 alpha/index bytes with exact palette lengths", () => {
+    const a3Palette = Uint8Array.from([0, 0, 0x1f, 0x80, ...new Array(60).fill(0)]);
+    const a5Palette = Uint8Array.from([0, 0, 0x1f, 0x80, ...new Array(12).fill(0)]);
+    expect(decodeA3I5(Uint8Array.from([0x61]), a3Palette, 1, 1).pixels).toEqual(Uint8Array.from([255, 0, 0, 109]));
+    expect(decodeA5I3(Uint8Array.from([0x41]), a5Palette, 1, 1).pixels).toEqual(Uint8Array.from([255, 0, 0, 66]));
+    expect(() => decodeA3I5(Uint8Array.of(1), new Uint8Array(62), 1, 1)).toThrow(VisualCodecDecodeError);
+    expect(() => decodeA5I3(Uint8Array.of(1), new Uint8Array(18), 1, 1)).toThrow(VisualCodecDecodeError);
   });
 
   it("quantizes lexical palettes and packs A3I5/A5I3 alpha and index bits", () => {
