@@ -50,7 +50,7 @@ const fixture = fixtureCandidate;
 export type LauncherPreviewModeV1 = "horizontal-grid" | "vertical-grid" | "banner-list" | "coverflow";
 export class LauncherPreviewError extends Error {
   constructor(
-    readonly code: "unsupported-layout" | "unadmitted-fixture",
+    readonly code: "unsupported-layout" | "unadmitted-fixture" | "invalid-custom-files" | "invalid-fixture",
     message: string,
   ) {
     super(message);
