@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -19,6 +19,7 @@ import {
 import { customAuthoringSnapshotV3 } from "./custom-authoring-v3.js";
 import { importPng } from "./png-import.js";
 import { PortableProjectStore } from "./portable-project-store.js";
+import { neutralPreviewPngV1 } from "../../../packages/test-fixtures/src/neutral-preview-png.js";
 
 const metadata = { name: "Material Blue", description: "An offline Material theme", author: "Ada" };
 const importInput = {
@@ -561,12 +562,7 @@ describe("secure studio IPC sequences", () => {
     const root = await mkdtemp(path.join(tmpdir(), "dspico-studio-ipc-"));
     const store = await PortableProjectStore.openRoot(root);
     try {
-      const sourceBytes = new Uint8Array(
-        await readFile(
-          path.join(process.cwd(), "apps/studio/src/renderer/assets/launcher-preview/banner-list-top.png"),
-        ),
-      );
-      const imported = importPng(sourceBytes, { ...importInput, originalName: "banner-list-top.png" });
+      const imported = importPng(neutralPreviewPngV1, { ...importInput, originalName: "neutral-preview.png" });
       let media = new Map<string, Uint8Array>();
       const handler = createStudioHandler(trusted, {
         ...dependencies([]),

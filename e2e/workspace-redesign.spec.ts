@@ -1,9 +1,10 @@
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { _electron as electron } from "playwright";
 import { certifyCurrentVisual } from "./visual-receipt.js";
+import { neutralPreviewPngV1 } from "../packages/test-fixtures/src/neutral-preview-png.js";
 
 test("owns the viewport with one dock and an overlay project drawer", async () => {
   test.setTimeout(120_000);
@@ -20,10 +21,7 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
       "hex",
     ),
   );
-  await copyFile(
-    path.resolve("apps/studio/src/renderer/assets/launcher-preview/coverflow-bottom.png"),
-    path.join(root, "input.png"),
-  );
+  await writeFile(path.join(root, "input.png"), neutralPreviewPngV1);
   const packagedExecutable = process.env.DSPICO_PACKAGED_EXECUTABLE;
   const app = await electron.launch({
     ...(packagedExecutable ? { executablePath: packagedExecutable } : {}),

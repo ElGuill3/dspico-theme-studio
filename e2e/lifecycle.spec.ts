@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, truncate, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
@@ -9,6 +9,7 @@ import { launcherV1Fixture } from "../packages/test-fixtures/src/launcher-v1.js"
 import { applyOperationV3, createProjectV2, createProjectV3 } from "../packages/theme-core/src/index.js";
 import { PortableProjectStore } from "../apps/studio/src/portable-project-store.js";
 import { certifyCurrentVisual } from "./visual-receipt.js";
+import { neutralPreviewPngV1, neutralPreviewPngVariantV1 } from "../packages/test-fixtures/src/neutral-preview-png.js";
 
 test.describe.configure({ mode: "serial" });
 
@@ -110,7 +111,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
   await mkdir(path.join(root, "export"));
   await writeFile(path.join(root, "input.wav"), testWav());
   // prettier-ignore
-  await copyFile(path.resolve("apps/studio/src/renderer/assets/launcher-preview/coverflow-bottom.png"), path.join(root, "input.png"));
+  await writeFile(path.join(root, "input.png"), neutralPreviewPngV1);
   const packagedExecutable = process.env.DSPICO_PACKAGED_EXECUTABLE;
   const electronApp = await electron.launch({
     ...(packagedExecutable ? { executablePath: packagedExecutable } : {}),
@@ -611,7 +612,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await page.waitForFunction(() => innerWidth >= 1400);
       await writeFile(path.join(root, "project-selection.txt"), customRoot);
       // prettier-ignore
-      await copyFile(path.resolve("apps/studio/src/renderer/assets/launcher-preview/coverflow-bottom.png"), path.join(root, "input.png"));
+      await writeFile(path.join(root, "input.png"), neutralPreviewPngV1);
       await createCustomFromChrome(page);
       await expect(
         page.evaluate(
@@ -1646,10 +1647,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
   await writeFile(path.join(root, "project-selection.txt"), projectRoot);
   await mkdir(path.join(root, "export"));
   await writeFile(path.join(root, "input.wav"), testWav());
-  await copyFile(
-    path.resolve("apps/studio/src/renderer/assets/launcher-preview/coverflow-bottom.png"),
-    path.join(root, "input.png"),
-  );
+  await writeFile(path.join(root, "input.png"), neutralPreviewPngV1);
   const electronApp = await electron.launch({
     args: [
       "--no-sandbox",
@@ -2446,9 +2444,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
       staleLayers = workspace.getByRole("listbox", {
         name: "bottom-background layers",
       }),
-      uniqueImageBytes = [
-        ...(await readFile(path.resolve("apps/studio/src/renderer/assets/launcher-preview/banner-list-top.png"))),
-      ];
+      uniqueImageBytes = [...neutralPreviewPngVariantV1];
     await staleCanvas.evaluate((canvas, bytes) => {
       const transfer = new DataTransfer();
       transfer.items.add(new File([Uint8Array.from(bytes)], "stale.png", { type: "image/png" }));
