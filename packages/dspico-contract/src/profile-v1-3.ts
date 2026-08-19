@@ -12,7 +12,7 @@ export const THEME_SOUNDS_V1_SOURCE_COMMITS = [
   "59e0af2f62cff26e1b4d21f500837d36c4d22810",
   "7a75b4d408b43b62201236576d00e1429d6c32aa",
 ] as const;
-export const THEME_SOUNDS_V1_FILES = ["sounds/navigation.wav", "sounds/launch.wav"] as const;
+export const THEME_SOUNDS_V1_FILES = ["sounds/navigation.wav", "sounds/select.wav", "sounds/back.wav"] as const;
 
 // prettier-ignore
 const evidence = {

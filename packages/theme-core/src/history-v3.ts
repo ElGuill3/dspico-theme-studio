@@ -78,7 +78,7 @@ export type OperationV3 =
   | {
       version: 3;
       type: "set-theme-sound";
-      role: "navigation-sound" | "launch-sound";
+      role: "navigation-sound" | "select-sound" | "back-sound";
       asset?: MediaAssetV3;
     }
   | {
@@ -358,7 +358,7 @@ const validOperation = (operation: unknown): operation is OperationV3 => {
     case "set-theme-sound":
       return (
         (exact(["version", "type", "role"]) || exact(["version", "type", "role", "asset"])) &&
-        (value.role === "navigation-sound" || value.role === "launch-sound") &&
+        ["navigation-sound", "select-sound", "back-sound"].includes(value.role ?? "") &&
         (!value.asset || (validAsset(value.asset as MediaAssetV3) && value.asset.role === value.role))
       );
     case "import-layer":

@@ -11,6 +11,7 @@ import {
   currentProjectV3,
   migrateLegacyMaterial,
   saveLauncherParityProject,
+  saveProjectV3,
   reachableAssetHashes,
   redoV2,
   replayV2,
@@ -151,6 +152,48 @@ describe("portable bundle path and authority boundary", () => {
     const reopened = await store.openV3();
     expect(reopened.canEdit).toBe(false);
     expect(reopened.quarantine.some(({ sha256 }) => sha256 === media.sha256)).toBe(true);
+  });
+
+  it("migrates an exact old V3 profile only after preserving a durable source envelope", async () => {
+    const root = await makeRoot(), current = createProjectV3({ projectId: "old-profile", metadata: { name: "N", description: "Description", author: "A" } });
+    const legacy = JSON.parse(saveProjectV3(current));
+    legacy.initial.profile.manifestSha256 = "068f1efdc2bda015bacc70a94473ac79c0754938ff96823368206b13bf5ceb46";
+    await writeFile(path.join(root, "project.json"), `${JSON.stringify(legacy)}\n`);
+    const before = await readFile(path.join(root, "project.json"), "utf8");
+    const unknown = path.join(root, "assets/sha256", `${"f".repeat(64)}.wav`);
+    await mkdir(path.dirname(unknown), { recursive: true });
+    await writeFile(unknown, bytes(91));
+
+    const opened = await (await PortableProjectStore.openRoot(root)).openV3();
+    expect(opened.canEdit).toBe(true);
+    expect(JSON.parse(await readFile(path.join(root, ".studio/pre-migration-v3.json"), "utf8")).sourceBytes).toBe(
+      before,
+    );
+    expect((await readFile(path.join(root, "project.json"), "utf8"))).not.toBe(before);
+    expect(await readFile(unknown)).toEqual(Buffer.from(bytes(91)));
+    const store = await PortableProjectStore.openRoot(root);
+    const pending = path.join(root, ".studio/pre-migration-v3.restore.next");
+    await writeFile(pending, "unknown restore record");
+    await expect(store.restorePreMigrationV3()).rejects.toThrow("Unknown restore record");
+    expect(await readFile(pending, "utf8")).toBe("unknown restore record");
+    await rm(pending);
+    await writeFile(pending, before);
+    await store.restorePreMigrationV3();
+    expect(await readFile(path.join(root, "project.json"), "utf8")).toBe(before);
+    expect((await store.openV3()).canEdit).toBe(true);
+  });
+
+  it("cleans an exact old-profile migration stage before retrying to an editable project", async () => {
+    const root = await makeRoot(), state = createProjectV3({ projectId: "retry", metadata: { name: "N", description: "Description", author: "A" } });
+    const legacy = JSON.parse(saveProjectV3(state));
+    legacy.initial.profile.manifestSha256 = "068f1efdc2bda015bacc70a94473ac79c0754938ff96823368206b13bf5ceb46";
+    await writeFile(path.join(root, "project.json"), `${JSON.stringify(legacy)}\n`);
+    const interrupted = await PortableProjectStore.openRoot(root, { checkpoint: (phase) => { if (phase === "v3-stage-synced") throw new Error("migration crash"); } });
+    await expect(interrupted.openV3()).rejects.toThrow("migration crash");
+
+    const retried = await (await PortableProjectStore.openRoot(root)).openV3();
+    expect(retried.canEdit).toBe(true);
+    expect(await readdir(path.join(root, ".studio/staging-v3"))).toEqual([]);
   });
 
   it.each([

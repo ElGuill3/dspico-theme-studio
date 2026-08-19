@@ -6,12 +6,13 @@
   "fallback": false,
   "sourceLineage": [
     { "commit": "59e0af2f62cff26e1b4d21f500837d36c4d22810", "role": "navigation" },
-    { "commit": "7a75b4d408b43b62201236576d00e1429d6c32aa", "role": "navigation-and-launch" }
+    { "commit": "7a75b4d408b43b62201236576d00e1429d6c32aa", "role": "navigation-and-select" }
   ],
   "targetSha256": "12a357324cab401a8f100d50198b33bfeba93fbaf53261bc7456ebe863d96342",
   "assets": [
     { "name": "navigation", "path": "sounds/navigation.wav", "channel": 2 },
-    { "name": "launch", "path": "sounds/launch.wav", "channel": 2 }
+    { "name": "select", "path": "sounds/select.wav", "channel": 2 },
+    { "name": "back", "path": "sounds/back.wav", "channel": 2 }
   ],
   "format": {
     "container": "RIFF/WAVE",

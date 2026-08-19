@@ -21,14 +21,16 @@ export type AssetRoleV3 =
   | "banner-cell-selected"
   | "scrim"
   | "navigation-sound"
-  | "launch-sound"
+  | "select-sound"
+  | "back-sound"
   | "bgm";
 // prettier-ignore
 export const V3_VISUAL_ROLES = ["top-background", "bottom-background", "grid-cell", "grid-cell-selected", "banner-cell", "banner-cell-selected", "scrim"] as const;
 export const V3_ASSET_ROLES = [
   ...V3_VISUAL_ROLES,
   "navigation-sound",
-  "launch-sound",
+  "select-sound",
+  "back-sound",
   "bgm",
 ] as const satisfies readonly AssetRoleV3[];
 export const isAssetRoleV3 = (value: unknown): value is AssetRoleV3 =>

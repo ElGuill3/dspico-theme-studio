@@ -16,6 +16,7 @@ const api: StudioApi = {
   removeWav: (role) => call({ kind: "remove-wav", role }),
   openProject: () => call({ kind: "open-project" }),
   restoreProject: () => call({ kind: "restore-project" }),
+  restorePreMigrationV3: () => call({ kind: "restore-pre-migration-v3" }),
   open: () => call({ kind: "open" }),
   openCustom: () => call({ kind: "open-custom" }),
   save: () => call({ kind: "save" }),

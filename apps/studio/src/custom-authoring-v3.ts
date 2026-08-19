@@ -2,6 +2,7 @@ import {
   CUSTOM_VISUAL_ROLES_V1,
   CUSTOM_VISUAL_SLOTS_V1,
   CUSTOM_VISUAL_DOCUMENTS_V1,
+  THEME_SOUND_ROLES_V1,
   DSPICO_LAUNCHER_V1,
   compositeProfileSha256V1,
   customDiagnosticV1,
@@ -166,7 +167,7 @@ export function diagnoseCustomPublicationV3(
         );
     }
   }
-  for (const role of ["navigation", "launch"] as const) {
+  for (const role of THEME_SOUND_ROLES_V1) {
     const asset = assetFor(project, `${role}-sound`);
     if (!asset) continue;
     if (!asset.prepared)
@@ -294,7 +295,7 @@ export function customAuthoringSnapshotV3(
     };
   }
   const sounds: CustomAuthoringSnapshotV3["sounds"] = {};
-  for (const role of ["navigation", "launch"] as const) {
+  for (const role of THEME_SOUND_ROLES_V1) {
     const asset = assetFor(project, `${role}-sound`);
     if (!asset?.prepared) continue;
     const recipe = asset.recipe as { wav: PreparedThemeSoundV1["recipe"]; audition: PreparedThemeSoundV1["audition"] };
@@ -356,7 +357,7 @@ export function compileCustomPublicationV3(
       path,
       bytes: visual.files[path as keyof typeof visual.files],
     })),
-    ...(["navigation", "launch"] as const).flatMap((role) =>
+    ...THEME_SOUND_ROLES_V1.flatMap((role) =>
       snapshot.sounds[role] ? [{ path: `sounds/${role}.wav`, bytes: snapshot.sounds[role]!.prepared.bytes }] : [],
     ),
     ...(snapshot.bcstm ? [{ path: snapshot.bcstm.bundlePath, bytes: snapshot.bcstm.sourceBytes }] : []),

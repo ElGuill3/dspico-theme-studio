@@ -5,6 +5,7 @@ import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { _electron as electron } from "playwright";
 import { compositeCustomLayersV1 } from "../packages/dspico-contract/src/index.js";
+import { launcherV1Fixture } from "../packages/test-fixtures/src/launcher-v1.js";
 import { applyOperationV3, createProjectV2, createProjectV3 } from "../packages/theme-core/src/index.js";
 import { PortableProjectStore } from "../apps/studio/src/portable-project-store.js";
 import { certifyCurrentVisual } from "./visual-receipt.js";
@@ -208,6 +209,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
           "reloadEditor",
           "removeWav",
           "requestClose",
+          "restorePreMigrationV3",
           "restoreProject",
           "revealExport",
           "save",
@@ -684,7 +686,8 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(outputRail.getByText("hardware-unknown", { exact: true })).toBeVisible();
       await drawer.getByRole("tab", { name: "Audio" }).click();
       const navigationAudio = drawer.locator('[data-audio-role="navigation"]');
-      const launchAudio = drawer.locator('[data-audio-role="launch"]');
+      const selectAudio = drawer.locator('[data-audio-role="select"]');
+      const backAudio = drawer.locator('[data-audio-role="back"]');
       await navigationAudio.locator('input[type="file"]').setInputFiles(path.join(root, "input.png"));
       await expect(page.locator(".status")).toContainText("WAV");
       await navigationAudio.locator('input[type="file"]').setInputFiles(path.join(root, "input.wav"));
@@ -697,18 +700,21 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         "data-audition",
         "Desktop audition",
       );
-      await expect(page.locator('[data-audio-role="launch"]')).toHaveAttribute("data-state", "omitted");
+      await expect(page.locator('[data-audio-role="select"]')).toHaveAttribute("data-state", "omitted");
+      await expect(backAudio).toHaveAttribute("data-state", "omitted");
       await navigationAudio.getByLabel("Gain (%)").fill("50");
       await navigationAudio.getByRole("button", { name: "Apply audio edits" }).click();
       await expect(page.locator(".status")).toContainText("navigation sound saved");
-      await launchAudio.locator('input[type="file"]').setInputFiles(path.join(root, "input.wav"));
-      await expect(launchAudio).toHaveAttribute("data-state", "prepared");
+      await selectAudio.locator('input[type="file"]').setInputFiles(path.join(root, "input.wav"));
+      await expect(selectAudio).toHaveAttribute("data-state", "prepared");
+      await backAudio.locator('input[type="file"]').setInputFiles(path.join(root, "input.wav"));
+      await expect(backAudio).toHaveAttribute("data-state", "prepared");
       await page.locator('[data-audio-role="navigation"] audio').evaluate((element) => {
         (element as HTMLAudioElement).pause = () => {
           element.setAttribute("data-paused-by-peer", "true");
         };
       });
-      await page.locator('[data-audio-role="launch"] audio').dispatchEvent("play");
+      await page.locator('[data-audio-role="select"] audio').dispatchEvent("play");
       await expect(page.locator('[data-audio-role="navigation"] audio')).toHaveAttribute("data-paused-by-peer", "true");
       await navigationAudio.getByRole("button", { name: "Remove navigation sound" }).click();
       await expect(navigationAudio).toHaveAttribute("data-state", "omitted");
@@ -721,7 +727,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await page.getByRole("button", { name: "Open project" }).click();
       drawer = await openProjectDrawer(page, "Audio");
       await expect(drawer.locator('[data-audio-role="navigation"] [data-waveform]')).toBeVisible();
-      await expect(drawer.locator('[data-audio-role="launch"] [data-waveform]')).toBeVisible();
+      await expect(drawer.locator('[data-audio-role="select"] [data-waveform]')).toBeVisible();
       await expect(page.locator("body")).not.toContainText(/receipt|evidence/i);
       await closeProjectDrawer(page);
       await workspace.getByRole("button", { name: "top-background", exact: true }).click();
@@ -2602,11 +2608,11 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     const reportBytes = await readFile(path.join(root, "export/theme/report.json"));
     const zipBytes = await readFile(path.join(root, "export/theme.zip"));
     const report = JSON.parse(reportBytes.toString()) as {
-      compatibility: { evidence: { kind: string }[] };
+      compatibility: { evidence: { path: string; blobOid: string; sha256: string }[] };
       evidenceBoundary: unknown;
       files: { path: string; bytes: number; sha256: string }[];
     };
-    expect(report.compatibility.evidence.every(({ kind }) => kind === "source" || kind === "fixture")).toBe(true);
+    expect(report.compatibility.evidence).toEqual(launcherV1Fixture.sources);
     expect(report.evidenceBoundary).toEqual({
       softwareFixtureOnly: true,
       hardwareParityClaimed: false,
