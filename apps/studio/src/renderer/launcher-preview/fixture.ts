@@ -3,8 +3,8 @@ import { admitLauncherPreviewFixtureV1, LAUNCHER_PREVIEW_AUTHORITY_V1 } from "./
 export type LauncherFixtureV1 = {
   version: 1;
   palette: Uint8Array;
-  names: readonly ["Neutral One", "Neutral Two", "Neutral Three"];
-  selectedIndex: 1;
+  names: readonly string[];
+  selectedIndex: number;
   status: { nickname: "Studio"; batteryPercent: 100 };
   source: typeof LAUNCHER_PREVIEW_AUTHORITY_V1.fixture.source;
 };
