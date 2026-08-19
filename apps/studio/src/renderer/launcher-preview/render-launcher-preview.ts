@@ -6,13 +6,14 @@ import {
 } from "../../../../../packages/dspico-contract/src/codecs-v1-3.js";
 import { createLauncherPreviewFrameModelV1, LauncherPreviewError } from "./authority.js";
 import type { LauncherFixtureV1 } from "./fixture.js";
-import { renderCustomScenesV1 } from "./scenes.js";
+import { materialPreviewV1 } from "./material.js";
+import { renderCustomScenesV1, renderMaterialScenesV1, type LauncherPreviewMetadataV1 } from "./scenes.js";
 
 export type LauncherPreviewFrameV1 = {
   mode: ReturnType<typeof createLauncherPreviewFrameModelV1>["mode"];
   top: Uint8Array;
   bottom: Uint8Array;
-  metadata: ReturnType<typeof renderCustomScenesV1>["metadata"] & { authority: string };
+  metadata: LauncherPreviewMetadataV1 & { authority: string };
 };
 
 const decode = (files: V13VisualFilesV1) => ({
@@ -26,13 +27,18 @@ const decode = (files: V13VisualFilesV1) => ({
 });
 
 export function renderLauncherPreview(input: {
-  theme: { kind: "custom"; files: V13VisualFilesV1 };
+  theme:
+    | { kind: "custom"; files: V13VisualFilesV1 }
+    | { kind: "material"; primaryColor: { r: number; g: number; b: number }; darkTheme: boolean };
   mode: string;
   fixture: LauncherFixtureV1;
 }): LauncherPreviewFrameV1 {
   const model = createLauncherPreviewFrameModelV1(input.mode);
   try {
-    const frame = renderCustomScenesV1(model.mode, input.fixture, decode(input.theme.files));
+    const frame =
+      input.theme.kind === "custom"
+        ? renderCustomScenesV1(model.mode, input.fixture, decode(input.theme.files))
+        : renderMaterialScenesV1(model.mode, input.fixture, materialPreviewV1(input.theme).roles);
     return {
       mode: model.mode,
       top: frame.top,
