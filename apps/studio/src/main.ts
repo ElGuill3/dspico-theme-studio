@@ -206,7 +206,7 @@ const publicationHandoffCustom = async (project: ThemeProjectV3) => {
     bytes: file.bytes.length,
   }));
   const metadata = new TextEncoder().encode(
-    `${JSON.stringify({ version: 1, label: HANDOFF_LABEL, ready: false, compatibilityClaimed: false, profile: { id: LAUNCHER_V1_PROFILE.profileId, tag: LAUNCHER_V1_PROFILE.tag, commit: LAUNCHER_V1_PROFILE.launcherCommit, sha256: compositeProfileSha256V1() }, codecPolicy: CODEC_POLICY_V1, files, instructions: "Test these candidate bytes on the observed target and record the physical test results separately." })}\n`,
+    `${JSON.stringify({ version: 1, label: HANDOFF_LABEL, ready: false, compatibilityClaimed: false, profile: { id: LAUNCHER_V1_PROFILE.profileId, commit: LAUNCHER_V1_PROFILE.launcherCommit, sha256: compositeProfileSha256V1() }, codecPolicy: CODEC_POLICY_V1, files, instructions: "Test these candidate bytes on the observed target and record the physical test results separately." })}\n`,
   );
   const instructions = new TextEncoder().encode(
     `${HANDOFF_LABEL}\nThis folder is a physical-test candidate only. It is not a ready export, ZIP, compatibility claim, or installation.\n`,

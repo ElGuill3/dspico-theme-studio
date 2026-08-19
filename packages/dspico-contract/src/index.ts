@@ -34,12 +34,11 @@ export type ReportV1 = {
   reportVersion: 1;
   compatibility: {
     profileId: "dspico-launcher-v1";
-    tag: string;
     launcherCommit: string;
     manifestSha256: string;
     compilerVersion: string;
     projectFormatVersion: 1;
-    evidence: { kind: "source" | "fixture"; path: string; sha256: string }[];
+    evidence: { path: string; blobOid: string; sha256: string }[];
   };
   evidenceBoundary: { softwareFixtureOnly: true; hardwareParityClaimed: false };
   diagnostics: DiagnosticV1[];
@@ -50,9 +49,13 @@ export type ReportV1 = {
 };
 
 const profileEvidence = (ref: string) => {
-  const item = LAUNCHER_V1_PROFILE.evidence.find((candidate) => candidate.ref === ref);
+  const item = LAUNCHER_V1_PROFILE.evidence.find((candidate) => candidate.path === ref);
   if (!item) throw new Error(`Required compatibility profile data is missing: ${ref}`);
-  return item;
+  return {
+    kind: ref.startsWith("_pico/") ? ("fixture" as const) : ("source" as const),
+    ref: item.path,
+    sha256: item.sha256,
+  };
 };
 const evidence = {
   metadata: profileEvidence("docs/Themes.md"),
@@ -62,9 +65,7 @@ const evidence = {
   fixture: profileEvidence("_pico/themes/material/theme.json"),
 } as const;
 const reportEvidence = () =>
-  DSPICO_LAUNCHER_V1.evidence
-    .map(({ kind, ref, sha256: digest }) => ({ kind, path: ref, sha256: digest }))
-    .sort((a, b) => lexical(a.path, b.path));
+  DSPICO_LAUNCHER_V1.evidence.map(({ path, blobOid, sha256: digest }) => ({ path, blobOid, sha256: digest }));
 const softwareFixtureBoundary = { softwareFixtureOnly: true, hardwareParityClaimed: false } as const;
 
 export const DSPICO_LAUNCHER_V1 = {
@@ -169,7 +170,6 @@ const diagnosticFingerprint = (
   sha256(
     canonical([
       DSPICO_LAUNCHER_V1.profileId,
-      DSPICO_LAUNCHER_V1.tag,
       DSPICO_LAUNCHER_V1.launcherCommit,
       DSPICO_LAUNCHER_V1.manifestSha256,
       ruleId,
@@ -442,7 +442,6 @@ export type LegacyVisualReceiptV1 = {
   observations: string[];
   pass: boolean;
 };
-const receiptHash = /^[a-f0-9]{64}$/;
 const visualReceiptDiagnostic = (ruleId: string, normalizedValue: JsonValue, message: string): DiagnosticV1 => {
   const location = { document: "compatibility.json", pointer: "" };
   return {
@@ -470,35 +469,14 @@ export function validateVisualReceiptV1(
         "A passing v1.3.0 visual compatibility record is required before Custom publication.",
       ),
     ];
-  const hashes = objectValue(receipt.fileHashes);
-  const expected = [...LAUNCHER_V1_VISUAL_FILES].sort(lexical);
-  const actual = hashes ? Object.keys(hashes).sort(lexical) : [];
-  const matchesCurrentOutput =
-    !expectedFileHashes ||
-    (Object.keys(expectedFileHashes).sort(lexical).join("\n") === expected.join("\n") &&
-      expected.every((name) => hashes?.[name] === expectedFileHashes[name]));
-  const valid =
-    receipt.launcherTag === LAUNCHER_V1_PROFILE.tag &&
-    receipt.launcherCommit === LAUNCHER_V1_PROFILE.launcherCommit &&
-    receipt.pass === true &&
-    Array.isArray(receipt.observations) &&
-    receipt.observations.length > 0 &&
-    receipt.observations.every((observation) => typeof observation === "string" && observation.trim()) &&
-    Boolean(hashes) &&
-    actual.length === expected.length &&
-    matchesCurrentOutput &&
-    actual.every(
-      (name, index) => name === expected[index] && typeof hashes![name] === "string" && receiptHash.test(hashes![name]),
-    );
-  return valid
-    ? []
-    : [
-        visualReceiptDiagnostic(
-          "custom.visual-receipt-invalid",
-          receipt as JsonValue,
-          "The visual compatibility record must pass for the pinned v1.3.0 launcher and match the current 12-file visual output manifest.",
-        ),
-      ];
+  void expectedFileHashes;
+  return [
+    visualReceiptDiagnostic(
+      "custom.visual-receipt-invalid",
+      receipt as JsonValue,
+      "Historical tag-bearing compatibility evidence is stale and cannot authorize current output.",
+    ),
+  ];
 }
 
 const objectValue = (value: unknown): Theme | undefined =>
@@ -1143,7 +1121,6 @@ export function compileThemeExport(input: unknown, acknowledgments: readonly str
     reportVersion: 1,
     compatibility: {
       profileId: DSPICO_LAUNCHER_V1.profileId,
-      tag: DSPICO_LAUNCHER_V1.tag,
       launcherCommit: DSPICO_LAUNCHER_V1.launcherCommit,
       manifestSha256: DSPICO_LAUNCHER_V1.manifestSha256,
       compilerVersion: "0.1.0",

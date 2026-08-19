@@ -8,6 +8,7 @@ import {
   saveLauncherParityProject,
 } from "./parity-history-v1.js";
 import { migrateLegacyMaterial } from "./parity-migration-v1.js";
+import { PARITY_PROFILE } from "./parity-model-v1.js";
 
 const created = () =>
   createLauncherParityProject({
@@ -18,6 +19,10 @@ const created = () =>
   });
 
 describe("LauncherParityProjectV1 history", () => {
+  it("uses the active commit-native profile without a tag field", () => {
+    expect(PARITY_PROFILE).not.toHaveProperty("tag");
+  });
+
   it("replays metadata and launcher-consumed Material fields", () => {
     const state = applyLauncherParityOperation(
       applyLauncherParityOperation(created(), { version: 1, type: "set-primary-color", value: { r: 1, g: 2, b: 3 } }),

@@ -166,7 +166,7 @@ describe("deterministic export plan", () => {
     expect(theme.launchTransition).toBeUndefined();
   });
 
-  it("accepts a visual receipt only for the current 12-file output manifest", () => {
+  it("treats the historical tag-bearing visual receipt as stale without rewriting it", () => {
     const expected = Object.fromEntries(
       LAUNCHER_V1_VISUAL_FILES.map((file, index) => [file, "abcdef012345"[index]!.repeat(64)]),
     );
@@ -177,7 +177,11 @@ describe("deterministic export plan", () => {
       observations: ["Software fixture only"],
       pass: true,
     };
-    expect(validateVisualReceiptV1(receipt, expected)).toEqual([]);
+    const raw = JSON.stringify(receipt);
+    expect(validateVisualReceiptV1(JSON.parse(raw), expected)).toEqual([
+      expect.objectContaining({ ruleId: "custom.visual-receipt-invalid", severity: "error" }),
+    ]);
+    expect(JSON.stringify(JSON.parse(raw))).toBe(raw);
     const stale = { ...receipt, fileHashes: { ...expected, [LAUNCHER_V1_VISUAL_FILES[0]]: "f".repeat(64) } };
     expect(validateVisualReceiptV1(stale, expected)).toEqual([
       expect.objectContaining({ ruleId: "custom.visual-receipt-invalid", severity: "error" }),

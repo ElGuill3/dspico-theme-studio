@@ -19,12 +19,13 @@ describe("composite v1.3 profile", () => {
   it("pins the official visual authority and supported host", () => {
     expect(LAUNCHER_V1_PROFILE).toMatchObject({
       profileId: launcherV1Fixture.profileId,
-      tag: "v1.3.0",
-      launcherCommit: "b087565651c83081dd65552863f5efc2f28e489c",
+      launcherCommit: "c648ce888f9b24a1a269795dd0391528e5d12251",
       manifestSha256: launcherV1Fixture.manifestSha256,
       supportedHost: DSPICO_V13_SUPPORTED_HOST,
       fallback: false,
     });
+    expect(LAUNCHER_V1_PROFILE).not.toHaveProperty("tag");
+    expect(LAUNCHER_V1_PROFILE.components.visual).not.toHaveProperty("tag");
   });
 
   it("binds visual and UI-sound authorities as independent components", () => {

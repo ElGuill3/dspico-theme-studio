@@ -16,7 +16,6 @@ const receipt = (): VisualReceiptV1 => ({
   testedAt: "2026-08-08T07:00:00.000Z",
   profile: {
     id: LAUNCHER_V1_PROFILE.profileId,
-    tag: LAUNCHER_V1_PROFILE.tag,
     commit: LAUNCHER_V1_PROFILE.launcherCommit,
     sha256: compositeProfileSha256V1(),
   },
@@ -48,5 +47,12 @@ describe("v1 visual receipts", () => {
     expect(validateReceiptV1({ ...value, observations: [] })).not.toEqual([]);
     expect(validateReceiptV1({ ...value, pass: false })).not.toEqual([]);
     expect(validateReceiptV1({ ...value, profile: { ...value.profile, sha256: hash("c") } })).not.toEqual([]);
+    expect(validateReceiptV1({ ...value, profile: { ...value.profile, tag: "v1.3.0" } })).not.toEqual([]);
+  });
+
+  it("leaves stale tag-bearing receipt bytes unchanged and unauthorized", () => {
+    const raw = JSON.stringify({ ...receipt(), profile: { ...receipt().profile, tag: "v1.3.0" } });
+    expect(validateReceiptV1(JSON.parse(raw))).not.toEqual([]);
+    expect(JSON.stringify(JSON.parse(raw))).toBe(raw);
   });
 });

@@ -4,7 +4,6 @@ import { realpathSync } from "node:fs";
 import { launcherV1Fixture } from "./launcher-v1.js";
 
 export const LAUNCHER_V1_COMMIT = launcherV1Fixture.launcherCommit;
-export const LAUNCHER_V1_TAG = launcherV1Fixture.tag;
 export const LAUNCHER_V1_SOURCE_PATHS = launcherV1Fixture.sources.map(({ path }) => path);
 type CommandOptions = {
   encoding: "buffer";
@@ -15,7 +14,7 @@ type CommandOptions = {
 type CommandOutput = string | Buffer;
 export type CommandRunner = (file: string, args: readonly string[], options: CommandOptions) => CommandOutput;
 // prettier-ignore
-type CaptureFailure = "command-failed" | "not-repository" | "moved-root" | "dirty-repository" | "wrong-head" | "wrong-tag" | "invalid-source";
+type CaptureFailure = "command-failed" | "not-repository" | "moved-root" | "dirty-repository" | "wrong-head" | "invalid-source";
 const fail = (reason: CaptureFailure, message: string): never => {
   throw Object.assign(new Error(message), { reason });
 };
@@ -30,7 +29,10 @@ export type CaptureOptions = {
 const text = (output: CommandOutput) => (typeof output === "string" ? output : output.toString("utf8"));
 
 // prettier-ignore
-const manifestSha256 = (sources: readonly { path: string; sha256: string }[]) => createHash("sha256").update(JSON.stringify({ profileId: "dspico-launcher-v1", tag: LAUNCHER_V1_TAG, launcherCommit: LAUNCHER_V1_COMMIT, sources })).digest("hex");
+const manifestSha256 = (evidence: readonly { path: string; blobOid: string; sha256: string }[]) =>
+  createHash("sha256")
+    .update(JSON.stringify({ profileId: "dspico-launcher-v1", launcherCommit: LAUNCHER_V1_COMMIT, sources: evidence }))
+    .digest("hex");
 
 export function captureLauncherFixtures(repositoryPath: string, options: CaptureOptions = {}) {
   let repositoryRoot!: string;
@@ -62,35 +64,20 @@ export function captureLauncherFixtures(repositoryPath: string, options: Capture
     fail("dirty-repository", "Launcher repository is dirty.");
   if (gitText([...prefix, "rev-parse", "HEAD"]).trim() !== LAUNCHER_V1_COMMIT)
     fail("wrong-head", `Launcher HEAD is not ${LAUNCHER_V1_COMMIT}.`);
-  if (gitText([...prefix, "describe", "--tags", "--exact-match", "HEAD"]).trim() !== LAUNCHER_V1_TAG)
-    fail("wrong-tag", `Launcher HEAD is not tagged ${LAUNCHER_V1_TAG}.`);
-  const expected = new Map(launcherV1Fixture.sources.map(({ path, sha256 }) => [path, sha256]));
-  const sources = LAUNCHER_V1_SOURCE_PATHS.map((path) => {
+  const sources = launcherV1Fixture.sources.map(({ path, blobOid, sha256: expectedSha256 }) => {
+    if (gitText([...prefix, "rev-parse", `${LAUNCHER_V1_COMMIT}:${path}`], "invalid-source").trim() !== blobOid)
+      fail("invalid-source", `Pinned launcher blob drifted at ${path}.`);
     const content = git([...prefix, "show", `${LAUNCHER_V1_COMMIT}:${path}`], "invalid-source");
     const sha256 = contentSha256(content);
-    if (expected.get(path) !== sha256) fail("invalid-source", `Pinned launcher evidence drifted at ${path}.`);
-    return { path, content: text(content), sha256 };
+    if (expectedSha256 !== sha256) fail("invalid-source", `Pinned launcher evidence drifted at ${path}.`);
+    return { path, blobOid, sha256 };
   });
-  const manifest = sources.map(({ path, sha256 }) => ({ path, sha256 }));
-  if (
-    manifest.some(({ path, sha256 }) => expected.get(path) !== sha256) ||
-    manifestSha256(manifest) !== launcherV1Fixture.manifestSha256
-  )
+  if (manifestSha256(sources) !== launcherV1Fixture.manifestSha256)
     fail("invalid-source", "Pinned launcher evidence manifest drifted.");
-  const themeSource =
-    sources.find(({ path }) => path === "_pico/themes/material/theme.json")?.content ??
-    fail("invalid-source", "Pinned theme.json source is missing.");
-  try {
-    return {
-      profileId: "dspico-launcher-v1",
-      launcherCommit: LAUNCHER_V1_COMMIT,
-      launcherTag: LAUNCHER_V1_TAG,
-      repositoryRoot,
-      sources,
-      manifestSha256: manifestSha256(manifest),
-      materialTheme: JSON.parse(themeSource) as Record<string, unknown>,
-    };
-  } catch {
-    return fail("invalid-source", "Pinned theme.json is not valid JSON.");
-  }
+  return {
+    profileId: "dspico-launcher-v1",
+    launcherCommit: LAUNCHER_V1_COMMIT,
+    manifestSha256: manifestSha256(sources),
+    evidence: sources,
+  };
 }
