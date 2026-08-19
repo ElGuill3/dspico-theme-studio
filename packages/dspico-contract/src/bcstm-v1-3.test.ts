@@ -24,7 +24,7 @@ const fixture = () => {
   return b;
 };
 // prettier-ignore
-const visualReceipt = () => ({ version: 1, schema: "dspico-visual-receipt-v1", component: "visual", tester: "Ada", device: "DSi", cartridge: "cart-1", launcherBuild: "build-1", testedAt: "2026-08-08T09:00:00.000Z", profile: { id: LAUNCHER_V1_PROFILE.profileId, tag: LAUNCHER_V1_PROFILE.tag, commit: LAUNCHER_V1_PROFILE.launcherCommit, sha256: compositeProfileSha256V1() }, codecPolicy: { id: CODEC_POLICY_V1, sha256: codecPolicySha256V1() }, themeJsonSha256: "0".repeat(64), manifest: LAUNCHER_V1_VISUAL_FILES.map((path) => ({ path, sha256: "0".repeat(64) })), observations: ["visual baseline"], pass: true });
+const visualReceipt = () => ({ version: 1, schema: "dspico-visual-receipt-v1", component: "visual", tester: "Ada", device: "DSi", cartridge: "cart-1", launcherBuild: "build-1", testedAt: "2026-08-08T09:00:00.000Z", profile: { id: LAUNCHER_V1_PROFILE.profileId, commit: LAUNCHER_V1_PROFILE.launcherCommit, sha256: compositeProfileSha256V1() }, codecPolicy: { id: CODEC_POLICY_V1, sha256: codecPolicySha256V1() }, themeJsonSha256: "0".repeat(64), manifest: LAUNCHER_V1_VISUAL_FILES.map((path) => ({ path, sha256: "0".repeat(64) })), observations: ["visual baseline"], pass: true });
 const visualExpectation = () => ({
   profileSha256: compositeProfileSha256V1(),
   themeJsonSha256: "0".repeat(64),
@@ -41,7 +41,6 @@ const bcstmReceipt = (sourceSha256: string) => ({
   testedAt: "2026-08-08T09:00:00.000Z",
   profile: {
     id: LAUNCHER_V1_PROFILE.profileId,
-    tag: LAUNCHER_V1_PROFILE.tag,
     commit: LAUNCHER_V1_PROFILE.launcherCommit,
     sha256: compositeProfileSha256V1(),
   },
@@ -81,5 +80,11 @@ describe("v1.3 BCSTM DSP-ADPCM contract", () => {
     expect(validateBcstmSourcesV13([new Uint8Array([1, 2, 3])], "raspberry", { visualExpectation: visualExpectation(), visualReceipt: visualReceipt() })).toMatchObject({ valid: false, diagnostics: [expect.objectContaining({ code: "bcstm.offset" })] });
     const bytes = fixture(), parsed = parseBcstmV13(bytes); if (!parsed.valid) throw new Error("fixture must parse");
     expect(validateBcstmReceiptV13(bcstmReceipt(parsed.sourceSha256), "f".repeat(64))).toHaveLength(1);
+  });
+  it("treats tag-bearing BCSTM evidence as stale without rewriting its bytes", () => {
+    const parsed = parseBcstmV13(fixture()); if (!parsed.valid) throw new Error("fixture must parse");
+    const raw = JSON.stringify({ ...bcstmReceipt(parsed.sourceSha256), profile: { ...bcstmReceipt(parsed.sourceSha256).profile, tag: "v1.3.0" } });
+    expect(validateBcstmReceiptV13(JSON.parse(raw), parsed.sourceSha256)).toHaveLength(1);
+    expect(JSON.stringify(JSON.parse(raw))).toBe(raw);
   });
 });

@@ -95,7 +95,7 @@ test("creates a complete physical-test handoff through the Electron writer", asy
       label: string;
       ready: boolean;
       compatibilityClaimed: boolean;
-      profile: { id: string; tag: string; commit: string; sha256: string };
+      profile: { id: string; commit: string; sha256: string };
       codecPolicy: string;
       instructions: string;
       files: { path: string; bytes: number; sha256: string }[];
@@ -115,7 +115,6 @@ test("creates a complete physical-test handoff through the Electron writer", asy
       compatibilityClaimed: false,
       profile: {
         id: LAUNCHER_V1_PROFILE.profileId,
-        tag: LAUNCHER_V1_PROFILE.tag,
         commit: LAUNCHER_V1_PROFILE.launcherCommit,
         sha256: compositeProfileSha256V1(),
       },

@@ -66,7 +66,6 @@ const visualReceipt = (project: ReturnType<typeof currentProjectV3>, media: Read
     testedAt: "2026-08-08T00:00:00.000Z",
     profile: {
       id: LAUNCHER_V1_PROFILE.profileId,
-      tag: LAUNCHER_V1_PROFILE.tag,
       commit: LAUNCHER_V1_PROFILE.launcherCommit,
       sha256: compositeProfileSha256V1(),
     },
@@ -187,7 +186,6 @@ const complete = () => {
       testedAt: "2026-08-08T00:00:00.000Z",
       profile: {
         id: LAUNCHER_V1_PROFILE.profileId,
-        tag: LAUNCHER_V1_PROFILE.tag,
         commit: LAUNCHER_V1_PROFILE.launcherCommit,
         sha256: compositeProfileSha256V1(),
       },

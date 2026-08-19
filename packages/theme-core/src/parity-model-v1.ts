@@ -2,7 +2,7 @@ import { LAUNCHER_V1_PROFILE } from "../../dspico-contract/src/profile-v1-3.js";
 
 export const PARITY_SCHEMA = "dspico.launcher.parity" as const;
 // prettier-ignore
-export const PARITY_PROFILE = { profileId: LAUNCHER_V1_PROFILE.profileId, tag: LAUNCHER_V1_PROFILE.tag, launcherCommit: LAUNCHER_V1_PROFILE.launcherCommit, manifestSha256: LAUNCHER_V1_PROFILE.manifestSha256 } as const;
+export const PARITY_PROFILE = { profileId: LAUNCHER_V1_PROFILE.profileId, launcherCommit: LAUNCHER_V1_PROFILE.launcherCommit, manifestSha256: LAUNCHER_V1_PROFILE.manifestSha256 } as const;
 // prettier-ignore
 export class ParityFormatRefusalError extends Error { constructor(readonly reason: "invalid-json" | "unsupported-format" | "invalid-format", message: string) { super(message); this.name = "ParityFormatRefusalError"; } }
 export type Rgb8V1 = { r: number; g: number; b: number };

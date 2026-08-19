@@ -8,9 +8,8 @@ import { LAUNCHER_V1_PROFILE } from "../../dspico-contract/src/profile-v1-3.js";
 import { captureLauncherFixtures } from "./capture.js";
 import { launcherV1Fixture } from "./launcher-v1.js";
 
-const commit = "b087565651c83081dd65552863f5efc2f28e489c";
+const commit = "c648ce888f9b24a1a269795dd0391528e5d12251";
 const unpublishedCommit = "f3ae63279ab72bc6c83124c752ec79f3247db437";
-const tag = "v1.3.0";
 const root = "/safe/pico-launcher";
 const paths = [
   "docs/Themes.md",
@@ -33,17 +32,17 @@ type Call = {
   };
 };
 type RunnerOptions = {
+  blobOid?: (spec: string) => string;
   head?: string;
   status?: string;
-  tag?: string;
   repositoryRoot?: string;
   show?: (spec: string, options: Call["options"]) => string | Buffer;
 };
 const syntheticSources = new Map(
-  launcherV1Fixture.sources.map(({ path, sha256 }) => {
+  launcherV1Fixture.sources.map(({ path, blobOid, sha256 }) => {
     const spec = `${commit}:${path}`;
     const content = Buffer.from(path === "_pico/themes/material/theme.json" ? "{}" : spec);
-    return [spec, { content, sha256 }] as const;
+    return [spec, { blobOid, content, sha256 }] as const;
   }),
 );
 const syntheticDigest = (content: string | Buffer) =>
@@ -56,8 +55,9 @@ const runner = (options: RunnerOptions = {}) => {
     calls.push({ file, args, options: commandOptions });
     if (args[2] === "rev-parse" && args[3] === "--show-toplevel") return `${options.repositoryRoot ?? root}\n`;
     if (args[2] === "status") return options.status ?? "";
+    if (args[2] === "rev-parse" && args[3]?.includes(":"))
+      return `${options.blobOid?.(args[3]) ?? syntheticSources.get(args[3])?.blobOid}\n`;
     if (args[2] === "rev-parse") return `${options.head ?? commit}\n`;
-    if (args[2] === "describe") return `${options.tag ?? tag}\n`;
     if (args[2] === "show" && options.show) return options.show(args[3] ?? "", commandOptions);
     if (args[2] === "show") {
       const source = syntheticSources.get(args[3] ?? "");
@@ -81,7 +81,7 @@ describe("launcher fixture capture", () => {
 
   it("keeps a clean empty index read-only and rejects the result of commit -a", () => {
     const clean = runner({ status: "" });
-    expect(capture(root, clean).sources).toHaveLength(paths.length);
+    expect(capture(root, clean).evidence).toHaveLength(paths.length);
     expect(clean.calls.some(({ args }) => args[2] === "show")).toBe(true);
 
     const committed = runner({ status: "", head: unpublishedCommit });
@@ -149,31 +149,70 @@ describe("launcher fixture capture", () => {
     [{ status: "?? untracked\n" }, "dirty-repository"],
     [{ head: "0000000000000000000000000000000000000000" }, "wrong-head"],
     [{ head: unpublishedCommit }, "wrong-head"],
-    [{ tag: "v1.2.0" }, "wrong-tag"],
   ] as const)("rejects unsafe repository state before source reads", (options, reason) => {
     const fake = runner(options);
     expect(() => capture(root, fake)).toThrowError(expect.objectContaining({ reason }));
     expect(fake.calls.some(({ args }) => args[2] === "show")).toBe(false);
   });
 
-  it("reads only pinned sources with read-only argv", () => {
+  it("reads ordered pinned blob evidence with approved local argv only", () => {
     const fake = runner();
     const result = capture(root, fake);
     expect(result).toMatchObject({
       profileId: "dspico-launcher-v1",
       launcherCommit: commit,
-      launcherTag: tag,
       manifestSha256: expect.any(String),
     });
-    expect(result.sources.map(({ path }) => path)).toEqual(paths);
-    expect(result.sources.map(({ path }) => path)).not.toContain("_pico/themes/raspberry/gridcellPlttSelected.bin");
+    expect(result).not.toHaveProperty("launcherTag");
+    expect(result.evidence.map(({ path }) => path)).toEqual(paths);
+    expect(result.evidence.map(({ path }) => path)).not.toContain("_pico/themes/raspberry/gridcellPlttSelected.bin");
+    expect(result.evidence).toEqual(launcherV1Fixture.sources);
     expect(fake.calls.filter(({ args }) => args[2] === "show").map(({ args }) => args)).toEqual(
       paths.map((path) => ["-C", root, "show", `${commit}:${path}`]),
     );
+    expect(
+      fake.calls.filter(({ args }) => args[2] === "rev-parse" && args[3]?.includes(":")).map(({ args }) => args),
+    ).toEqual(paths.map((path) => ["-C", root, "rev-parse", `${commit}:${path}`]));
     expect(fake.calls.every(({ file, options }) => file === "git" && options.shell === false)).toBe(true);
     expect(
-      fake.calls.every(({ args }) => !["add", "checkout", "commit", "push", "reset"].includes(args[2] ?? "")),
+      fake.calls.every(
+        ({ args }) =>
+          ![
+            "add",
+            "branch",
+            "checkout",
+            "commit",
+            "describe",
+            "fetch",
+            "ls-remote",
+            "push",
+            "remote",
+            "reset",
+            "tag",
+          ].includes(args[2] ?? ""),
+      ),
     ).toBe(true);
+  });
+
+  it("rejects reordered, missing, or wrong blob evidence before later source reads", () => {
+    const reordered = launcherV1Fixture.sources as unknown as Array<(typeof launcherV1Fixture.sources)[number]>;
+    reordered.reverse();
+    try {
+      expect(() => capture(root, runner())).toThrowError(expect.objectContaining({ reason: "invalid-source" }));
+    } finally {
+      reordered.reverse();
+    }
+    const wrong = runner({ blobOid: () => "0".repeat(40) });
+    expect(() => capture(root, wrong)).toThrowError(expect.objectContaining({ reason: "invalid-source" }));
+    expect(wrong.calls.filter(({ args }) => args[2] === "show")).toHaveLength(0);
+    const missing = runner({
+      show: (spec) => {
+        if (spec.endsWith(":docs/Themes.md")) throw new Error("missing evidence");
+        return Buffer.from("unreachable");
+      },
+    });
+    expect(() => capture(root, missing)).toThrowError(expect.objectContaining({ reason: "invalid-source" }));
+    expect(missing.calls.filter(({ args }) => args[2] === "show")).toHaveLength(1);
   });
 
   it("rejects source hash drift before reading later evidence", () => {
@@ -199,10 +238,22 @@ describe("launcher fixture capture", () => {
     const evidence = JSON.parse(
       readFileSync(path.join(__dirname, "../evidence/pico-launcher-v1-3-profile.json"), "utf8"),
     );
-    expect(evidence).toMatchObject({ profileId: launcherV1Fixture.profileId, tag: "v1.3.0", launcherCommit: commit });
+    expect(evidence).toMatchObject({ profileId: launcherV1Fixture.profileId, launcherCommit: commit });
+    expect(evidence).not.toHaveProperty("tag");
     expect(evidence.manifestSha256).toBe(launcherV1Fixture.manifestSha256);
     expect(evidence.sources).toEqual(launcherV1Fixture.sources);
     expect(evidence.visualFiles).toEqual(launcherV1Fixture.visualFiles);
     expect(LAUNCHER_V1_PROFILE.manifestSha256).toBe(launcherV1Fixture.manifestSha256);
   });
+
+  const runtimeRoot = process.env.DSPICO_LAUNCHER_RUNTIME_ROOT;
+  if (runtimeRoot)
+    it("captures the clean exact-c648 disposable worktree", () => {
+      expect(captureLauncherFixtures(runtimeRoot)).toEqual({
+        profileId: launcherV1Fixture.profileId,
+        launcherCommit: launcherV1Fixture.launcherCommit,
+        manifestSha256: launcherV1Fixture.manifestSha256,
+        evidence: launcherV1Fixture.sources,
+      });
+    });
 });

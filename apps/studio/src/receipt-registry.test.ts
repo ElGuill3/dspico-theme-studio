@@ -23,7 +23,6 @@ const makeReceipt = () => ({
   testedAt: "2026-08-08T07:00:00.000Z",
   profile: {
     id: LAUNCHER_V1_PROFILE.profileId,
-    tag: LAUNCHER_V1_PROFILE.tag,
     commit: LAUNCHER_V1_PROFILE.launcherCommit,
     sha256: compositeProfileSha256V1(),
   },

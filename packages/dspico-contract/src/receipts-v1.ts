@@ -19,7 +19,7 @@ export type VisualReceiptV1 = {
   cartridge: string;
   launcherBuild: string;
   testedAt: string;
-  profile: { id: "dspico-launcher-v1"; tag: string; commit: string; sha256: string };
+  profile: { id: "dspico-launcher-v1"; commit: string; sha256: string };
   codecPolicy: { id: string; sha256: string };
   themeJsonSha256: string;
   manifest: readonly ReceiptFileV1[];
@@ -52,8 +52,9 @@ export function validateReceiptV1(input: unknown): ReceiptDiagnosticV1[] {
   const profile = object(value.profile),
     codec = object(value.codecPolicy);
   if (
-    profile?.id !== LAUNCHER_V1_PROFILE.profileId ||
-    profile.tag !== LAUNCHER_V1_PROFILE.tag ||
+    !profile ||
+    Object.keys(profile).sort().join(",") !== "commit,id,sha256" ||
+    profile.id !== LAUNCHER_V1_PROFILE.profileId ||
     profile.commit !== LAUNCHER_V1_PROFILE.launcherCommit ||
     profile.sha256 !== compositeProfileSha256V1()
   )

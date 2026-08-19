@@ -13,7 +13,7 @@ export async function certifyCurrentVisual(page: Page, projectRoot: string): Pro
     const { state, media } = await store.openV3();
     const expectation = compileCustomPublicationV3(state.project, media, { requireVisualReceipt: false }).expectation;
     // prettier-ignore
-    const receipt = { version: 1, schema: "dspico-visual-receipt-v1" as const, component: "visual" as const, tester: "E2E", device: "DSi", cartridge: "fixture", launcherBuild: "fixture", testedAt: "2026-08-11T00:00:00.000Z", profile: { id: LAUNCHER_V1_PROFILE.profileId, tag: LAUNCHER_V1_PROFILE.tag, commit: LAUNCHER_V1_PROFILE.launcherCommit, sha256: expectation.profileSha256 }, codecPolicy: { id: CODEC_POLICY_V1, sha256: codecPolicySha256V1() }, themeJsonSha256: expectation.themeJsonSha256, manifest: expectation.manifest, observations: ["Physical-test fixture recorded."], pass: true };
+    const receipt = { version: 1, schema: "dspico-visual-receipt-v1" as const, component: "visual" as const, tester: "E2E", device: "DSi", cartridge: "fixture", launcherBuild: "fixture", testedAt: "2026-08-11T00:00:00.000Z", profile: { id: LAUNCHER_V1_PROFILE.profileId, commit: LAUNCHER_V1_PROFILE.launcherCommit, sha256: expectation.profileSha256 }, codecPolicy: { id: CODEC_POLICY_V1, sha256: codecPolicySha256V1() }, themeJsonSha256: expectation.themeJsonSha256, manifest: expectation.manifest, observations: ["Physical-test fixture recorded."], pass: true };
     // prettier-ignore
     await store.saveV3(
       applyOperationV3(state, { version: 3, type: "set-component-evidence", component: "visual", receipt }), [...media].map(([sha256, bytes]) => ({ sha256, bytes })),
