@@ -3,5 +3,9 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
-  test: { environment: "node", include: ["packages/**/*.test.ts", "apps/**/*.test.ts"] },
+  test: {
+    environment: "node",
+    include: ["packages/**/*.test.ts", "apps/**/*.test.ts"],
+    server: { deps: { inline: ["@material/material-color-utilities"] } },
+  },
 });
