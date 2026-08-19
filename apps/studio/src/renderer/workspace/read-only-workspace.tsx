@@ -514,8 +514,52 @@ function LayerInspector({
   );
 }
 
+function LayerThumbnail({ layer, image }: { layer: VisualLayerV3; image?: ImportedPngV1 }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    if (!canvas.current || !image || !isImageLayerV3(layer)) return;
+    const context = canvas.current.getContext("2d");
+    if (!context) return;
+    const size = 32,
+      preview = context.createImageData(size, size),
+      crop = layer.crop;
+    for (let y = 0; y < size; y += 1)
+      for (let x = 0; x < size; x += 1) {
+        const sourceX = Math.max(0, Math.min(image.width - 1, crop.x + Math.floor((x * crop.width) / size))),
+          sourceY = Math.max(0, Math.min(image.height - 1, crop.y + Math.floor((y * crop.height) / size))),
+          source = (sourceY * image.width + sourceX) * 4,
+          target = (y * size + x) * 4;
+        preview.data[target] = image.pixels[source]!;
+        preview.data[target + 1] = image.pixels[source + 1]!;
+        preview.data[target + 2] = image.pixels[source + 2]!;
+        preview.data[target + 3] = Math.round((image.pixels[source + 3]! * layer.opacity) / 65536);
+      }
+    context.putImageData(preview, 0, 0);
+  }, [image, layer]);
+  if (isShapeLayerV3(layer))
+    return (
+      <span
+        className={`layer-thumbnail shape ${layer.shape}`}
+        style={{ backgroundColor: layer.fill, opacity: layer.opacity / 65536 }}
+        aria-hidden="true"
+      />
+    );
+  if (isTextLayerV3(layer))
+    return (
+      <span
+        className="layer-thumbnail text"
+        style={{ color: layer.fill, opacity: layer.opacity / 65536 }}
+        aria-hidden="true"
+      >
+        T
+      </span>
+    );
+  return <canvas ref={canvas} className="layer-thumbnail image" width={32} height={32} aria-hidden="true" />;
+}
+
 function LayerRow({
   layer,
+  image,
   index,
   count,
   selected,
@@ -530,6 +574,7 @@ function LayerRow({
   selectRef,
 }: {
   layer: VisualLayerV3;
+  image?: ImportedPngV1;
   index: number;
   count: number;
   selected: boolean;
@@ -559,37 +604,51 @@ function LayerRow({
         onClick={onSelect}
         onKeyDown={onKeyMove}
       >
-        <span aria-hidden="true">{layer.visible ? "●" : "○"}</span>
-        <span>{layer.name}</span>
-        {layer.groupId && <span className="layer-group-label">Group</span>}
+        <LayerThumbnail layer={layer} image={image} />
+        <span className="layer-label">
+          <span>{layer.name}</span>
+          {layer.groupId && <span className="layer-group-label">Group</span>}
+        </span>
       </button>
       <div className="layer-quick-actions">
-        <button aria-label={`${layer.visible ? "Hide" : "Show"} ${layer.name}`} onClick={onToggle}>
-          {layer.visible ? "Hide" : "Show"}
+        <button
+          aria-label={`${layer.visible ? "Hide" : "Show"} ${layer.name}`}
+          title={`${layer.visible ? "Hide" : "Show"} ${layer.name}`}
+          onClick={onToggle}
+        >
+          <ToolIcon name={layer.visible ? "visible" : "hidden"} />
         </button>
         <button
           aria-label={`${layerLockedV3(layer) ? "Unlock" : "Lock"} ${layer.name}`}
+          title={`${layerLockedV3(layer) ? "Unlock" : "Lock"} ${layer.name}`}
           aria-pressed={layerLockedV3(layer)}
           onClick={onLock}
         >
-          {layerLockedV3(layer) ? "Unlock" : "Lock"}
+          <ToolIcon name={layerLockedV3(layer) ? "unlock" : "lock"} />
         </button>
         <button
           aria-label={`Move ${layer.name} up`}
+          title={`Move ${layer.name} up`}
           disabled={protectedByLock || index === count - 1}
           onClick={() => onMove(index + 1)}
         >
-          ↑
+          <ToolIcon name="up" />
         </button>
         <button
           aria-label={`Move ${layer.name} down`}
+          title={`Move ${layer.name} down`}
           disabled={protectedByLock || index === 0}
           onClick={() => onMove(index - 1)}
         >
-          ↓
+          <ToolIcon name="down" />
         </button>
-        <button aria-label={`Delete ${layer.name}`} disabled={protectedByLock} onClick={onRemove}>
-          ×
+        <button
+          aria-label={`Delete ${layer.name}`}
+          title={`Delete ${layer.name}`}
+          disabled={protectedByLock}
+          onClick={onRemove}
+        >
+          <ToolIcon name="delete" />
         </button>
       </div>
     </div>
@@ -1795,37 +1854,43 @@ const mutatedLayerIds = (operation: VisualDocumentOperationV3): string[] => {
 export type EditingTool = "select" | "crop" | "hand";
 export type CreatorDockTab = "layers" | "properties" | "preview";
 
-function ToolIcon({
-  name,
-}: {
-  name: "select" | "import" | "rectangle" | "ellipse" | "text" | "crop" | "hand" | "guides";
-}) {
-  const common = {
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: 1.7,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-  };
+const TOOL_ICON_PATHS = {
+  select: "m5 3 13 9-6 2-3 6z",
+  import: "M4 15v4h16v-4M12 4v11m-4-4 4 4 4-4",
+  rectangle: "M4 5h16v14H4z",
+  ellipse: "M20 12a8 7 0 1 1-16 0 8 7 0 0 1 16 0",
+  text: "M5 5h14M12 5v14m-4 0h8",
+  crop: "M7 3v14a2 2 0 0 0 2 2h12M3 7h14a2 2 0 0 1 2 2v12",
+  hand: "M7 12V7a2 2 0 0 1 4 0v4-6a2 2 0 0 1 4 0v6-4a2 2 0 0 1 4 0v7c0 5-3 7-7 7-3 0-5-2-7-5l-2-3a2 2 0 0 1 4-1z",
+  guides: "M4 3v18M3 7h18M8 3v4m4-4v4m4-4v4M4 12h4m-4 5h4",
+  visible: "M2.5 12s3.5-5 9.5-5 9.5 5 9.5 5-3.5 5-9.5 5-9.5-5-9.5-5zM14.5 12a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0",
+  hidden:
+    "m4 4 16 16M10 7.3A10 10 0 0 1 12 7c6 0 9.5 5 9.5 5a15 15 0 0 1-2.4 2.7M14 16.7a10 10 0 0 1-2 .3c-6 0-9.5-5-9.5-5a15 15 0 0 1 2.4-2.7",
+  lock: "M7 10h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2M8 10V7a4 4 0 0 1 8 0v3",
+  unlock: "M7 10h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2M8 10V7a4 4 0 0 1 7.5-2",
+  up: "m6 14 6-6 6 6",
+  down: "m6 10 6 6 6-6",
+  delete: "M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5",
+  group: "M3 7h8v8H3zM13 9h8v8h-8zM5 4h14M5 20h14",
+  ungroup: "M3 7h8v8H3zM13 9h8v8h-8zM5 4 3 6m16-2 2 2M5 20l-2-2m16 2 2-2",
+  duplicate: "M8 8h11v11H8zM16 8V5H5v11h3",
+  copy: "M8 8h11v12H8zM5 16H3V4h11v2",
+  paste: "M9 5h6m-7 2H5v14h14V7h-3M9 3h6v5H9z",
+  collapse: "M4 4v16m6-14 6 6-6 6m-5-6h11",
+  expand: "M20 4v16M14 6l-6 6 6 6M8 12h11",
+} as const;
+
+function ToolIcon({ name }: { name: keyof typeof TOOL_ICON_PATHS }) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      {name === "select" && <path {...common} d="m5 3 13 9-6 2-3 6z" />}
-      {name === "import" && (
-        <>
-          <path {...common} d="M4 15v4h16v-4M12 4v11m-4-4 4 4 4-4" />
-        </>
-      )}
-      {name === "rectangle" && <rect {...common} x="4" y="5" width="16" height="14" rx="1" />}
-      {name === "ellipse" && <ellipse {...common} cx="12" cy="12" rx="8" ry="7" />}
-      {name === "text" && <path {...common} d="M5 5h14M12 5v14m-4 0h8" />}
-      {name === "crop" && <path {...common} d="M7 3v14a2 2 0 0 0 2 2h12M3 7h14a2 2 0 0 1 2 2v12" />}
-      {name === "hand" && (
-        <path
-          {...common}
-          d="M7 12V7a2 2 0 0 1 4 0v4-6a2 2 0 0 1 4 0v6-4a2 2 0 0 1 4 0v7c0 5-3 7-7 7-3 0-5-2-7-5l-2-3a2 2 0 0 1 4-1z"
-        />
-      )}
-      {name === "guides" && <path {...common} d="M4 3v18M3 7h18M8 3v4m4-4v4m4-4v4M4 12h4m-4 5h4" />}
+      <path
+        d={TOOL_ICON_PATHS[name]}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -2462,6 +2527,17 @@ export function CreatorWorkspace({
         {activeTool === "hand" && <span>Drag the artboard to pan</span>}
       </div>
       <div className={`creator-editor${toolbarVisible ? " toolbar-visible" : ""}${dockOpen ? " dock-visible" : ""}`}>
+        {!dockOpen && (
+          <button
+            type="button"
+            className="dock-edge-tab"
+            aria-label="Open workspace dock"
+            title="Open workspace dock"
+            onClick={() => onDockTab(dockTab)}
+          >
+            <ToolIcon name="expand" />
+          </button>
+        )}
         <Artboard
           renderSurface={renderSurface}
           documentKey={`${customProject?.projectId ?? "none"}:${role}`}
@@ -2577,6 +2653,15 @@ export function CreatorWorkspace({
         {dockOpen && (
           <aside id="workspace-dock" className="workspace-dock" aria-label="Workspace dock">
             <div className="dock-tabs" role="tablist" aria-label="Workspace panels">
+              <button
+                type="button"
+                className="dock-close"
+                aria-label="Collapse workspace dock"
+                title="Collapse workspace dock"
+                onClick={onCloseDock}
+              >
+                <ToolIcon name="collapse" />
+              </button>
               {(["layers", "properties", "preview"] as const).map((tab) => (
                 <button
                   key={tab}
@@ -2590,9 +2675,6 @@ export function CreatorWorkspace({
                   {tab[0]!.toUpperCase() + tab.slice(1)}
                 </button>
               ))}
-              <button type="button" className="dock-close" aria-label="Close workspace dock" onClick={onCloseDock}>
-                Close
-              </button>
             </div>
             {dockTab === "layers" && (
               <section
@@ -2608,61 +2690,6 @@ export function CreatorWorkspace({
                     <span id="layer-selection-count">
                       {selection.ids.length} selected{selectionLocked ? ", locked" : ""}
                     </span>
-                    <button
-                      type="button"
-                      data-panel-close="layers"
-                      aria-label="Close Layers panel"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={onCloseDock}
-                    >
-                      Close
-                    </button>
-                  </div>
-                  <div className="layer-command-tools" role="group" aria-label="Layer commands">
-                    <button
-                      disabled={selection.ids.length < 2 || selectionLocked}
-                      title={shortcutTitle("group")}
-                      onClick={group}
-                    >
-                      Group
-                    </button>
-                    <button
-                      disabled={selectionLocked || !selectedLayers.some(({ groupId }) => Boolean(groupId))}
-                      title={shortcutTitle("ungroup")}
-                      onClick={ungroup}
-                    >
-                      Ungroup
-                    </button>
-                    <button disabled={!selection.ids.length} title={shortcutTitle("duplicate")} onClick={duplicate}>
-                      Duplicate
-                    </button>
-                    <button disabled={!selection.ids.length} title={shortcutTitle("copy")} onClick={copy}>
-                      Copy
-                    </button>
-                    <button
-                      disabled={!selection.ids.length || selectedLayers.every(layerLockedV3)}
-                      title={shortcutTitle("lock")}
-                      onClick={() => setLocks(orderedSelection(), true)}
-                    >
-                      Lock selection
-                    </button>
-                    <button
-                      disabled={!selection.ids.length || selectedLayers.every((layer) => !layerLockedV3(layer))}
-                      title={shortcutTitle("unlock")}
-                      onClick={() => setLocks(orderedSelection(), false)}
-                    >
-                      Unlock selection
-                    </button>
-                    <button
-                      disabled={
-                        !validClipboard() ||
-                        layers.length + (clipboard.current.snapshot?.layers.length ?? 0) > MAX_DOCUMENT_LAYERS_V3
-                      }
-                      title={shortcutTitle("paste")}
-                      onClick={paste}
-                    >
-                      Paste
-                    </button>
                   </div>
                   <div
                     className="creator-layer-list"
@@ -2679,6 +2706,7 @@ export function CreatorWorkspace({
                         <LayerRow
                           key={layer.id}
                           layer={layer}
+                          image={isImageLayerV3(layer) ? images[layer.asset.sha256] : undefined}
                           index={index}
                           count={layers.length}
                           protectedByLock={protectedByLock}
@@ -2765,6 +2793,74 @@ export function CreatorWorkspace({
                         Authored document active. Its layers override the assigned role asset.
                       </p>
                     )}
+                  </div>
+                  <div className="layer-command-tools" role="group" aria-label="Layer commands">
+                    <button
+                      type="button"
+                      aria-label="Group"
+                      disabled={selection.ids.length < 2 || selectionLocked}
+                      title={shortcutTitle("group")}
+                      onClick={group}
+                    >
+                      <ToolIcon name="group" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Ungroup"
+                      disabled={selectionLocked || !selectedLayers.some(({ groupId }) => Boolean(groupId))}
+                      title={shortcutTitle("ungroup")}
+                      onClick={ungroup}
+                    >
+                      <ToolIcon name="ungroup" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Duplicate selected layers"
+                      disabled={!selection.ids.length}
+                      title={shortcutTitle("duplicate")}
+                      onClick={duplicate}
+                    >
+                      <ToolIcon name="duplicate" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Copy selected layers"
+                      disabled={!selection.ids.length}
+                      title={shortcutTitle("copy")}
+                      onClick={copy}
+                    >
+                      <ToolIcon name="copy" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Lock selection"
+                      disabled={!selection.ids.length || selectedLayers.every(layerLockedV3)}
+                      title={shortcutTitle("lock")}
+                      onClick={() => setLocks(orderedSelection(), true)}
+                    >
+                      <ToolIcon name="lock" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Unlock selection"
+                      disabled={!selection.ids.length || selectedLayers.every((layer) => !layerLockedV3(layer))}
+                      title={shortcutTitle("unlock")}
+                      onClick={() => setLocks(orderedSelection(), false)}
+                    >
+                      <ToolIcon name="unlock" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Paste layers"
+                      disabled={
+                        !validClipboard() ||
+                        layers.length + (clipboard.current.snapshot?.layers.length ?? 0) > MAX_DOCUMENT_LAYERS_V3
+                      }
+                      title={shortcutTitle("paste")}
+                      onClick={paste}
+                    >
+                      <ToolIcon name="paste" />
+                    </button>
                   </div>
                 </>
               </section>

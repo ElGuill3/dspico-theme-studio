@@ -118,12 +118,13 @@ describe("renderer shell", () => {
     expect(renderer).toContain('globalThis.removeEventListener("storage", storage)');
   });
 
-  it("uses a source-local accessible original logo in chrome and launch", () => {
+  it("keeps the source-local logo in the launch card and removes branding from editor chrome", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8"),
       brand = readFileSync(path.join(rendererRoot, "brand-mark.tsx"), "utf8"),
       logo = readFileSync(path.join(rendererRoot, "assets/pico-theme-creator.svg"), "utf8");
-    expect(renderer).toContain("<BrandMark");
+    expect(renderer.match(/<BrandMark/g)).toHaveLength(1);
     expect(renderer).toContain('label="Pico Theme Creator"');
+    expect(renderer).not.toContain("<h1>Pico Theme Creator</h1>");
     expect(brand).toContain('alt={label ?? ""}');
     expect(logo).toContain("Abstract dual-screen clamshell");
     expect(logo).toContain("#53d5e4");
@@ -156,11 +157,24 @@ describe("renderer shell", () => {
     expect(css).toMatch(/\.project-drawer-content \{[\s\S]*?overflow: auto;/);
   });
 
-  it("overlays the single dock at narrow widths without enabling body overflow", () => {
-    const css = readFileSync(path.join(rendererRoot, "studio.css"), "utf8");
+  it("keeps tools left and the dock on the right, with a right-side narrow overlay", () => {
+    const css = readFileSync(path.join(rendererRoot, "studio.css"), "utf8"),
+      workspace = readFileSync(path.join(rendererRoot, "workspace/read-only-workspace.tsx"), "utf8"),
+      collapseControl = workspace.indexOf('aria-label="Collapse workspace dock"'),
+      dockTabs = workspace.indexOf('{(["layers", "properties", "preview"] as const)');
+    expect(collapseControl).toBeGreaterThan(-1);
+    expect(collapseControl).toBeLessThan(dockTabs);
+    expect(css).toMatch(
+      /\.creator-editor\.toolbar-visible\.dock-visible \{[^}]*grid-template-columns: 52px minmax\(0, 1fr\) 320px;/,
+    );
+    expect(css).toMatch(/\.workspace-dock \{[^}]*grid-column: 2;[^}]*border-left:/);
+    expect(css).toMatch(/\.creator-editor\.toolbar-visible\.dock-visible \.workspace-dock \{[^}]*grid-column: 3;/);
+    expect(css).toMatch(/\.dock-edge-tab \{[^}]*grid-column: 2;[^}]*border-left:/);
+    expect(css).toMatch(/\.creator-editor\.toolbar-visible \.dock-edge-tab \{[^}]*grid-column: 3;/);
     expect(css).toMatch(
       /@media \(max-width: 1100px\)[\s\S]*?\.creator-editor \.workspace-dock[\s\S]*?position: absolute;/,
     );
+    expect(css).toMatch(/@media \(max-width: 1100px\)[\s\S]*?\.creator-editor \.workspace-dock[^}]*right: 0;/);
     expect(css).toMatch(/body,\s*#root[\s\S]*?overflow: hidden;/);
   });
 

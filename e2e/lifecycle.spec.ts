@@ -44,7 +44,7 @@ const closeProjectDrawer = async (page: Page) => {
 };
 const showDockTab = async (page: Page, tab: "Layers" | "Properties" | "Preview") => {
   if ((await page.locator("#workspace-dock").count()) === 0)
-    await page.getByRole("button", { name: "Dock", exact: true }).click();
+    await page.getByRole("button", { name: "Open workspace dock" }).click();
   const dock = page.locator("#workspace-dock");
   await dock.getByRole("tab", { name: tab }).click();
   return dock;
@@ -153,7 +153,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await page.keyboard.press("Escape");
       await expect(help).toBeHidden();
       await expect(page).toHaveURL(/^app:\/\/studio\/index\.html/);
-      await expect(page.getByRole("heading", { name: "Pico Theme Creator" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Pico Theme Creator" })).toHaveCount(0);
       await expect(page.getByRole("heading", { name: "Build every screen in one focused canvas." })).toBeVisible();
       await expect(page.getByRole("button", { name: "New custom", exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: "Open project", exact: true })).toBeVisible();
@@ -408,7 +408,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(dock.getByRole("tabpanel")).toHaveCount(1);
       await expect(dock.getByRole("tab", { name: "Layers" })).toHaveAttribute("aria-selected", "true");
       const constrainedWidth = (await artboard.boundingBox())!.width;
-      await dock.getByRole("button", { name: "Close workspace dock" }).click();
+      await dock.getByRole("button", { name: "Collapse workspace dock" }).click();
       await expect(page.locator("#workspace-dock")).toHaveCount(0);
       await expect(workspace.locator(".workspace-canvas")).toBeFocused();
       expect((await artboard.boundingBox())!.width).toBeGreaterThan(constrainedWidth);
@@ -416,7 +416,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       dock = await showDockTab(page, "Preview");
       await bannerList.click();
       await expect(bannerList).toHaveAttribute("aria-pressed", "true");
-      await dock.getByRole("button", { name: "Close workspace dock" }).click();
+      await dock.getByRole("button", { name: "Collapse workspace dock" }).click();
       await expect(page.locator('[data-launcher-overlay="banner-list-top"]')).toHaveCount(0);
       dock = await showDockTab(page, "Preview");
       await expect(bannerList).toHaveAttribute("aria-pressed", "true");
@@ -430,7 +430,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(page.locator("#workspace-dock")).toBeVisible();
       await expect(bannerList).toHaveAttribute("aria-pressed", "true");
 
-      await page.locator("#workspace-dock").getByRole("button", { name: "Close workspace dock" }).focus();
+      await page.locator("#workspace-dock").getByRole("button", { name: "Collapse workspace dock" }).focus();
       await page.keyboard.press("Shift+Tab");
       await expect(page.locator("#workspace-dock")).toHaveCount(0);
       await expect(page.locator(".tool-rail")).toBeVisible();
@@ -769,7 +769,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         committedX = await inspectorX.inputValue(),
         operationCountBeforeDraft = (await customState(root)).operations.length;
       await inspectorX.fill("123");
-      await page.locator("#workspace-dock").getByRole("button", { name: "Close workspace dock" }).click();
+      await page.locator("#workspace-dock").getByRole("button", { name: "Collapse workspace dock" }).click();
       await expect(page.locator("#workspace-dock")).toHaveCount(0);
       await showDockTab(page, "Properties");
       await expect(workspace.getByLabel("X", { exact: true })).toHaveValue("123");
@@ -1401,7 +1401,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         ),
       );
       await page.waitForTimeout(100);
-      await expect(page.getByRole("heading", { name: "Pico Theme Creator" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Theme canvas" })).toBeVisible();
       await name.focus();
       await name.press("Escape");
       await expect(page.getByText("Custom metadata edit cancelled.")).toBeVisible();
@@ -1422,7 +1422,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         };
       });
       await recovery.getByRole("button", { name: "Reload and reopen project" }).click();
-      await expect(page.getByRole("heading", { name: "Pico Theme Creator" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Theme canvas" })).toBeVisible();
       await expect(page.getByText("Project reopened.")).toBeVisible();
     });
   } finally {
@@ -2433,7 +2433,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await workspace.getByRole("button", { name: "banner-cell-selected", exact: true }).click();
     await expect(workspace.locator(".layer-group-label")).toHaveCount(3);
     await expect(workspace.locator('.creator-layer-row[data-locked="true"]')).toHaveCount(3);
-    await expect(workspace.getByRole("button", { name: "Paste", exact: true })).toBeDisabled();
+    await expect(workspace.getByRole("button", { name: "Paste layers", exact: true })).toBeDisabled();
 
     await workspace.getByRole("button", { name: "bottom-background", exact: true }).click();
     const staleCanvas = workspace.locator('[data-workspace-surface="bottom-background"]'),

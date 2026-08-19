@@ -880,8 +880,10 @@ function Studio() {
   const preview = project ? createPreviewModel(previewProject(project, draft, mode), mode) : undefined;
   const loaded = Boolean(project || customProject);
   const visibleLayout = visibleWorkspaceLayout(workspaceLayout);
-  const selectDockTab = (dockTab: WorkspaceDockTab) =>
+  const selectDockTab = (dockTab: WorkspaceDockTab) => {
+    pendingPanelFocus.current = dockTab;
     setWorkspaceLayout((current) => ({ normal: { ...current.normal, dockOpen: true, dockTab } }));
+  };
   const closeDock = () => {
     pendingPanelFocus.current = "artboard";
     setWorkspaceLayout((current) => ({ normal: { ...current.normal, dockOpen: false } }));
@@ -897,10 +899,6 @@ function Studio() {
   return (
     <main className={`studio-shell${loaded ? " editor-open" : ""}`}>
       <header className="studio-header">
-        <BrandMark size={loaded ? 30 : 38} />
-        <div className="brand-copy">
-          <h1>Pico Theme Creator</h1>
-        </div>
         {loaded ? (
           <nav className="project-actions" aria-label="Project actions">
             <span className="current-project" title={result?.projectLocation}>
@@ -911,29 +909,31 @@ function Studio() {
               <button
                 aria-label="New Custom"
                 disabled={busy}
-                onClick={() =>
+                onClick={(event) => {
+                  event.currentTarget.closest("details")?.removeAttribute("open");
                   run(
                     "Custom project created.",
                     () =>
                       window.studio.createCustom({ projectId: "local-custom", metadata: draftRef.current.metadata }),
                     true,
                     true,
-                  )
-                }
+                  );
+                }}
               >
                 Custom theme
               </button>
               <button
                 aria-label="New Material"
                 disabled={busy}
-                onClick={() =>
+                onClick={(event) => {
+                  event.currentTarget.closest("details")?.removeAttribute("open");
                   run(
                     "Local project created.",
                     () => window.studio.create({ projectId: "local-material", metadata: draftRef.current.metadata }),
                     true,
                     true,
-                  )
-                }
+                  );
+                }}
               >
                 Material theme
               </button>
@@ -968,13 +968,6 @@ function Studio() {
             </button>
             <button type="button" onClick={() => setProjectDrawer({ open: true, tab: "export" })}>
               Export
-            </button>
-            <button
-              type="button"
-              aria-pressed={visibleLayout.dockOpen}
-              onClick={() => setWorkspaceLayout((current) => ({ normal: { ...current.normal, dockOpen: true } }))}
-            >
-              Dock
             </button>
             <button type="button" onClick={() => setHelpMode("help")}>
               Help
@@ -1240,9 +1233,16 @@ function Studio() {
             ),
             export: (
               <div className="drawer-export">
+                <header className="export-heading">
+                  <span>Export check</span>
+                  <h3>Validate before packaging</h3>
+                  <p>Review compatibility diagnostics, then create the local folder and ZIP.</p>
+                </header>
                 <div className="export-summary">
-                  <span>{result?.diagnostics?.length ?? "Not run"} diagnostics</span>
-                  <span>{visualPackage?.totalBytes?.toLocaleString() ?? 0} visual bytes</span>
+                  <span data-label="Diagnostics">{result?.diagnostics?.length ?? "Not run"} diagnostics</span>
+                  <span data-label="Compiled size">
+                    {visualPackage?.totalBytes?.toLocaleString() ?? 0} visual bytes
+                  </span>
                 </div>
                 {result?.diagnostics && result.diagnostics.length > 0 && (
                   <ul

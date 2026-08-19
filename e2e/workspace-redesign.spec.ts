@@ -47,7 +47,7 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
       .getByRole("dialog", { name: "Build a theme in seven documents" })
       .getByRole("button", { name: "Close help" })
       .click();
-    await expect(page.getByRole("heading", { name: "Pico Theme Creator" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Pico Theme Creator" })).toHaveCount(0);
     await expect(page.getByAltText("Pico Theme Creator")).toBeVisible();
     if (screenshots) {
       await mkdir(screenshots, { recursive: true });
@@ -65,7 +65,7 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
       })),
     ).toEqual({ bodyOverflow: "hidden", rootOverflow: "hidden", scroll: true });
     if ((await page.locator("#workspace-dock").count()) === 0)
-      await page.getByRole("button", { name: "Dock", exact: true }).click();
+      await page.getByRole("button", { name: "Open workspace dock" }).click();
     await page.locator("#workspace-dock").getByRole("tab", { name: "Layers" }).click();
 
     await workspace.getByRole("button", { name: "Import image" }).click();
@@ -76,6 +76,7 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
     await expect(workspace.locator(".creator-layer-row")).toHaveCount(3);
     await workspace.getByRole("button", { name: "Add text" }).click();
     await expect(workspace.locator(".creator-layer-row")).toHaveCount(4);
+    await expect(workspace.locator(".layer-thumbnail")).toHaveCount(4);
     await expect(workspace.locator('.creator-layer-row[data-selected="true"]')).toHaveCount(1);
     await workspace.getByRole("button", { name: "Hand pan tool" }).click();
     await expect(workspace.getByRole("button", { name: "Hand pan tool" })).toHaveAttribute("aria-pressed", "true");
@@ -90,12 +91,24 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
     await page.waitForFunction(() => innerWidth >= 1400);
     if (screenshots) await page.screenshot({ path: path.join(screenshots, "wide-editor-1440x900.png") });
-    const constrained = (await workspace.locator(".artboard-stage").boundingBox())!.width;
-    await dock.getByRole("button", { name: "Close workspace dock" }).click();
+    const stageBox = (await workspace.locator(".artboard-stage").boundingBox())!,
+      toolsBox = (await workspace.locator(".tool-rail").boundingBox())!,
+      dockBox = (await dock.boundingBox())!,
+      collapseBox = (await dock.getByRole("button", { name: "Collapse workspace dock" }).boundingBox())!,
+      constrained = stageBox.width;
+    expect(toolsBox.x + toolsBox.width).toBeLessThanOrEqual(stageBox.x);
+    expect(stageBox.x + stageBox.width).toBeLessThanOrEqual(dockBox.x);
+    expect(Math.abs(collapseBox.x - dockBox.x)).toBeLessThanOrEqual(1);
+    await dock.getByRole("button", { name: "Collapse workspace dock" }).click();
     await expect(dock).toHaveCount(0);
+    const dockEdge = page.getByRole("button", { name: "Open workspace dock" });
+    await expect(dockEdge).toBeVisible();
+    const editorBox = (await workspace.locator(".creator-editor").boundingBox())!,
+      dockEdgeBox = (await dockEdge.boundingBox())!;
+    expect(Math.abs(dockEdgeBox.x + dockEdgeBox.width - (editorBox.x + editorBox.width))).toBeLessThanOrEqual(1);
     expect((await workspace.locator(".artboard-stage").boundingBox())!.width).toBeGreaterThan(constrained);
     if (screenshots) await page.screenshot({ path: path.join(screenshots, "wide-dock-closed.png") });
-    await page.getByRole("button", { name: "Dock", exact: true }).click();
+    await dockEdge.click();
     await page.keyboard.press("Shift+Tab");
     await expect(page.locator("#workspace-dock")).toHaveCount(0);
     await page.keyboard.press("Shift+Tab");
@@ -159,7 +172,7 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(800, 700));
     await page.waitForFunction(() => innerWidth <= 800);
     if ((await page.locator("#workspace-dock").count()) === 0)
-      await page.getByRole("button", { name: "Dock", exact: true }).click();
+      await page.getByRole("button", { name: "Open workspace dock" }).click();
     await expect(page.locator("#workspace-dock")).toHaveCSS("position", "absolute");
     expect(
       await page.evaluate(() => document.scrollingElement!.scrollHeight === document.scrollingElement!.clientHeight),
