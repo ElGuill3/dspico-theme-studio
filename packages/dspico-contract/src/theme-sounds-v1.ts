@@ -4,8 +4,8 @@ import { THEME_SOUNDS_V1_TARGET_SHA256 } from "./profile-v1-3.js";
 export const THEME_SOUND_SAMPLE_RATE_V1 = 22_050;
 export const THEME_SOUND_MAX_PCM_BYTES_V1 = 11_024;
 export const THEME_SOUND_MAX_FILE_BYTES_V1 = 16_384;
-const roles = ["navigation", "launch"] as const;
-export type ThemeSoundRoleV1 = (typeof roles)[number];
+export const THEME_SOUND_ROLES_V1 = ["navigation", "select", "back"] as const;
+export type ThemeSoundRoleV1 = (typeof THEME_SOUND_ROLES_V1)[number];
 // prettier-ignore
 export type WavRecipeV1 = {
   trimStartMs: number;
@@ -111,7 +111,7 @@ const makeWav = (samples: readonly number[]) => {
 };
 
 export function prepareThemeSoundV1(input: ThemeSoundPrepareInputV1): PreparedThemeSoundV1 {
-  if (!roles.includes(input.role)) fail("WAV sound role is unsupported.");
+  if (!THEME_SOUND_ROLES_V1.includes(input.role)) fail("WAV sound role is unsupported.");
   const recipe = { ...defaults, ...input.recipe };
   if (
     Object.values(recipe).some((value) => !Number.isInteger(value) || value < 0) ||

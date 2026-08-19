@@ -238,6 +238,16 @@ const dependencies: StudioDependencies = {
     return asset;
   },
   openProject: openSelectedProject,
+  restorePreMigrationV3: async () => {
+    if (!customStore) throw new Error("Open a migrated Custom project before restoring its pre-migration source.");
+    const restored = customStore;
+    await restored.restorePreMigrationV3();
+    await restored.close();
+    customStore = undefined;
+    customAssets.clear();
+    customMedia.clear();
+    exportReveal.clear();
+  },
   openCustom: async () => {
     const opened = await openSelectedProject("custom");
     if (!opened) throw new ProjectDialogCancelled();

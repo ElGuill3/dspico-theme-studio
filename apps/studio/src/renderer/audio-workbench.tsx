@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
+import { THEME_SOUND_ROLES_V1 } from "../../../../packages/dspico-contract/src/theme-sounds-v1.js";
 import type {
   PreparedThemeSoundV1,
   ThemeSoundRoleV1,
   WavRecipeV1,
 } from "../../../../packages/dspico-contract/src/theme-sounds-v1.js";
 
-const roles: ThemeSoundRoleV1[] = ["navigation", "launch"];
+const roles: ThemeSoundRoleV1[] = [...THEME_SOUND_ROLES_V1];
 const defaults: WavRecipeV1 = { trimStartMs: 0, trimEndMs: 0, fadeInMs: 0, fadeOutMs: 0, gainPercent: 100 };
 const labels: Record<keyof WavRecipeV1, string> = {
   trimStartMs: "Trim start (ms)",
@@ -46,7 +47,7 @@ function SoundEditor({
   return (
     <article data-audio-role={role} data-state={sound ? "prepared" : present ? "invalid" : "omitted"}>
       <header>
-        <strong>{role === "navigation" ? "Navigation" : "Launch"}</strong>
+        <strong>{role[0]!.toUpperCase() + role.slice(1)}</strong>
         <span>{sound ? "Ready" : present ? "Needs attention" : "Optional"}</span>
       </header>
       {sound ? (

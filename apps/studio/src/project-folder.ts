@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   openProject,
   openProjectV3,
+  migrateProfileV3,
   type ProjectStateV1,
   type ProjectStateV3,
 } from "../../../packages/theme-core/src/index.js";
@@ -86,7 +87,7 @@ export const openProjectFolder = async (selected: string, options: Options = {})
         type: "custom",
         root: authority.root,
         label: path.basename(authority.root),
-        state: openProjectV3(bytes),
+        state: migrateProfileV3(bytes).state,
         authority,
       };
     if (parsed.formatVersion === 1)

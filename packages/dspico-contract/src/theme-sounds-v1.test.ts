@@ -30,7 +30,10 @@ const wav = (samples: number[][], rate = 44_100, format = 1) => {
 };
 // prettier-ignore
 const provenance = { originalName: "sound.wav", source: "https://example.test/sound.wav", author: "Ada", credit: "Ada", license: "CC-BY-4.0", terms: "Attribution required", notice: "Copyright Ada", intendedUse: "Theme sound", rightsToExport: true } as const;
-const input = (sourceBytes: Uint8Array, role: "navigation" | "launch" = "navigation"): ThemeSoundPrepareInputV1 => ({
+const input = (
+  sourceBytes: Uint8Array,
+  role: "navigation" | "select" | "back" = "navigation",
+): ThemeSoundPrepareInputV1 => ({
   role,
   sourceBytes,
   recipe: { trimStartMs: 0, trimEndMs: 0, fadeInMs: 1, fadeOutMs: 1, gainPercent: 100 },
@@ -70,10 +73,13 @@ describe("theme UI sound contract", () => {
     expect(() => prepareThemeSoundV1({ ...input(wav([[0]])), recipe: { trimStartMs: -1 } })).toThrow(/trim/);
     expect(() => prepareThemeSoundV1(input(new Uint8Array([82, 73, 70, 70])))).toThrow(/WAVE|RIFF/);
   });
-  it("allows either named sound to be omitted and reopens the other", () => {
+  it("allows each canonical sound to be omitted and rejects Launch", () => {
     expect(validateThemeSoundsV1({})).toBe(true);
-    const launch = prepareThemeSoundV1(input(wav([[0], [1000]]), "launch"));
-    expect(validateThemeSoundsV1({ launch })).toBe(true);
-    expect(launch.prepared.path).toBe("sounds/launch.wav");
+    for (const role of ["navigation", "select", "back"] as const) {
+      const sound = prepareThemeSoundV1(input(wav([[0], [1000]]), role));
+      expect(validateThemeSoundsV1({ [role]: sound })).toBe(true);
+      expect(sound.prepared.path).toBe(`sounds/${role}.wav`);
+    }
+    expect(() => prepareThemeSoundV1(input(wav([[0], [1000]]), "launch" as never))).toThrow(/unsupported/);
   });
 });

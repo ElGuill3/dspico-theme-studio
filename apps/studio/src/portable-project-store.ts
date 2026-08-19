@@ -17,10 +17,11 @@ import {
   type MediaTypeV3,
   type ProjectStateV3,
 } from "../../../packages/theme-core/src/index.js";
+import { migrateProfileV3, type ProfileMigrationV3 } from "../../../packages/theme-core/src/migration-v3.js";
 import { ProjectRootAuthority } from "./project-root-authority.js";
 export type PortableAsset = { sha256: string; bytes: Uint8Array };
 // prettier-ignore
-export type BundleCheckpoint = "staging-synced" | "journal-synced" | "asset-placed" | "assets-placed" | "project-placed" | "root-synced" | "committed" | "parity-staged" | "parity-committed" | "v3-stage-synced" | "v3-journal-synced" | "v3-staged" | "v3-media-placed" | "v3-project-placed" | "v3-root-synced" | "v3-committed" | "v3-stage-removed" | "v3-journal-removed" | "v3-recovery-validated" | "v3-recovery-planned" | "v3-recovery-stage-removed" | "v3-recovery-pruned" | "v3-recovery-complete";
+export type BundleCheckpoint = "staging-synced" | "journal-synced" | "asset-placed" | "assets-placed" | "project-placed" | "root-synced" | "committed" | "parity-staged" | "parity-committed" | "v3-stage-synced" | "v3-journal-synced" | "v3-staged" | "v3-media-placed" | "v3-project-placed" | "v3-root-synced" | "v3-committed" | "v3-stage-removed" | "v3-journal-removed" | "v3-recovery-validated" | "v3-recovery-planned" | "v3-recovery-stage-removed" | "v3-recovery-pruned" | "v3-recovery-complete" | "v3-migration-stage-recovered";
 export type BundleDiagnostic = { code: string; path: string; blocking: boolean; message: string };
 // prettier-ignore
 export type BundleOpen = { state: CommittedStateV2; diagnostics: BundleDiagnostic[]; orphans: string[]; canEdit: boolean };
@@ -112,7 +113,21 @@ export class PortableProjectStore {
     await this.authority.assertCurrent();
     const diagnostics: BundleDiagnostic[] = [], orphans: string[] = [];
     await this.recoverV3(diagnostics, orphans);
-    const state = openProjectV3((await this.readProjectBytes()).toString("utf8"));
+    const migration = migrateProfileV3((await this.readProjectBytes()).toString("utf8"));
+    if (migration.migrated) {
+      const stage = await this.recoverUnjournaledMigrationStage(migration);
+      if (stage) {
+        const index = orphans.indexOf(stage);
+        if (index >= 0) orphans.splice(index, 1);
+        for (let index = diagnostics.length - 1; index >= 0; index -= 1)
+          if (diagnostics[index]!.code === "v3-recovery-orphan" && diagnostics[index]!.path === stage)
+            diagnostics.splice(index, 1);
+      }
+      await this.validateMigrationMedia(migration.state);
+      await this.writeMigrationEnvelope(migration);
+      await this.saveV3(migration.state);
+    }
+    const state = migration.state;
     const media = new Map<string, Uint8Array>(), quarantine = [...state.project.quarantine];
     const pendingJournal = await this.resolve(".studio/v3-journal.json.next");
     if (await present(pendingJournal)) {
@@ -156,7 +171,10 @@ export class PortableProjectStore {
     const projectSha256 = digest(projectBytes), paths = refs.map(({ path: relative, sha256, byteLength, mediaType }) => ({ path: relative, sha256, byteLength, mediaType })).sort((left, right) => left.path.localeCompare(right.path)), transaction = randomBytes(32).toString("hex"), stageRelative = `.studio/staging-v3/${transaction}`, stage = await this.resolve(stageRelative, true), journalPath = await this.resolve(".studio/v3-journal.json", true), projectPath = await this.resolve("project.json", true), ownedPaths = [stageRelative, `${stageRelative}/.transaction.json`, `${stageRelative}/project.json`, ...paths.map(({ path: relative }) => `${stageRelative}/${relative}`)].sort();
     if (await present(journalPath)) throw new BundleCommitError("A prior V3 transaction requires recovery before saving.");
     if (await present(stage)) throw new BundleCommitError("An unresolved V3 staging folder requires recovery before saving.");
-    const previousProjectSha256 = await present(projectPath) ? digest(await this.readProjectBytes()) : null;
+    const previousBytes = await present(projectPath) ? await this.readProjectBytes() : undefined;
+    const previousProjectSha256 = previousBytes ? digest(previousBytes) : null;
+    let owned: string[] = [];
+    try { if (previousBytes) owned = collectMediaReferencesV3(migrateProfileV3(previousBytes.toString("utf8")).state).map(({ path }) => path); } catch {}
     await mkdir(stage, { recursive: true });
     await durable(path.join(stage, ".transaction.json"), json({ version: 1, identity: V3_STAGE_IDENTITY, rootSha256: this.rootSha256, transaction, projectSha256 } satisfies V3StageIdentity));
     for (const ref of refs) {
@@ -190,7 +208,7 @@ export class PortableProjectStore {
     await this.sync(path.dirname(stage));
     await this.checkpoint("v3-stage-removed");
     const committed = await this.validateCommittedProject(journal.projectSha256);
-    await this.pruneMedia(collectMediaReferencesV3(committed).map(({ path: relative }) => relative));
+    await this.pruneMedia(collectMediaReferencesV3(committed).map(({ path: relative }) => relative), owned);
     await this.validateCommittedProject(journal.projectSha256);
     await unlink(journalPath);
     await this.sync(path.dirname(journalPath));
@@ -201,12 +219,48 @@ export class PortableProjectStore {
   static async openAuthority(authority: ProjectRootAuthority, options: Options = {}): Promise<PortableProjectStore> { await authority.assertCurrent(); const identity = authority.identity; return new PortableProjectStore(authority, digest(`${identity.path}\0${identity.device}\0${identity.inode}\0${identity.mode}`), options); }
   private async resolve(candidate: string, createParents = false): Promise<string> { await this.authority.assertCurrent(); const safe = parts(candidate); let parent = this.root; for (let index = 0; index < safe.length - 1; index += 1) { const next = path.join(parent, safe[index]!); const stat = await statOrNone(next); if (!stat) { if (!createParents) return path.join(parent, ...safe.slice(index)); await mkdir(next); await this.sync(parent); } else if (stat.isSymbolicLink() || !stat.isDirectory()) throw new BundlePathError(candidate); const canonical = await realpath(next); if (!inside(this.authority.root, canonical)) throw new BundlePathError(candidate); parent = next; } const target = path.join(parent, safe.at(-1)!); if ((await statOrNone(target))?.isSymbolicLink()) throw new BundlePathError(candidate); return target; }
   private async sync(directory: string): Promise<void> { const handle = await open(directory, "r"); try { await handle.sync(); } finally { await handle.close(); } }
-  private async pruneMedia(retained: readonly string[]): Promise<void> { const relativeDirectory = "assets/sha256", directory = await this.resolve(relativeDirectory), keep = new Set(retained); let entries; try { entries = await readdir(directory, { withFileTypes: true }); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; } for (const entry of entries) { const relative = `${relativeDirectory}/${entry.name}`; if (entry.isFile() && /^[a-f0-9]{64}\.(png|wav|bcstm|json)$/.test(entry.name) && !keep.has(relative)) await unlink(await this.resolve(relative)); } await this.sync(directory); }
+  private async pruneMedia(retained: readonly string[], owned: readonly string[] = []): Promise<void> { const relativeDirectory = "assets/sha256", directory = await this.resolve(relativeDirectory), keep = new Set(retained), known = new Set(owned); let entries; try { entries = await readdir(directory, { withFileTypes: true }); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; } for (const entry of entries) { const relative = `${relativeDirectory}/${entry.name}`; if (known.has(relative) && entry.isFile() && /^[a-f0-9]{64}\.(png|wav|bcstm|json)$/.test(entry.name) && !keep.has(relative)) await unlink(await this.resolve(relative)); } await this.sync(directory); }
   private async writeV3Journal(value: V3Journal): Promise<void> {
     const target = await this.resolve(".studio/v3-journal.json", true), temporary = await this.resolve(".studio/v3-journal.json.next", true);
     await durable(temporary, json(value));
     await rename(temporary, target);
     await this.sync(path.dirname(target));
+  }
+  private async validateMigrationMedia(state: ProjectStateV3): Promise<void> {
+    for (const ref of collectMediaReferencesV3(state)) await this.validateMediaAt(ref.path, ref);
+  }
+  private async writeMigrationEnvelope(migration: ProfileMigrationV3): Promise<void> {
+    const target = await this.resolve(".studio/pre-migration-v3.json", true), temporary = await this.resolve(".studio/pre-migration-v3.json.next", true);
+    const bytes = json({ version: 1, rootSha256: this.rootSha256, sourceSha256: migration.sourceSha256, candidateSha256: migration.candidateSha256, sourceBytes: migration.sourceBytes });
+    if (await present(target)) { if (!same(await readFile(target), bytes)) throw new BundleCommitError("Retained pre-migration copy does not match this project."); return; }
+    try { await durable(temporary, bytes); await this.sync(path.dirname(temporary)); await rename(temporary, target); await this.sync(path.dirname(target)); if (!same(await readFile(target), bytes)) throw new BundleCommitError("Pre-migration copy hash mismatch."); } catch (error) { await rm(temporary, { force: true }); throw error; }
+  }
+  async restorePreMigrationV3(): Promise<void> {
+    const envelopePath = await this.resolve(".studio/pre-migration-v3.json"), target = await this.resolve("project.json", true), temporary = await this.resolve(".studio/pre-migration-v3.restore.next", true);
+    let envelope: { rootSha256?: unknown; sourceSha256?: unknown; candidateSha256?: unknown; sourceBytes?: unknown; version?: unknown };
+    try { envelope = JSON.parse(await readFile(envelopePath, "utf8")); } catch { throw new BundleCommitError("Pre-migration copy is invalid."); }
+    if (Object.keys(envelope).length !== 5 || envelope.version !== 1 || envelope.rootSha256 !== this.rootSha256 || typeof envelope.sourceBytes !== "string") throw new BundleCommitError("Pre-migration copy is invalid.");
+    const migration = migrateProfileV3(envelope.sourceBytes);
+    if (!migration.migrated || migration.sourceSha256 !== envelope.sourceSha256 || migration.candidateSha256 !== envelope.candidateSha256 || digest(await this.readProjectBytes()) !== envelope.candidateSha256) throw new BundleCommitError("Pre-migration copy no longer matches the committed project.");
+    await this.validateMigrationMedia(migration.state);
+    const source = Buffer.from(envelope.sourceBytes);
+    if (await present(temporary) && !same(await readFile(temporary), source)) throw new BundleCommitError("Unknown restore record requires manual inspection.");
+    try { if (!(await present(temporary))) { await durable(temporary, source); await this.sync(path.dirname(temporary)); } await rename(temporary, target); await this.sync(this.root); if (!same(await this.readProjectBytes(), source)) throw new BundleCommitError("Pre-migration restore hash mismatch."); } catch (error) { await rm(temporary, { force: true }); throw error; }
+  }
+  private async recoverUnjournaledMigrationStage(migration: ProfileMigrationV3): Promise<string | undefined> {
+    if (await present(await this.resolve(".studio/v3-journal.json"))) return undefined;
+    const staging = await this.inspectV3Staging();
+    if (staging.entries.length !== 1) return undefined;
+    const transaction = staging.entries[0]!, stage = `.studio/staging-v3/${transaction}`;
+    let marker: V3StageIdentity, bytes: Buffer;
+    try { marker = JSON.parse(await readFile(await this.resolve(`${stage}/.transaction.json`), "utf8")); bytes = await readFile(await this.resolve(`${stage}/project.json`)); } catch { return undefined; }
+    if (!this.validStageIdentity(marker, { version: 4, identity: V3_JOURNAL_IDENTITY, rootSha256: this.rootSha256, transaction, stage, phase: "commit", previousProjectSha256: null, projectSha256: migration.candidateSha256, paths: [], ownedPaths: [] }) || digest(bytes) !== migration.candidateSha256) return undefined;
+    const state = openProjectV3(bytes.toString("utf8"));
+    try { for (const ref of collectMediaReferencesV3(state)) await this.validateMediaAt(`${stage}/${ref.path}`, ref); } catch { return undefined; }
+    await rm(await this.resolve(stage), { recursive: true, force: true });
+    await this.sync(path.dirname(await this.resolve(stage)));
+    await this.checkpoint("v3-migration-stage-recovered");
+    return stage;
   }
   private validStageIdentity(value: unknown, journal: V3Journal): value is V3StageIdentity {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -382,7 +436,7 @@ export class PortableProjectStore {
       this.recoveryFailure(diagnostics, "v3-recovery-ambiguous", "Interrupted-save staging changed before media cleanup; cleanup was stopped.");
       return;
     }
-    await this.pruneMedia(collectMediaReferencesV3(committed).map(({ path: relative }) => relative));
+    await this.pruneMedia(collectMediaReferencesV3(committed).map(({ path: relative }) => relative), journal.paths.map(({ path }) => path));
     await this.checkpoint("v3-recovery-pruned");
     try { await this.validateCommittedProject(journal.phase === "rollback" ? journal.previousProjectSha256! : journal.projectSha256); } catch {
       this.recoveryFailure(diagnostics, "v3-recovery-validation", "Committed project media changed before journal cleanup; cleanup was stopped.");
