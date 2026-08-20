@@ -65,22 +65,61 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
     if ((await page.locator("#workspace-dock").count()) === 0)
       await page.getByRole("button", { name: "Open workspace dock" }).click();
     const dock = page.locator("#workspace-dock");
-    const expectCustomPreviewUnavailable = async () => {
-      await expect(dock.getByRole("heading", { name: "Preview unavailable" })).toBeVisible();
-      await expect(
-        dock.getByText("Complete all seven visual roles to enable launcher preview.", { exact: true }),
-      ).toBeVisible();
+    const expectCustomPreviewProgress = async (started: number, placeholders: readonly string[]) => {
+      const shell = dock.locator('.device-shell[data-preview-state="partial"]');
+      await expect(dock.getByRole("heading", { name: "Preview unavailable" })).toHaveCount(0);
+      await expect(dock.getByText("Preview in progress", { exact: true })).toBeVisible();
+      await expect(dock.getByText(`${started} of 7 roles started`, { exact: true })).toBeVisible();
+      await expect(dock.getByText(`Still placeholders: ${placeholders.join(", ")}`, { exact: true })).toBeVisible();
       await expect(dock.getByText("Draft preview is live", { exact: true })).toHaveCount(0);
-      await expect(dock.locator("[data-launcher-screen]")).toHaveCount(0);
-      await expect(dock.locator("[data-launcher-chrome], [data-preview-chrome]")).toHaveCount(0);
+      await expect(dock.locator("[data-fidelity]")).toHaveCount(0);
+      await expect(dock.locator("[data-launcher-screen]")).toHaveCount(2);
+      await expect(dock.locator("[data-launcher-chrome]")).toHaveCount(2);
+      await expect(dock.locator("[data-preview-chrome]")).toHaveCount(1);
+      await expect(shell).toHaveAttribute("data-placeholder-roles", placeholders.join(" "));
     };
+    const roles = [
+      "top-background",
+      "bottom-background",
+      "grid-cell",
+      "grid-cell-selected",
+      "banner-cell",
+      "banner-cell-selected",
+      "scrim",
+    ];
     await dock.getByRole("tab", { name: "Preview" }).click();
-    await expectCustomPreviewUnavailable();
-    if (screenshots) await page.screenshot({ path: path.join(screenshots, "custom-preview-unavailable.png") });
+    await expectCustomPreviewProgress(0, roles);
+    const emptyEvidence = await dock.locator("[data-launcher-screen]").evaluateAll((canvases) =>
+      canvases.map((canvas) => ({
+        screen: canvas.getAttribute("data-launcher-screen"),
+        evidence: canvas.getAttribute("data-canvas-evidence"),
+      })),
+    );
+    expect(emptyEvidence.every(({ evidence }) => Boolean(evidence))).toBe(true);
+    if (screenshots) await page.screenshot({ path: path.join(screenshots, "custom-preview-progress.png") });
     await dock.getByRole("tab", { name: "Layers" }).click();
 
     await workspace.getByRole("button", { name: "Import image" }).click();
     await expect(workspace.locator(".creator-layer-row")).toHaveCount(1);
+    await dock.getByRole("tab", { name: "Preview" }).click();
+    await expectCustomPreviewProgress(1, roles.slice(1));
+    await expect(dock.locator('.device-shell[data-preview-state="partial"]')).toHaveAttribute(
+      "data-started-roles",
+      "top-background",
+    );
+    const oneRoleEvidence = await dock.locator("[data-launcher-screen]").evaluateAll((canvases) =>
+      canvases.map((canvas) => ({
+        screen: canvas.getAttribute("data-launcher-screen"),
+        evidence: canvas.getAttribute("data-canvas-evidence"),
+      })),
+    );
+    expect(oneRoleEvidence.find(({ screen }) => screen === "top")?.evidence).not.toBe(
+      emptyEvidence.find(({ screen }) => screen === "top")?.evidence,
+    );
+    expect(oneRoleEvidence.find(({ screen }) => screen === "bottom")?.evidence).toBe(
+      emptyEvidence.find(({ screen }) => screen === "bottom")?.evidence,
+    );
+    await dock.getByRole("tab", { name: "Layers" }).click();
     await workspace.getByRole("button", { name: "Add rectangle" }).click();
     await expect(workspace.locator(".creator-layer-row")).toHaveCount(2);
     await workspace.getByRole("button", { name: "Add ellipse" }).click();
@@ -97,8 +136,10 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
     await dock.getByRole("tab", { name: "Properties" }).click();
     await expect(dock.getByRole("tabpanel")).toHaveCount(1);
     await dock.getByRole("tab", { name: "Preview" }).click();
-    await expectCustomPreviewUnavailable();
-    await dock.getByRole("button", { name: "Banner List" }).click();
+    for (const view of ["Horizontal Grid", "Vertical Grid", "Coverflow", "Banner List"]) {
+      await dock.getByRole("button", { name: view }).click();
+      await expectCustomPreviewProgress(1, roles.slice(1));
+    }
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
     await page.waitForFunction(() => innerWidth >= 1400);
     if (screenshots) await page.screenshot({ path: path.join(screenshots, "wide-editor-1440x900.png") });
@@ -161,7 +202,12 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
     await drawer.getByRole("button", { name: "Close Project drawer" }).click();
     await expect(dock.locator("[data-launcher-screen]")).toHaveCount(2);
     await expect(dock.getByRole("heading", { name: "Preview unavailable" })).toHaveCount(0);
+    await expect(dock.getByText("Preview in progress", { exact: true })).toHaveCount(0);
+    await expect(dock.locator('.device-shell[data-preview-state="ready"]')).not.toHaveAttribute(
+      "data-placeholder-roles",
+    );
     await expect(dock.getByText("Draft preview is live", { exact: true })).toBeVisible();
+    await expect(dock.locator("[data-fidelity]")).not.toHaveCount(0);
     await certifyCurrentVisual(page, projectRoot);
     await page.getByRole("button", { name: "Project", exact: true }).click();
     const certifiedDrawer = page.getByRole("dialog", { name: "Project" });
