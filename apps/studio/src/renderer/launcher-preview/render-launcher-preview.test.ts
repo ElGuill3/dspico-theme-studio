@@ -31,22 +31,28 @@ const files = encodeV13VisualFiles({
 });
 const render = (mode: string, selectedIndex = fixture.selectedIndex, names = fixture.names) =>
   renderLauncherPreview({ theme: { kind: "custom", files }, mode, fixture: { ...fixture, selectedIndex, names } });
+const renderMaterial = (mode: string, primaryColor = { r: 138, g: 217, b: 255 }, darkTheme = false) =>
+  renderLauncherPreview({
+    theme: { kind: "material", primaryColor, darkTheme } as never,
+    mode,
+    fixture: { ...fixture, names: ["One", "Two", "Three", "Four", "Five"], selectedIndex: 2 },
+  });
 const goldens = {
   "horizontal-grid": {
-    top: "52a96b5370ed8ff2a62e77ddf474fb11137f3e449187424c0f73ad51085e3bb8",
-    bottom: "ef6e0d01a8d1703f92ccdb0fe3d4a8dae27609d6ba7c8a8b398f08f624a12004",
+    top: "291b23e16492a87c4753078639b4826b9c3dc6c24a2422062ce0b096f0e710b3",
+    bottom: "291c3b01acb05e902c4f1ba39e92291d55297ba145f97910051d180553c2f46a",
   },
   "vertical-grid": {
-    top: "52a96b5370ed8ff2a62e77ddf474fb11137f3e449187424c0f73ad51085e3bb8",
-    bottom: "5a6b772aefafd0ba26b95fbe2a0161afea84aa3abcc58e4cb499691bcc5050e0",
+    top: "291b23e16492a87c4753078639b4826b9c3dc6c24a2422062ce0b096f0e710b3",
+    bottom: "17abb82d0e8f9f811ca4d8c8955166ee239d665f376a6fa6a577e7b78636f2fc",
   },
   "banner-list": {
-    top: "52a96b5370ed8ff2a62e77ddf474fb11137f3e449187424c0f73ad51085e3bb8",
-    bottom: "01f4e828775b30962747b05aad672fa919bb9ac805cab272c962e060464a40c3",
+    top: "291b23e16492a87c4753078639b4826b9c3dc6c24a2422062ce0b096f0e710b3",
+    bottom: "cb13e20381dbe0acdfafa26322f495a091a2f87bbaa07b7e72f5493260000dca",
   },
   coverflow: {
-    top: "52a96b5370ed8ff2a62e77ddf474fb11137f3e449187424c0f73ad51085e3bb8",
-    bottom: "e97d6ec2986f3ab2a22527ddfd83d9f152751205740aa92cf900b31ce81f03ab",
+    top: "427c5fa2bd93e27391c15e78375b810cd76443b7478e1fb3aeff8e4bbd1c4522",
+    bottom: "748a08be71583d4907731318209a082cda67a63a7e90f5ae3f70dfbd643e1eff",
   },
 } as const;
 
@@ -70,8 +76,50 @@ describe("Custom launcher preview compositor", () => {
 
   it("centers Coverflow focus with two dimmed geometric neighbors on each side when available", () => {
     const frame = render("coverflow", 2, ["One", "Two", "Three", "Four", "Five"]);
-    expect(frame.metadata.coverflow).toEqual({ centeredIndex: 2, dimmedLeft: 2, dimmedRight: 2 });
+    expect(frame.metadata.coverflow).toMatchObject({ centeredIndex: 2, dimmedLeft: 2, dimmedRight: 2 });
   });
+
+  it("renders fixture-driven status, content, and pinned Coverflow transforms", () => {
+    const base = render("coverflow", 2, ["One", "Two", "Three", "Four", "Five"]);
+    const changed = renderLauncherPreview({
+      theme: { kind: "custom", files },
+      mode: "coverflow",
+      fixture: {
+        ...fixture,
+        names: ["Uno", "Dos", "Tres", "Cuatro", "Cinco"],
+        selectedIndex: 2,
+        status: { nickname: "Lab", batteryPercent: 73 },
+      },
+    });
+    expect(changed.top).not.toEqual(base.top);
+    expect(changed.bottom).not.toEqual(base.bottom);
+    expect(base.metadata.coverflow?.transforms).toEqual([
+      { offset: -2, x: 92, width: 106, depth: -80, angle: -65, mask: 112 },
+      { offset: -1, x: 98, width: 106, depth: -50, angle: -55, mask: 112 },
+      { offset: 0, x: 128, width: 106, depth: 0, angle: 0, mask: 255 },
+      { offset: 1, x: 158, width: 106, depth: -50, angle: 55, mask: 112 },
+      { offset: 2, x: 164, width: 106, depth: -80, angle: 65, mask: 112 },
+    ]);
+  });
+
+  it.each(["horizontal-grid", "vertical-grid", "banner-list", "coverflow"])(
+    "stages mode-aware Material buffers that react to both authority fields for %s",
+    (mode) => {
+      const base = renderMaterial(mode);
+      expect(renderMaterial(mode)).toEqual(base);
+      const recolored = renderMaterial(mode, { r: 20, g: 80, b: 160 });
+      const dark = renderMaterial(mode, { r: 138, g: 217, b: 255 }, true);
+      expect(recolored.top).not.toEqual(base.top);
+      expect(recolored.bottom).not.toEqual(base.bottom);
+      expect(dark.top).not.toEqual(base.top);
+      expect(dark.bottom).not.toEqual(base.bottom);
+      expect(base.metadata.fidelity).toEqual({
+        geometry: "launcher-vector-backed",
+        materialFields: "launcher-vector-backed",
+        raster: "Chromium approximation",
+      });
+    },
+  );
 
   it("refuses malformed custom bytes and unsupported layouts without returning a frame", () => {
     expect(() =>

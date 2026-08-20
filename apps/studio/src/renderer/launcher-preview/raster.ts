@@ -2,6 +2,21 @@ import type { RgbaImageV1 } from "../../../../../packages/dspico-contract/src/co
 
 export const stage = (image: RgbaImageV1): Uint8Array => new Uint8Array(image.pixels);
 
+export function paint(
+  target: Uint8Array,
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+  rgb: readonly number[],
+): void {
+  for (let y = Math.max(0, top); y < Math.min(target.length / 1024, top + height); y += 1)
+    for (let x = Math.max(0, left); x < Math.min(256, left + width); x += 1) {
+      const offset = (y * 256 + x) * 4;
+      target.set([rgb[0]!, rgb[1]!, rgb[2]!, 255], offset);
+    }
+}
+
 export function fade(pixels: Uint8Array, opacity: number): void {
   for (let offset = 0; offset < pixels.length; offset += 4)
     for (let channel = 0; channel < 3; channel += 1)

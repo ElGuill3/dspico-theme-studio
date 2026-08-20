@@ -5,7 +5,7 @@ export type LauncherFixtureV1 = {
   palette: Uint8Array;
   names: readonly string[];
   selectedIndex: number;
-  status: { nickname: "Studio"; batteryPercent: 100 };
+  status: { nickname: string; batteryPercent: number };
   source: typeof LAUNCHER_PREVIEW_AUTHORITY_V1.fixture.source;
 };
 
@@ -19,3 +19,12 @@ export function importLauncherPaletteFixtureV1(sourceBytes: Uint8Array): Launche
     source: LAUNCHER_PREVIEW_AUTHORITY_V1.fixture.source,
   };
 }
+
+export const neutralLauncherFixtureV1 = (): LauncherFixtureV1 => ({
+  version: 1,
+  palette: new Uint8Array(),
+  names: ["Neutral One", "Neutral Two", "Neutral Three", "Neutral Four", "Neutral Five"],
+  selectedIndex: 2,
+  status: { nickname: "Studio", batteryPercent: 100 },
+  source: LAUNCHER_PREVIEW_AUTHORITY_V1.fixture.source,
+});
