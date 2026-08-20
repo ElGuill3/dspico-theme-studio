@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { type CustomVisualRoleV1 } from "../../../../packages/dspico-contract/src/index.js";
+import { CUSTOM_VISUAL_ROLES_V1, type CustomVisualRoleV1 } from "../../../../packages/dspico-contract/src/index.js";
 import type { MaterialProjectV1, VisualDocumentOperationV3 } from "../../../../packages/theme-core/src/index.js";
 import { metadataErrorV3, type MetadataFieldV3 } from "../../../../packages/theme-core/src/limits-v3.js";
 import { createPreviewModel, type PreviewModel } from "../../../../packages/theme-core/src/preview.js";
@@ -50,6 +50,13 @@ const validHex = (value: unknown): value is string => typeof value === "string" 
 type ColorKey = (typeof colorKeys)[number];
 type Screen = (typeof screens)[number];
 type LauncherView = "horizontal-grid" | "vertical-grid" | "banner-list" | "coverflow";
+type CustomLauncherPreviewState =
+  | { kind: "not-custom" }
+  | { kind: "incomplete" }
+  | { kind: "invalid" }
+  | { kind: "ready"; visualPackage: CustomVisualPackageV1 };
+type LauncherPreviewState =
+  { kind: "incomplete-custom" } | { kind: "invalid" } | { kind: "ready"; frame: LauncherPreviewFrameV1 };
 const launcherViews: readonly { id: LauncherView; label: string }[] = [
   { id: "horizontal-grid", label: "Horizontal Grid" },
   { id: "vertical-grid", label: "Vertical Grid" },
@@ -128,25 +135,13 @@ function previewProject(project: MaterialProjectV1, draft: Draft, mode: string):
   };
 }
 
-function PhysicalPreview({
-  frame,
-  mode,
-  screen,
-}: {
-  frame?: LauncherPreviewFrameV1;
-  mode: LauncherView;
-  screen: Screen;
-}) {
+function PhysicalPreview({ frame, screen }: { frame: LauncherPreviewFrameV1; screen: Screen }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const bytes = frame?.[screen];
+  const bytes = frame[screen];
   useEffect(() => {
     const context = canvas.current?.getContext("2d");
     if (!context) return;
-    if (bytes) context.putImageData(new ImageData(new Uint8ClampedArray(bytes), 256, 192), 0, 0);
-    else {
-      context.fillStyle = colorDefaults.background;
-      context.fillRect(0, 0, 256, 192);
-    }
+    context.putImageData(new ImageData(new Uint8ClampedArray(bytes), 256, 192), 0, 0);
   }, [bytes]);
   return (
     <section className={`physical-preview ${screen}-preview`} aria-label={`${screen} screen preview`}>
@@ -154,7 +149,7 @@ function PhysicalPreview({
         <strong>{screen} display</strong>
         <span>256×192</span>
       </div>
-      <div className={`ds-screen ${screen}`} data-mode={frame?.mode ?? mode} data-screen={screen}>
+      <div className={`ds-screen ${screen}`} data-mode={frame.mode} data-screen={screen}>
         <canvas
           ref={canvas}
           className="device-render-canvas"
@@ -175,36 +170,46 @@ function PhysicalPreview({
 function DevicePreview({
   launcherView,
   onLauncherView,
+  customPreview,
   preview,
-  visualPackage,
   busy,
 }: {
   launcherView: LauncherView;
   onLauncherView(view: LauncherView): void;
+  customPreview: CustomLauncherPreviewState;
   preview?: PreviewModel;
-  visualPackage?: CustomVisualPackageV1;
   busy: boolean;
 }) {
-  const frame = useMemo(() => {
+  const launcherPreview = useMemo<LauncherPreviewState>(() => {
+    if (customPreview.kind === "incomplete") return { kind: "incomplete-custom" };
+    if (customPreview.kind === "invalid") return { kind: "invalid" };
     try {
       const tokens = preview?.scenes[0]?.tokens;
       const color = tokens?.primaryColor as { r?: unknown; g?: unknown; b?: unknown } | undefined;
-      const theme = visualPackage
-        ? { kind: "custom" as const, files: visualPackage.files }
-        : color && [color.r, color.g, color.b].every(Number.isInteger) && typeof tokens?.darkTheme === "boolean"
-          ? {
-              kind: "material" as const,
-              primaryColor: color as { r: number; g: number; b: number },
-              darkTheme: tokens.darkTheme,
-            }
-          : undefined;
+      const theme =
+        customPreview.kind === "ready"
+          ? { kind: "custom" as const, files: customPreview.visualPackage.files }
+          : color && [color.r, color.g, color.b].every(Number.isInteger) && typeof tokens?.darkTheme === "boolean"
+            ? {
+                kind: "material" as const,
+                primaryColor: color as { r: number; g: number; b: number },
+                darkTheme: tokens.darkTheme,
+              }
+            : undefined;
       return theme
-        ? renderLauncherPreview({ theme, mode: launcherView, fixture: neutralLauncherFixtureV1() })
-        : undefined;
+        ? {
+            kind: "ready",
+            frame: renderLauncherPreview({ theme, mode: launcherView, fixture: neutralLauncherFixtureV1() }),
+          }
+        : { kind: "invalid" };
     } catch {
-      return undefined;
+      return { kind: "invalid" };
     }
-  }, [launcherView, preview, visualPackage]);
+  }, [customPreview, launcherView, preview]);
+  const unavailableGuidance =
+    launcherPreview.kind === "incomplete-custom"
+      ? "Complete all seven visual roles to enable launcher preview."
+      : "Launcher preview could not be rendered. Run project diagnostics and review the reported errors.";
   return (
     <>
       <div className="preview-toolbar">
@@ -228,32 +233,45 @@ function DevicePreview({
           </div>
         </div>
       </div>
-      <div className="device-stage">
-        <div className="device-shell" aria-label="DSpico dual-screen device preview">
-          <span className="device-chrome" data-preview-chrome="device-frame" aria-hidden="true" />
-          <PhysicalPreview frame={frame} mode={launcherView} screen="top" />
-          <PhysicalPreview frame={frame} mode={launcherView} screen="bottom" />
-        </div>
-      </div>
-      <div className="preview-caption">
-        <span className="state-dot ready" aria-hidden="true" />
-        <p>
-          <strong>Draft preview is live</strong>
-        </p>
-        <div className="fidelity-tags">
-          {frame ? (
-            <>
-              <span data-fidelity="geometry">Geometry: {frame.metadata.fidelity.geometry}</span>
-              {frame.metadata.fidelity.materialFields && (
-                <span data-fidelity="material-fields">Material fields: {frame.metadata.fidelity.materialFields}</span>
+      {launcherPreview.kind === "ready" ? (
+        <>
+          <div className="device-stage">
+            <div className="device-shell" aria-label="DSpico dual-screen device preview">
+              <span className="device-chrome" data-preview-chrome="device-frame" aria-hidden="true" />
+              <PhysicalPreview frame={launcherPreview.frame} screen="top" />
+              <PhysicalPreview frame={launcherPreview.frame} screen="bottom" />
+            </div>
+          </div>
+          <div className="preview-caption">
+            <span className="state-dot ready" aria-hidden="true" />
+            <p>
+              <strong>Draft preview is live</strong>
+            </p>
+            <div className="fidelity-tags">
+              <span data-fidelity="geometry">Geometry: {launcherPreview.frame.metadata.fidelity.geometry}</span>
+              {launcherPreview.frame.metadata.fidelity.materialFields && (
+                <span data-fidelity="material-fields">
+                  Material fields: {launcherPreview.frame.metadata.fidelity.materialFields}
+                </span>
               )}
-              <span data-fidelity="raster">Canvas raster: {frame.metadata.fidelity.raster}</span>
-            </>
-          ) : (
-            <span data-fidelity="unavailable">Preview unavailable</span>
-          )}
+              <span data-fidelity="raster">Canvas raster: {launcherPreview.frame.metadata.fidelity.raster}</span>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="device-stage">
+          <section
+            className="preview-empty-state"
+            data-preview-state={launcherPreview.kind}
+            aria-labelledby="launcher-preview-unavailable-title"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <h3 id="launcher-preview-unavailable-title">Preview unavailable</h3>
+            <p>{unavailableGuidance}</p>
+          </section>
         </div>
-      </div>
+      )}
     </>
   );
 }
@@ -818,19 +836,22 @@ function Studio() {
   const project = result?.project;
   const customProject = result?.customProject;
   const visualSources = result?.customAuthoring?.visualSources ?? {};
-  const visualPackage = useMemo(
-    () =>
-      result?.customAuthoring
-        ? (() => {
-            try {
-              return compileEffectiveCustomVisualsV3(result.customAuthoring);
-            } catch {
-              return undefined;
-            }
-          })()
-        : undefined,
-    [result?.customAuthoring],
-  );
+  const customPreview = useMemo<CustomLauncherPreviewState>(() => {
+    const authoring = result?.customAuthoring;
+    if (!authoring) return { kind: "not-custom" };
+    try {
+      if (
+        CUSTOM_VISUAL_ROLES_V1.some(
+          (role) => !authoring.visualDocuments[role].layers.length && !authoring.visualSources[role],
+        )
+      )
+        return { kind: "incomplete" };
+      return { kind: "ready", visualPackage: compileEffectiveCustomVisualsV3(authoring) };
+    } catch {
+      return { kind: "invalid" };
+    }
+  }, [result?.customAuthoring]);
+  const visualPackage = customPreview.kind === "ready" ? customPreview.visualPackage : undefined;
   const preview = project ? createPreviewModel(previewProject(project, draft, mode), mode) : undefined;
   const loaded = Boolean(project || customProject);
   const visibleLayout = visibleWorkspaceLayout(workspaceLayout);
@@ -999,8 +1020,8 @@ function Studio() {
                   <DevicePreview
                     launcherView={launcherView}
                     onLauncherView={setLauncherView}
+                    customPreview={customPreview}
                     preview={preview}
-                    visualPackage={visualPackage}
                     busy={busy}
                   />
                 }

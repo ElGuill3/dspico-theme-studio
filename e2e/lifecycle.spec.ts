@@ -51,6 +51,21 @@ const showDockTab = async (page: Page, tab: "Layers" | "Properties" | "Preview")
   await dock.getByRole("tab", { name: tab }).click();
   return dock;
 };
+const launcherCanvasEvidence = (page: Page) =>
+  page.locator("[data-launcher-screen]").evaluateAll((canvases) =>
+    canvases.map((canvas) => {
+      const element = canvas as HTMLCanvasElement;
+      const pixels = element.getContext("2d")!.getImageData(0, 0, 256, 192).data;
+      let flat = true;
+      for (let index = 4; index < pixels.length && flat; index += 4)
+        flat =
+          pixels[index] === pixels[0] &&
+          pixels[index + 1] === pixels[1] &&
+          pixels[index + 2] === pixels[2] &&
+          pixels[index + 3] === pixels[3];
+      return { width: element.width, height: element.height, flat };
+    }),
+  );
 const createCustomFromChrome = async (page: Page) => {
   const menu = page.locator("details.new-menu > summary");
   if (await menu.count()) await menu.click();
@@ -250,6 +265,13 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(workspace).toBeVisible();
       await showDockTab(page, "Preview");
       await expect(page.locator('[data-preview-chrome="device-frame"]')).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Preview unavailable" })).toHaveCount(0);
+      await expect
+        .poll(() => launcherCanvasEvidence(page))
+        .toEqual([
+          { width: 256, height: 192, flat: false },
+          { width: 256, height: 192, flat: false },
+        ]);
       await expect(workspace.locator("[data-workspace-surface]")).toHaveCount(1);
       const drawer = await openProjectDrawer(page);
       const name = drawer.getByLabel("Name");
@@ -757,6 +779,13 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       const deviceTopCanvas = page.locator('[data-launcher-screen="top"]');
       await expect(deviceTopCanvas).toBeVisible();
       await expect(page.locator('[data-launcher-screen="bottom"]')).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Preview unavailable" })).toHaveCount(0);
+      await expect
+        .poll(() => launcherCanvasEvidence(page))
+        .toEqual([
+          { width: 256, height: 192, flat: false },
+          { width: 256, height: 192, flat: false },
+        ]);
       const renderEvidence = await page
         .locator('[data-workspace-surface="top-background"], [data-launcher-screen="top"]')
         .evaluateAll((canvases) =>

@@ -49,7 +49,8 @@ describe("renderer shell", () => {
     expect(renderer).toContain('kind: "material"');
     expect(renderer).toContain('data-fidelity="material-fields"');
     expect(renderer).toContain("frame.metadata.fidelity.materialFields");
-    expect(renderer).toContain('data-fidelity="unavailable"');
+    expect(renderer).toContain("data-preview-state={launcherPreview.kind}");
+    expect(renderer).toContain("Complete all seven visual roles to enable launcher preview.");
     expect(renderer).not.toContain("material.primitives");
     expect(renderer).not.toMatch(/setLauncherView[\s\S]{0,120}window\.studio/);
     expect(renderer).not.toContain("scene.content");
@@ -302,8 +303,8 @@ describe("renderer shell", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
     const workspace = readFileSync(path.join(rendererRoot, "workspace/read-only-workspace.tsx"), "utf8");
 
-    expect(renderer).toContain("compileEffectiveCustomVisualsV3(result.customAuthoring)");
-    expect(renderer).toContain("visualPackage={visualPackage}");
+    expect(renderer).toContain("compileEffectiveCustomVisualsV3(authoring)");
+    expect(renderer).toContain("customPreview={customPreview}");
     expect(renderer).toContain("renderLauncherPreview");
     expect(workspace).toContain("visualDocuments");
     expect(workspace).toContain("CUSTOM_VISUAL_ROLES_V1.map");
