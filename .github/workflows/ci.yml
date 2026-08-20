@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: true
+      DSPICO_LAUNCHER_RUNTIME_ROOT: ${{ github.workspace }}/.ci/pico-launcher
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Checkout pico-launcher runtime
+        uses: actions/checkout@v6
+        with:
+          repository: ElGuill3/pico-launcher
+          ref: c648ce888f9b24a1a269795dd0391528e5d12251
+          path: .ci/pico-launcher
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.15.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Check formatting
+        run: pnpm run format:check
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test coverage
+        run: pnpm run test:coverage
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Install browser dependencies
+        run: pnpm exec playwright install-deps chromium
+
+      - name: End-to-end tests
+        env:
+          DEBUG: pw:browser
+        run: xvfb-run -a pnpm run test:e2e
+
+      - name: Upload E2E diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-diagnostics
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: warn

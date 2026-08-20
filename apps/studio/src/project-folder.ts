@@ -2,7 +2,6 @@ import { lstat, readdir } from "node:fs/promises";
 import path from "node:path";
 import {
   openProject,
-  openProjectV3,
   migrateProfileV3,
   type ProjectStateV1,
   type ProjectStateV3,

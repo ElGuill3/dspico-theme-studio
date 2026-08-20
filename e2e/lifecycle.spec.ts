@@ -8,6 +8,7 @@ import { compositeCustomLayersV1 } from "../packages/dspico-contract/src/index.j
 import { launcherV1Fixture } from "../packages/test-fixtures/src/launcher-v1.js";
 import { applyOperationV3, createProjectV2, createProjectV3 } from "../packages/theme-core/src/index.js";
 import { PortableProjectStore } from "../apps/studio/src/portable-project-store.js";
+import { closeElectronApp } from "../packages/test-fixtures/src/electron-app-close.js";
 import { certifyCurrentVisual } from "./visual-receipt.js";
 import { neutralPreviewPngV1, neutralPreviewPngVariantV1 } from "../packages/test-fixtures/src/neutral-preview-png.js";
 
@@ -1446,7 +1447,16 @@ test("completes the offline Material and Custom lifecycles through the hardened 
           globalThis as typeof globalThis & { studio: { requestClose(draftDirty?: boolean): void } }
         ).studio.requestClose(true),
       );
-      await expect.poll(async () => readFile(path.join(root, "close-decision.log"), "utf8")).toContain("keep");
+      await expect
+        .poll(async () => {
+          try {
+            return await readFile(path.join(root, "close-decision.log"), "utf8");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+            throw error;
+          }
+        })
+        .toContain("keep");
       await page.evaluate(() =>
         (globalThis as typeof globalThis & { studio: { setDraftDirty(dirty: boolean): void } }).studio.setDraftDirty(
           false,
@@ -1478,7 +1488,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(page.getByText("Project reopened.")).toBeVisible();
     });
   } finally {
-    await electronApp.close();
+    await closeElectronApp(electronApp);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1548,7 +1558,7 @@ test("surfaces blocked diagnostics and recovers root-bound Custom saves on open"
       await expect(page.getByRole("button", { name: "Save" })).toBeEnabled();
       expect(await readdir(path.join(root, ".studio"))).not.toContain("v3-journal.json");
     } finally {
-      await app.close();
+      await closeElectronApp(app);
       await rm(root, { recursive: true, force: true });
     }
   };
@@ -1679,7 +1689,7 @@ test("surfaces blocked diagnostics and recovers root-bound Custom saves on open"
     expect(results.validation.diagnostics?.length).toBeGreaterThan(0);
     expect(results.blocked.diagnostics).toEqual(results.validation.diagnostics);
   } finally {
-    await app.close();
+    await closeElectronApp(app);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -2753,7 +2763,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await expect(workspace.getByRole("button", { name: "Select pasted.png" })).toHaveCount(0);
     await expect(workspace.locator('[aria-current="true"]')).toHaveCount(0);
   } finally {
-    await electronApp.close();
+    await closeElectronApp(electronApp);
     await rm(root, { recursive: true, force: true });
   }
 });
