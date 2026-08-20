@@ -39,6 +39,11 @@ const layoutSources = [
     "59dc7d23bc7d7d47d6ff53d0cfbece5a761d54ee",
     "ce9bd8c9fa3f0743078f7a9b593157c749380dc1915547b0ac6d0ea39b1bb771",
   ),
+  source(
+    "arm9/source/romBrowser/views/CoverFlowRecyclerView.cpp",
+    "967f86defdbbcb8cf75ce793416b50a82a189ace",
+    "3f01e11c942b020ed761696e17daecc382ca81c4447154921eba63b8e432b965",
+  ),
 ] as const;
 const fixtureCandidate = LAUNCHER_V1_PROFILE.evidence.find(
   ({ path }) => path === "_pico/themes/raspberry/gridcellSelectedPltt.bin",
@@ -67,6 +72,10 @@ export const LAUNCHER_PREVIEW_AUTHORITY_V1 = {
     source: fixture,
     bundle: false,
     rule: "Import only hash-admitted launcher bytes; never bundle launcher artwork.",
+  },
+  custom: {
+    cover: { left: 75, top: 18, width: 106, height: 96 },
+    filename: { left: 18, top: 170, width: 220, textColor: [30, 30, 30], blendColor: [200, 200, 200] },
   },
   layouts: {
     "horizontal-grid": { source: layoutSources[2].path, bounds: [0, 42, 256, 150], padding: [10, 0], spacing: [4, 4] },

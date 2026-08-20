@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
+import { decodeXbgr555 } from "../../../../../packages/dspico-contract/src/codecs-v1-3.js";
 import { encodeV13VisualFiles, sha256, type RgbaImageV1 } from "../../../../../packages/dspico-contract/src/index.js";
-import { LauncherPreviewError } from "./authority.js";
+import { LAUNCHER_PREVIEW_AUTHORITY_V1, LauncherPreviewError } from "./authority.js";
 import { importLauncherPaletteFixtureV1 } from "./fixture.js";
 import { renderLauncherPreview } from "./render-launcher-preview.js";
 
@@ -29,6 +30,7 @@ const files = encodeV13VisualFiles({
   bannerListCellSelected: image(256, 49, [220, 200, 40, 255]),
   scrim: image(8, 42, [0, 0, 0, 160]),
 });
+const stagedTop = decodeXbgr555(files["topbg.bin"], 256, 192).pixels;
 const render = (mode: string, selectedIndex = fixture.selectedIndex, names = fixture.names) =>
   renderLauncherPreview({ theme: { kind: "custom", files }, mode, fixture: { ...fixture, selectedIndex, names } });
 const renderMaterial = (mode: string, primaryColor = { r: 138, g: 217, b: 255 }, darkTheme = false) =>
@@ -39,22 +41,47 @@ const renderMaterial = (mode: string, primaryColor = { r: 138, g: 217, b: 255 },
   });
 const goldens = {
   "horizontal-grid": {
-    top: "291b23e16492a87c4753078639b4826b9c3dc6c24a2422062ce0b096f0e710b3",
+    top: "625fd122abad276632eff44459def3ee2ba4468066f4d854c78f537c08a2ab54",
     bottom: "291c3b01acb05e902c4f1ba39e92291d55297ba145f97910051d180553c2f46a",
   },
   "vertical-grid": {
-    top: "291b23e16492a87c4753078639b4826b9c3dc6c24a2422062ce0b096f0e710b3",
+    top: "625fd122abad276632eff44459def3ee2ba4468066f4d854c78f537c08a2ab54",
     bottom: "17abb82d0e8f9f811ca4d8c8955166ee239d665f376a6fa6a577e7b78636f2fc",
   },
   "banner-list": {
-    top: "291b23e16492a87c4753078639b4826b9c3dc6c24a2422062ce0b096f0e710b3",
+    top: "625fd122abad276632eff44459def3ee2ba4468066f4d854c78f537c08a2ab54",
     bottom: "cb13e20381dbe0acdfafa26322f495a091a2f87bbaa07b7e72f5493260000dca",
   },
   coverflow: {
-    top: "427c5fa2bd93e27391c15e78375b810cd76443b7478e1fb3aeff8e4bbd1c4522",
+    top: "d5632352ac6faa6618f9d743ee5ded66ba920e0fe474c029989fdb41cc29a41b",
     bottom: "748a08be71583d4907731318209a082cda67a63a7e90f5ae3f70dfbd643e1eff",
   },
 } as const;
+const materialGoldens = {
+  "horizontal-grid": {
+    top: "5539aaf9a42fa2dd55af359736f6ee9532bb1414c84b061251fb949e603feda2",
+    bottom: "eec58f098c70b5ac228ddb3d9f41f7dffe86586a4f0a5b379691e65e3123da4d",
+  },
+  "vertical-grid": {
+    top: "5539aaf9a42fa2dd55af359736f6ee9532bb1414c84b061251fb949e603feda2",
+    bottom: "c6bfcb84acb91c2a05ca351e0775ee72561d792c279145142dee50a041c69d45",
+  },
+  "banner-list": {
+    top: "5539aaf9a42fa2dd55af359736f6ee9532bb1414c84b061251fb949e603feda2",
+    bottom: "f79ce9ff7ec5ae511b38cf7918bebc6620cb9fceb409a14150a356d7955fc1bc",
+  },
+  coverflow: {
+    top: "e93eedf92ae2ef765c839b7e8a8e26a3a8f35bd3d85b036ab16d84f8469e063c",
+    bottom: "b58d53e90577a4f0255337c8161db846a76f064c0e21791585a16fc454de8fb3",
+  },
+} as const;
+const pixel = (pixels: Uint8Array, x: number, y: number) =>
+  Array.from(pixels.slice((y * 256 + x) * 4, (y * 256 + x + 1) * 4));
+const region = (pixels: Uint8Array, left: number, top: number, width: number, height: number) =>
+  Array.from({ length: height }, (_, y) =>
+    pixels.slice(((top + y) * 256 + left) * 4, ((top + y) * 256 + left + width) * 4),
+  );
+const selectedNames = (name: string) => ["", "", name, "", ""];
 
 describe("Custom launcher preview compositor", () => {
   it.each(Object.keys(goldens))("stages deterministic dual-screen buffers for %s", (mode) => {
@@ -103,10 +130,31 @@ describe("Custom launcher preview compositor", () => {
   });
 
   it.each(["horizontal-grid", "vertical-grid", "banner-list", "coverflow"])(
+    "composes the bounded Custom filename independently for %s",
+    (mode) => {
+      const empty = render(mode, 2, selectedNames(""));
+      const short = render(mode, 2, selectedNames("A"));
+      const overlong = render(mode, 2, selectedNames("A".repeat(100)));
+      expect((LAUNCHER_PREVIEW_AUTHORITY_V1 as { custom?: unknown }).custom).toEqual({
+        cover: { left: 75, top: 18, width: 106, height: 96 },
+        filename: { left: 18, top: 170, width: 220, textColor: [30, 30, 30], blendColor: [200, 200, 200] },
+      });
+      expect(pixel(short.top, 18, 170)).toEqual([30, 30, 30, 255]);
+      expect(pixel(short.top, 21, 170)).toEqual([200, 200, 200, 255]);
+      expect(pixel(overlong.top, 237, 170)).toEqual([200, 200, 200, 255]);
+      for (let y = 170; y < 175; y += 1) expect(pixel(overlong.top, 238, y)).toEqual(pixel(empty.top, 238, y));
+      if (mode === "coverflow") expect(region(short.top, 75, 18, 106, 96)).toEqual(region(stagedTop, 75, 18, 106, 96));
+      else expect(region(short.top, 75, 18, 106, 96)).toEqual(region(empty.top, 75, 18, 106, 96));
+    },
+  );
+
+  it.each(["horizontal-grid", "vertical-grid", "banner-list", "coverflow"])(
     "stages mode-aware Material buffers that react to both authority fields for %s",
     (mode) => {
       const base = renderMaterial(mode);
       expect(renderMaterial(mode)).toEqual(base);
+      expect(sha256(base.top)).toBe(materialGoldens[mode as keyof typeof materialGoldens].top);
+      expect(sha256(base.bottom)).toBe(materialGoldens[mode as keyof typeof materialGoldens].bottom);
       const recolored = renderMaterial(mode, { r: 20, g: 80, b: 160 });
       const dark = renderMaterial(mode, { r: 138, g: 217, b: 255 }, true);
       expect(recolored.top).not.toEqual(base.top);
