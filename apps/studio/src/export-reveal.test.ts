@@ -70,7 +70,7 @@ describe("ExportRevealCapability", () => {
       const folder = path.join(root, "theme");
       if (mutation === "deleted") await rm(folder, { recursive: true });
       if (mutation === "replaced") {
-        await rm(folder, { recursive: true });
+        await rename(folder, `${folder}-retained`);
         await mkdir(folder);
         await writeFile(path.join(folder, "theme.json"), "theme");
       }
@@ -93,7 +93,7 @@ describe("ExportRevealCapability", () => {
       const zip = path.join(root, "theme.zip");
       if (mutation === "deleted") await rm(zip);
       if (mutation === "replaced") {
-        await rm(zip);
+        await rename(zip, `${zip}-retained`);
         await writeFile(zip, "zip");
       }
       if (mutation === "symlink") {
