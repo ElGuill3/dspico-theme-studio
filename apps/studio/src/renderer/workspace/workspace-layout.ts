@@ -1,5 +1,5 @@
 export type WorkspaceDockTab = "layers" | "properties" | "preview";
-export type WorkspacePreviewMode = "coverflow" | "banner-list";
+export type WorkspacePreviewMode = "horizontal-grid" | "vertical-grid" | "banner-list" | "coverflow";
 export type WorkspaceLayout = {
   dockOpen: boolean;
   dockTab: WorkspaceDockTab;
@@ -23,7 +23,7 @@ const validLayout = (value: unknown): value is WorkspaceLayout => {
     Object.keys(record).length === 3 &&
     typeof record.dockOpen === "boolean" &&
     ["layers", "properties", "preview"].includes(String(record.dockTab)) &&
-    ["coverflow", "banner-list"].includes(String(record.previewMode))
+    ["horizontal-grid", "vertical-grid", "banner-list", "coverflow"].includes(String(record.previewMode))
   );
 };
 

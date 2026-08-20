@@ -1,13 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { type CustomVisualRoleV1 } from "../../../../packages/dspico-contract/src/index.js";
 import type { MaterialProjectV1, VisualDocumentOperationV3 } from "../../../../packages/theme-core/src/index.js";
 import { metadataErrorV3, type MetadataFieldV3 } from "../../../../packages/theme-core/src/limits-v3.js";
 import { createPreviewModel, type PreviewModel } from "../../../../packages/theme-core/src/preview.js";
-import {
-  createCustomRenderPlan,
-  type RenderSurfacePlanV1,
-} from "../../../../packages/theme-core/src/render-plan-v2.js";
 import type { StudioApi, StudioResult } from "../studio-ipc.js";
 import type { ThemeSoundRoleV1, WavRecipeV1 } from "../../../../packages/dspico-contract/src/theme-sounds-v1.js";
 import { CustomAssetBench } from "./custom-asset-bench.js";
@@ -17,7 +13,6 @@ import { BrandMark } from "./brand-mark.js";
 import { DraftAuthority, type DraftEdit } from "./draft-authority.js";
 import { ProjectDrawer, type ProjectDrawerTab } from "./project-drawer.js";
 import { CreatorWorkspace, importedLayerSize } from "./workspace/read-only-workspace.js";
-import { paintWorkspaceSurface, visualDocumentSurface } from "./workspace/workspace-model.js";
 import {
   loadWorkspaceLayout,
   saveWorkspaceLayout,
@@ -33,6 +28,9 @@ import { isCancellation, safeErrorMessage } from "../app-resilience.js";
 import { HelpDialog } from "./help-dialog.js";
 import { dismissOnboarding, onboardingDismissed, suppressGlobalShortcut } from "./shortcuts.js";
 import { GlobalFailureCapture, StudioErrorBoundary } from "./recovery-shell.js";
+import type { CustomVisualPackageV1 } from "../../../../packages/dspico-contract/src/custom-v1-3.js";
+import { neutralLauncherFixtureV1 } from "./launcher-preview/fixture.js";
+import { renderLauncherPreview, type LauncherPreviewFrameV1 } from "./launcher-preview/render-launcher-preview.js";
 
 declare global {
   interface Window {
@@ -51,7 +49,13 @@ const screens = ["top", "bottom"] as const;
 const validHex = (value: unknown): value is string => typeof value === "string" && /^#[\da-f]{6}$/i.test(value);
 type ColorKey = (typeof colorKeys)[number];
 type Screen = (typeof screens)[number];
-type LauncherView = "coverflow" | "banner-list";
+type LauncherView = "horizontal-grid" | "vertical-grid" | "banner-list" | "coverflow";
+const launcherViews: readonly { id: LauncherView; label: string }[] = [
+  { id: "horizontal-grid", label: "Horizontal Grid" },
+  { id: "vertical-grid", label: "Vertical Grid" },
+  { id: "banner-list", label: "Banner List" },
+  { id: "coverflow", label: "Coverflow" },
+];
 type ScreenColors = Record<Screen, Partial<Record<ColorKey, string>>>;
 type Draft = {
   metadata: MaterialProjectV1["metadata"];
@@ -125,100 +129,82 @@ function previewProject(project: MaterialProjectV1, draft: Draft, mode: string):
 }
 
 function PhysicalPreview({
-  images = {},
-  launcherView,
-  renderSurface,
-  scene,
+  frame,
+  mode,
   screen,
 }: {
-  images?: NonNullable<StudioResult["customAuthoring"]>["images"];
-  launcherView: LauncherView;
-  renderSurface?: RenderSurfacePlanV1;
-  scene?: PreviewModel["scenes"][number];
+  frame?: LauncherPreviewFrameV1;
+  mode: LauncherView;
   screen: Screen;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const background = validHex(scene?.tokens.background) ? scene.tokens.background : colorDefaults.background;
-  const accent = validHex(scene?.tokens.accent) ? scene.tokens.accent : colorDefaults.accent;
-  const foreground = validHex(scene?.tokens.foreground) ? scene.tokens.foreground : colorDefaults.foreground;
-  const primary = scene?.tokens.primaryColor as { r?: unknown; g?: unknown; b?: unknown } | undefined;
-  const materialColor =
-    primary && [primary.r, primary.g, primary.b].every((value) => Number.isInteger(value))
-      ? `#${[primary.r, primary.g, primary.b].map((value) => Number(value).toString(16).padStart(2, "0")).join("")}`
-      : undefined;
+  const bytes = frame?.[screen];
   useEffect(() => {
     const context = canvas.current?.getContext("2d");
-    if (context) {
-      const sources = new Map();
-      for (const [sha256, image] of Object.entries(images)) {
-        sources.set(sha256, image);
-      }
-      paintWorkspaceSurface(
-        context,
-        renderSurface ? undefined : { background: materialColor ?? background, accent: materialColor ?? accent },
-        false,
-        renderSurface,
-        undefined,
-        sources,
-      );
+    if (!context) return;
+    if (bytes) context.putImageData(new ImageData(new Uint8ClampedArray(bytes), 256, 192), 0, 0);
+    else {
+      context.fillStyle = colorDefaults.background;
+      context.fillRect(0, 0, 256, 192);
     }
-  }, [accent, background, images, materialColor, renderSurface]);
+  }, [bytes]);
   return (
     <section className={`physical-preview ${screen}-preview`} aria-label={`${screen} screen preview`}>
       <div className="screen-heading">
         <strong>{screen} display</strong>
         <span>256×192</span>
       </div>
-      <div
-        className={`ds-screen ${screen}`}
-        data-mode={scene?.mode ?? "empty"}
-        data-screen={screen}
-        style={
-          {
-            "--screen-bg": materialColor ?? background,
-            "--screen-accent": materialColor ?? accent,
-            "--screen-ink": foreground,
-          } as React.CSSProperties
-        }
-      >
-        {renderSurface && (
-          <canvas
-            ref={canvas}
-            className="device-render-canvas"
-            data-render-plan-screen={screen}
-            width={renderSurface.width}
-            height={renderSurface.height}
-            role="img"
-            aria-label={`${screen} custom theme render`}
-          />
-        )}
-        <span
-          aria-hidden="true"
-          className={`launcher-overlay ${launcherView}-${screen}`}
-          data-launcher-overlay={`${launcherView}-${screen}`}
+      <div className={`ds-screen ${screen}`} data-mode={frame?.mode ?? mode} data-screen={screen}>
+        <canvas
+          ref={canvas}
+          className="device-render-canvas"
+          data-launcher-screen={screen}
+          width={256}
+          height={192}
+          role="img"
+          aria-label={`${screen} launcher screen`}
         />
+        <span className="launcher-status" data-launcher-chrome={screen}>
+          {screen === "top" ? "Pico Launcher" : "[ SELECT ]   [ Y ] Settings"}
+        </span>
       </div>
     </section>
   );
 }
 
 function DevicePreview({
-  images,
   launcherView,
   onLauncherView,
   preview,
-  renderPlan,
+  visualPackage,
   busy,
-  onMode,
 }: {
-  images?: NonNullable<StudioResult["customAuthoring"]>["images"];
   launcherView: LauncherView;
   onLauncherView(view: LauncherView): void;
   preview?: PreviewModel;
-  renderPlan?: ReturnType<typeof createCustomRenderPlan>;
+  visualPackage?: CustomVisualPackageV1;
   busy: boolean;
-  onMode(mode: string): void;
 }) {
+  const frame = useMemo(() => {
+    try {
+      const tokens = preview?.scenes[0]?.tokens;
+      const color = tokens?.primaryColor as { r?: unknown; g?: unknown; b?: unknown } | undefined;
+      const theme = visualPackage
+        ? { kind: "custom" as const, files: visualPackage.files }
+        : color && [color.r, color.g, color.b].every(Number.isInteger) && typeof tokens?.darkTheme === "boolean"
+          ? {
+              kind: "material" as const,
+              primaryColor: color as { r: number; g: number; b: number },
+              darkTheme: tokens.darkTheme,
+            }
+          : undefined;
+      return theme
+        ? renderLauncherPreview({ theme, mode: launcherView, fixture: neutralLauncherFixtureV1() })
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }, [launcherView, preview, visualPackage]);
   return (
     <>
       <div className="preview-toolbar">
@@ -227,56 +213,26 @@ function DevicePreview({
           <h2>Live preview</h2>
         </div>
         <div className="preview-controls">
-          {preview && (
-            <div className="mode-switcher" role="group" aria-label="Theme scene">
-              {preview.modes.map((item) => (
-                <button
-                  className={item === preview.mode ? "active" : ""}
-                  aria-pressed={item === preview.mode}
-                  disabled={busy}
-                  key={item}
-                  onClick={() => onMode(item)}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-          )}
           <div className="mode-switcher" role="group" aria-label="Preview mode">
-            <button
-              className={launcherView === "coverflow" ? "active" : ""}
-              aria-pressed={launcherView === "coverflow"}
-              onClick={() => onLauncherView("coverflow")}
-            >
-              Coverflow
-            </button>
-            <button
-              className={launcherView === "banner-list" ? "active" : ""}
-              aria-pressed={launcherView === "banner-list"}
-              onClick={() => onLauncherView("banner-list")}
-            >
-              Banner
-            </button>
+            {launcherViews.map(({ id, label }) => (
+              <button
+                className={launcherView === id ? "active" : ""}
+                aria-pressed={launcherView === id}
+                disabled={busy}
+                key={id}
+                onClick={() => onLauncherView(id)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
       <div className="device-stage">
         <div className="device-shell" aria-label="DSpico dual-screen device preview">
           <span className="device-chrome" data-preview-chrome="device-frame" aria-hidden="true" />
-          <PhysicalPreview
-            images={images}
-            launcherView={launcherView}
-            renderSurface={renderPlan?.screens[0]}
-            scene={preview?.scenes[0]}
-            screen="top"
-          />
-          <PhysicalPreview
-            images={images}
-            launcherView={launcherView}
-            renderSurface={renderPlan?.screens[1]}
-            scene={preview?.scenes[1]}
-            screen="bottom"
-          />
+          <PhysicalPreview frame={frame} mode={launcherView} screen="top" />
+          <PhysicalPreview frame={frame} mode={launcherView} screen="bottom" />
         </div>
       </div>
       <div className="preview-caption">
@@ -285,8 +241,17 @@ function DevicePreview({
           <strong>Draft preview is live</strong>
         </p>
         <div className="fidelity-tags">
-          <span>launcher-vector-backed</span>
-          <span>Chromium approximation</span>
+          {frame ? (
+            <>
+              <span data-fidelity="geometry">Geometry: {frame.metadata.fidelity.geometry}</span>
+              {frame.metadata.fidelity.materialFields && (
+                <span data-fidelity="material-fields">Material fields: {frame.metadata.fidelity.materialFields}</span>
+              )}
+              <span data-fidelity="raster">Canvas raster: {frame.metadata.fidelity.raster}</span>
+            </>
+          ) : (
+            <span data-fidelity="unavailable">Preview unavailable</span>
+          )}
         </div>
       </div>
     </>
@@ -853,30 +818,19 @@ function Studio() {
   const project = result?.project;
   const customProject = result?.customProject;
   const visualSources = result?.customAuthoring?.visualSources ?? {};
-  const customRenderPlan = customProject
-    ? result?.customAuthoring
-      ? {
-          ...createCustomRenderPlan(customProject),
-          screens: (["top", "bottom"] as const).map((screen) => {
-            const role = `${screen}-background` as const;
-            return visualDocumentSurface(
-              result.customAuthoring!.visualDocuments[role],
-              result.customAuthoring!.visualSources[role],
-              screen,
-            ) as RenderSurfacePlanV1;
-          }),
-        }
-      : createCustomRenderPlan(customProject)
-    : undefined;
-  const visualPackage = result?.customAuthoring
-    ? (() => {
-        try {
-          return compileEffectiveCustomVisualsV3(result.customAuthoring);
-        } catch {
-          return undefined;
-        }
-      })()
-    : undefined;
+  const visualPackage = useMemo(
+    () =>
+      result?.customAuthoring
+        ? (() => {
+            try {
+              return compileEffectiveCustomVisualsV3(result.customAuthoring);
+            } catch {
+              return undefined;
+            }
+          })()
+        : undefined,
+    [result?.customAuthoring],
+  );
   const preview = project ? createPreviewModel(previewProject(project, draft, mode), mode) : undefined;
   const loaded = Boolean(project || customProject);
   const visibleLayout = visibleWorkspaceLayout(workspaceLayout);
@@ -1043,13 +997,11 @@ function Studio() {
                 onCloseDock={closeDock}
                 preview={
                   <DevicePreview
-                    images={result?.customAuthoring?.images}
                     launcherView={launcherView}
                     onLauncherView={setLauncherView}
                     preview={preview}
-                    renderPlan={customRenderPlan}
+                    visualPackage={visualPackage}
                     busy={busy}
-                    onMode={setMode}
                   />
                 }
                 status={status}
@@ -1187,16 +1139,17 @@ function Studio() {
                         aria-label="Dark theme"
                         type="checkbox"
                         checked={project.tokens.darkTheme === true}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          const darkTheme = event.target.checked;
                           void run("Dark theme saved.", () =>
                             window.studio.edit({
                               version: 1,
                               type: "set-token",
                               key: "darkTheme",
-                              value: event.target.checked,
+                              value: darkTheme,
                             }),
-                          )
-                        }
+                          );
+                        }}
                       />{" "}
                       Dark theme
                     </label>
