@@ -23,14 +23,14 @@ it("closes gracefully before the deadline without inspecting or signaling the ch
   expect(report).not.toHaveBeenCalled();
 });
 
-it("returns at the grace deadline and signals the Linux process group once", async () => {
+it("signals the Linux process group when the leader exited before the grace deadline", async () => {
   vi.useFakeTimers();
   const kill = vi.fn(() => true);
   const report = vi.fn<(diagnostic: ElectronCleanupDiagnostic) => void>();
   const cleanup = closeElectronApp(
     {
       close: vi.fn(() => new Promise<void>(() => {})),
-      process: vi.fn(() => ({ pid: 321, exitCode: null, signalCode: null })),
+      process: vi.fn(() => ({ pid: 321, exitCode: 0, signalCode: null })),
     },
     { kill, platform: "linux", report },
   );
@@ -54,7 +54,7 @@ it("returns at the grace deadline and signals the Linux process group once", asy
     event: "electron-cleanup",
     outcome: "deadline-expired",
     pid: 321,
-    exitCode: null,
+    exitCode: 0,
     signalCode: null,
     killTarget: -321,
     killResult: "sent",
@@ -65,7 +65,9 @@ it("returns at the grace deadline and signals the Linux process group once", asy
 
 it("handles a rejected close and cleans up the owned process without an unhandled rejection", async () => {
   vi.useFakeTimers();
-  const closeError = Object.assign(new Error("private close failure"), { code: "ECLOSE" });
+  const closeError = Object.assign(new Error("private close failure"), {
+    code: "ECLOSE",
+  });
   const kill = vi.fn(() => true);
   const report = vi.fn<(diagnostic: ElectronCleanupDiagnostic) => void>();
 
@@ -103,7 +105,11 @@ it("reports a kill failure while preserving the caller failure", async () => {
       await closeElectronApp(
         {
           close: vi.fn(() => new Promise<void>(() => {})),
-          process: vi.fn(() => ({ pid: 987, exitCode: null, signalCode: null })),
+          process: vi.fn(() => ({
+            pid: 987,
+            exitCode: null,
+            signalCode: null,
+          })),
         },
         {
           kill: vi.fn(() => {
@@ -135,7 +141,7 @@ it("reports a kill failure while preserving the caller failure", async () => {
   expect(JSON.stringify(diagnostic)).not.toContain("private/workspace");
 });
 
-it("does not signal a child that already exited after a non-graceful close", async () => {
+it("does not signal a child that already exited after close rejects", async () => {
   vi.useFakeTimers();
   const kill = vi.fn(() => true);
   const report = vi.fn<(diagnostic: ElectronCleanupDiagnostic) => void>();

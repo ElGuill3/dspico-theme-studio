@@ -41,7 +41,11 @@ const errorIdentity = (error: unknown): Pick<ElectronCleanupDiagnostic, "errorCl
   if (!error || (typeof error !== "object" && typeof error !== "function"))
     return { errorClass: null, errorCode: null };
   try {
-    const candidate = error as { name?: unknown; code?: unknown; constructor?: { name?: unknown } };
+    const candidate = error as {
+      name?: unknown;
+      code?: unknown;
+      constructor?: { name?: unknown };
+    };
     return {
       errorClass: safeErrorToken(candidate.name) ?? safeErrorToken(candidate.constructor?.name),
       errorCode: safeErrorToken(candidate.code),
@@ -95,7 +99,10 @@ export const closeElectronApp = async (
       pid = typeof child.pid === "number" && Number.isSafeInteger(child.pid) ? child.pid : null;
       exitCode = child.exitCode;
       signalCode = child.signalCode;
-      if (child.exitCode !== null || child.signalCode !== null) {
+      const leaderExited = child.exitCode !== null || child.signalCode !== null;
+      const killExitedPosixGroup =
+        result.outcome === "deadline-expired" && platform !== "win32" && pid !== null && pid > 0;
+      if (leaderExited && !killExitedPosixGroup) {
         killResult = "already-exited";
       } else if (pid === null || pid <= 0) {
         killResult = "pid-unavailable";
