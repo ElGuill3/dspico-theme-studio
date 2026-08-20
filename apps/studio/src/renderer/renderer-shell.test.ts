@@ -50,7 +50,6 @@ describe("renderer shell", () => {
     expect(renderer).toContain('data-fidelity="material-fields"');
     expect(renderer).toContain("frame.metadata.fidelity.materialFields");
     expect(renderer).toContain("data-preview-state={launcherPreview.kind}");
-    expect(renderer).toContain("Complete all seven visual roles to enable launcher preview.");
     expect(renderer).not.toContain("material.primitives");
     expect(renderer).not.toMatch(/setLauncherView[\s\S]{0,120}window\.studio/);
     expect(renderer).not.toContain("scene.content");

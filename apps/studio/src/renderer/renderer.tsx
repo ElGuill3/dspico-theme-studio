@@ -22,15 +22,22 @@ import {
   type WorkspaceDockTab,
   type WorkspaceLayoutState,
 } from "./workspace/workspace-layout.js";
-import { compileEffectiveCustomVisualsV3 } from "../custom-visuals-v3.js";
+import { compileEffectiveCustomVisualsV3, effectiveCustomVisualSourcesV3 } from "../custom-visuals-v3.js";
 import { manualSdGuidance } from "./export-guidance.js";
 import { isCancellation, safeErrorMessage } from "../app-resilience.js";
 import { HelpDialog } from "./help-dialog.js";
 import { dismissOnboarding, onboardingDismissed, suppressGlobalShortcut } from "./shortcuts.js";
 import { GlobalFailureCapture, StudioErrorBoundary } from "./recovery-shell.js";
-import type { CustomVisualPackageV1 } from "../../../../packages/dspico-contract/src/custom-v1-3.js";
+import type {
+  CustomVisualPackageV1,
+  CustomVisualSourceV1,
+} from "../../../../packages/dspico-contract/src/custom-v1-3.js";
 import { neutralLauncherFixtureV1 } from "./launcher-preview/fixture.js";
-import { renderLauncherPreview, type LauncherPreviewFrameV1 } from "./launcher-preview/render-launcher-preview.js";
+import {
+  renderLauncherPreview,
+  renderPartialCustomLauncherPreview,
+  type LauncherPreviewFrameV1,
+} from "./launcher-preview/render-launcher-preview.js";
 
 declare global {
   interface Window {
@@ -52,11 +59,23 @@ type Screen = (typeof screens)[number];
 type LauncherView = "horizontal-grid" | "vertical-grid" | "banner-list" | "coverflow";
 type CustomLauncherPreviewState =
   | { kind: "not-custom" }
-  | { kind: "incomplete" }
+  | {
+      kind: "partial";
+      sources: readonly CustomVisualSourceV1[];
+      startedRoles: readonly CustomVisualRoleV1[];
+      placeholderRoles: readonly CustomVisualRoleV1[];
+    }
   | { kind: "invalid" }
   | { kind: "ready"; visualPackage: CustomVisualPackageV1 };
 type LauncherPreviewState =
-  { kind: "incomplete-custom" } | { kind: "invalid" } | { kind: "ready"; frame: LauncherPreviewFrameV1 };
+  | { kind: "invalid" }
+  | {
+      kind: "partial";
+      frame: LauncherPreviewFrameV1;
+      startedRoles: readonly CustomVisualRoleV1[];
+      placeholderRoles: readonly CustomVisualRoleV1[];
+    }
+  | { kind: "ready"; frame: LauncherPreviewFrameV1 };
 const launcherViews: readonly { id: LauncherView; label: string }[] = [
   { id: "horizontal-grid", label: "Horizontal Grid" },
   { id: "vertical-grid", label: "Vertical Grid" },
@@ -138,6 +157,7 @@ function previewProject(project: MaterialProjectV1, draft: Draft, mode: string):
 function PhysicalPreview({ frame, screen }: { frame: LauncherPreviewFrameV1; screen: Screen }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const bytes = frame[screen];
+  const evidence = bytes.reduce((hash, byte) => Math.imul(hash ^ byte, 16_777_619) >>> 0, 2_166_136_261).toString(16);
   useEffect(() => {
     const context = canvas.current?.getContext("2d");
     if (!context) return;
@@ -154,14 +174,12 @@ function PhysicalPreview({ frame, screen }: { frame: LauncherPreviewFrameV1; scr
           ref={canvas}
           className="device-render-canvas"
           data-launcher-screen={screen}
+          data-canvas-evidence={evidence}
           width={256}
           height={192}
           role="img"
           aria-label={`${screen} launcher screen`}
         />
-        <span className="launcher-status" data-launcher-chrome={screen}>
-          {screen === "top" ? "Pico Launcher" : "[ SELECT ]   [ Y ] Settings"}
-        </span>
       </div>
     </section>
   );
@@ -181,9 +199,19 @@ function DevicePreview({
   busy: boolean;
 }) {
   const launcherPreview = useMemo<LauncherPreviewState>(() => {
-    if (customPreview.kind === "incomplete") return { kind: "incomplete-custom" };
     if (customPreview.kind === "invalid") return { kind: "invalid" };
     try {
+      if (customPreview.kind === "partial")
+        return {
+          kind: "partial",
+          frame: renderPartialCustomLauncherPreview({
+            sources: customPreview.sources,
+            mode: launcherView,
+            fixture: neutralLauncherFixtureV1(),
+          }),
+          startedRoles: customPreview.startedRoles,
+          placeholderRoles: customPreview.placeholderRoles,
+        };
       const tokens = preview?.scenes[0]?.tokens;
       const color = tokens?.primaryColor as { r?: unknown; g?: unknown; b?: unknown } | undefined;
       const theme =
@@ -196,20 +224,13 @@ function DevicePreview({
                 darkTheme: tokens.darkTheme,
               }
             : undefined;
-      return theme
-        ? {
-            kind: "ready",
-            frame: renderLauncherPreview({ theme, mode: launcherView, fixture: neutralLauncherFixtureV1() }),
-          }
-        : { kind: "invalid" };
+      if (!theme) return { kind: "invalid" };
+      const frame = renderLauncherPreview({ theme, mode: launcherView, fixture: neutralLauncherFixtureV1() });
+      return { kind: "ready", frame };
     } catch {
       return { kind: "invalid" };
     }
   }, [customPreview, launcherView, preview]);
-  const unavailableGuidance =
-    launcherPreview.kind === "incomplete-custom"
-      ? "Complete all seven visual roles to enable launcher preview."
-      : "Launcher preview could not be rendered. Run project diagnostics and review the reported errors.";
   return (
     <>
       <div className="preview-toolbar">
@@ -233,29 +254,55 @@ function DevicePreview({
           </div>
         </div>
       </div>
-      {launcherPreview.kind === "ready" ? (
+      {launcherPreview.kind !== "invalid" ? (
         <>
           <div className="device-stage">
-            <div className="device-shell" aria-label="DSpico dual-screen device preview">
+            <div
+              className="device-shell"
+              aria-label="DSpico dual-screen device preview"
+              data-preview-state={launcherPreview.kind}
+              data-started-roles={
+                launcherPreview.kind === "partial" ? launcherPreview.startedRoles.join(" ") : undefined
+              }
+              data-placeholder-roles={
+                launcherPreview.kind === "partial" ? launcherPreview.placeholderRoles.join(" ") : undefined
+              }
+            >
               <span className="device-chrome" data-preview-chrome="device-frame" aria-hidden="true" />
               <PhysicalPreview frame={launcherPreview.frame} screen="top" />
               <PhysicalPreview frame={launcherPreview.frame} screen="bottom" />
             </div>
           </div>
-          <div className="preview-caption">
-            <span className="state-dot ready" aria-hidden="true" />
-            <p>
-              <strong>Draft preview is live</strong>
-            </p>
-            <div className="fidelity-tags">
-              <span data-fidelity="geometry">Geometry: {launcherPreview.frame.metadata.fidelity.geometry}</span>
-              {launcherPreview.frame.metadata.fidelity.materialFields && (
-                <span data-fidelity="material-fields">
-                  Material fields: {launcherPreview.frame.metadata.fidelity.materialFields}
-                </span>
-              )}
-              <span data-fidelity="raster">Canvas raster: {launcherPreview.frame.metadata.fidelity.raster}</span>
-            </div>
+          <div
+            className="preview-caption"
+            data-preview-status={launcherPreview.kind}
+            role={launcherPreview.kind === "partial" ? "status" : undefined}
+            aria-live={launcherPreview.kind === "partial" ? "polite" : undefined}
+            aria-atomic={launcherPreview.kind === "partial" ? "true" : undefined}
+          >
+            <span className={`state-dot ${launcherPreview.kind === "ready" ? "ready" : ""}`} aria-hidden="true" />
+            {launcherPreview.kind === "partial" ? (
+              <p>
+                <strong>Preview in progress</strong>
+                <span>{`${launcherPreview.startedRoles.length} of ${CUSTOM_VISUAL_ROLES_V1.length} roles started`}</span>
+                <span>{`Still placeholders: ${launcherPreview.placeholderRoles.join(", ")}`}</span>
+              </p>
+            ) : (
+              <>
+                <p>
+                  <strong>Draft preview is live</strong>
+                </p>
+                <div className="fidelity-tags">
+                  <span data-fidelity="geometry">Geometry: {launcherPreview.frame.metadata.fidelity.geometry}</span>
+                  {launcherPreview.frame.metadata.fidelity.materialFields && (
+                    <span data-fidelity="material-fields">
+                      Material fields: {launcherPreview.frame.metadata.fidelity.materialFields}
+                    </span>
+                  )}
+                  <span data-fidelity="raster">Canvas raster: {launcherPreview.frame.metadata.fidelity.raster}</span>
+                </div>
+              </>
+            )}
           </div>
         </>
       ) : (
@@ -268,7 +315,7 @@ function DevicePreview({
             aria-atomic="true"
           >
             <h3 id="launcher-preview-unavailable-title">Preview unavailable</h3>
-            <p>{unavailableGuidance}</p>
+            <p>Launcher preview could not be rendered. Run project diagnostics and review the reported errors.</p>
           </section>
         </div>
       )}
@@ -840,12 +887,15 @@ function Studio() {
     const authoring = result?.customAuthoring;
     if (!authoring) return { kind: "not-custom" };
     try {
-      if (
-        CUSTOM_VISUAL_ROLES_V1.some(
-          (role) => !authoring.visualDocuments[role].layers.length && !authoring.visualSources[role],
-        )
-      )
-        return { kind: "incomplete" };
+      const sources = effectiveCustomVisualSourcesV3(authoring),
+        startedRoles = sources.map(({ role }) => role);
+      if (startedRoles.length < CUSTOM_VISUAL_ROLES_V1.length)
+        return {
+          kind: "partial",
+          sources,
+          startedRoles,
+          placeholderRoles: CUSTOM_VISUAL_ROLES_V1.filter((role) => !startedRoles.includes(role)),
+        };
       return { kind: "ready", visualPackage: compileEffectiveCustomVisualsV3(authoring) };
     } catch {
       return { kind: "invalid" };

@@ -348,8 +348,6 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await writeFile(path.join(root, "project-selection.txt"), materialRoot);
 
       await expect(previewView.getByRole("button")).toHaveCount(4);
-      await expect(page.getByText("Pico Launcher", { exact: true })).toBeVisible();
-      await expect(page.getByText("[ SELECT ]   [ Y ] Settings", { exact: true })).toBeVisible();
       for (const label of ["Horizontal Grid", "Vertical Grid", "Coverflow"]) {
         const control = previewView.getByRole("button", { name: label });
         await control.click();
@@ -1291,7 +1289,8 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         .getByRole("button", { name: "Add rectangle", exact: true })
         .evaluate((button) => (button as HTMLButtonElement).click());
       await expect.poll(async () => (await customState(root)).cursor).toBe(beforeHiddenRectangle + 1);
-      await page.waitForTimeout(100);
+      await showDockTab(page, "Layers");
+      await expect(workspace.getByRole("button", { name: "Select Rectangle" })).toHaveAttribute("aria-current", "true");
       box = (await canvas.boundingBox())!;
       await canvas.dispatchEvent("pointerdown", {
         pointerId: 30,

@@ -24,8 +24,8 @@ export type EffectiveCustomVisualsV3 = {
   visualDocuments: Record<CustomVisualRoleV1, VisualDocumentV3>;
 };
 
-export function compileEffectiveCustomVisualsV3(snapshot: EffectiveCustomVisualsV3): CustomVisualPackageV1 {
-  const sources = CUSTOM_VISUAL_ROLES_V1.map((role) => {
+export function effectiveCustomVisualSourcesV3(snapshot: EffectiveCustomVisualsV3): CustomVisualSourceV1[] {
+  return CUSTOM_VISUAL_ROLES_V1.map((role) => {
     const document = snapshot.visualDocuments[role];
     if (document.layers.some((layer) => layer.locked !== undefined && typeof layer.locked !== "boolean"))
       throw new Error(`Invalid visual layer lock in ${role}.`);
@@ -73,6 +73,9 @@ export function compileEffectiveCustomVisualsV3(snapshot: EffectiveCustomVisuals
       provenance: { source: "Authored visual document", rightsToExport: true },
       recipe: { composition: "q16-crop-source-over-v1" },
     } satisfies CustomVisualSourceV1;
-  }).filter(Boolean) as CustomVisualSourceV1[];
-  return compileCustomVisualPackageV1(sources);
+  }).filter((source): source is CustomVisualSourceV1 => Boolean(source));
+}
+
+export function compileEffectiveCustomVisualsV3(snapshot: EffectiveCustomVisualsV3): CustomVisualPackageV1 {
+  return compileCustomVisualPackageV1(effectiveCustomVisualSourcesV3(snapshot));
 }
