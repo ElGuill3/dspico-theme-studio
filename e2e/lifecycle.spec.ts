@@ -3,46 +3,16 @@ import { mkdtemp, mkdir, readFile, readdir, rm, truncate, writeFile } from "node
 import os from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { _electron as electron, type ElectronApplication } from "playwright";
+import { _electron as electron } from "playwright";
 import { compositeCustomLayersV1 } from "../packages/dspico-contract/src/index.js";
 import { launcherV1Fixture } from "../packages/test-fixtures/src/launcher-v1.js";
 import { applyOperationV3, createProjectV2, createProjectV3 } from "../packages/theme-core/src/index.js";
 import { PortableProjectStore } from "../apps/studio/src/portable-project-store.js";
+import { closeElectronApp } from "../packages/test-fixtures/src/electron-app-close.js";
 import { certifyCurrentVisual } from "./visual-receipt.js";
 import { neutralPreviewPngV1, neutralPreviewPngVariantV1 } from "../packages/test-fixtures/src/neutral-preview-png.js";
 
 test.describe.configure({ mode: "serial" });
-
-const ELECTRON_CLOSE_GRACE_MS = 5_000;
-
-const closeElectronApp = async (electronApp: ElectronApplication): Promise<void> => {
-  const child = electronApp.process();
-  const close = Promise.resolve()
-    .then(() => electronApp.close())
-    .catch(() => {});
-  let timer: NodeJS.Timeout | undefined;
-
-  try {
-    await Promise.race([
-      close,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, ELECTRON_CLOSE_GRACE_MS);
-      }),
-    ]);
-    if (child.exitCode === null && child.signalCode === null && child.pid) {
-      try {
-        process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL");
-      } catch {
-        // The process may have exited between the status check and the signal.
-      }
-    }
-    await close;
-  } catch {
-    // Cleanup must not replace the original test failure.
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-};
 
 type BrowserStudio = {
   edit(operation: { version: 1; type: "set-token"; key: string; value: unknown }): Promise<unknown>;

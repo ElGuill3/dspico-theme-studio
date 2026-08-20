@@ -76,6 +76,8 @@ jobs:
         run: pnpm exec playwright install-deps chromium
 
       - name: End-to-end tests
+        env:
+          DEBUG: pw:browser
         run: xvfb-run -a pnpm run test:e2e
 
       - name: Upload E2E diagnostics
