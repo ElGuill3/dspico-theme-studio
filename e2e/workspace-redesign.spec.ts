@@ -64,7 +64,20 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
     ).toEqual({ bodyOverflow: "hidden", rootOverflow: "hidden", scroll: true });
     if ((await page.locator("#workspace-dock").count()) === 0)
       await page.getByRole("button", { name: "Open workspace dock" }).click();
-    await page.locator("#workspace-dock").getByRole("tab", { name: "Layers" }).click();
+    const dock = page.locator("#workspace-dock");
+    const expectCustomPreviewUnavailable = async () => {
+      await expect(dock.getByRole("heading", { name: "Preview unavailable" })).toBeVisible();
+      await expect(
+        dock.getByText("Complete all seven visual roles to enable launcher preview.", { exact: true }),
+      ).toBeVisible();
+      await expect(dock.getByText("Draft preview is live", { exact: true })).toHaveCount(0);
+      await expect(dock.locator("[data-launcher-screen]")).toHaveCount(0);
+      await expect(dock.locator("[data-launcher-chrome], [data-preview-chrome]")).toHaveCount(0);
+    };
+    await dock.getByRole("tab", { name: "Preview" }).click();
+    await expectCustomPreviewUnavailable();
+    if (screenshots) await page.screenshot({ path: path.join(screenshots, "custom-preview-unavailable.png") });
+    await dock.getByRole("tab", { name: "Layers" }).click();
 
     await workspace.getByRole("button", { name: "Import image" }).click();
     await expect(workspace.locator(".creator-layer-row")).toHaveCount(1);
@@ -80,11 +93,11 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
     await expect(workspace.getByRole("button", { name: "Hand pan tool" })).toHaveAttribute("aria-pressed", "true");
     await expect(workspace.locator(".creator-layer-list").getByRole("button", { name: /^Select / })).toHaveCount(4);
 
-    const dock = page.locator("#workspace-dock");
     await expect(dock.getByRole("tabpanel")).toHaveCount(1);
     await dock.getByRole("tab", { name: "Properties" }).click();
     await expect(dock.getByRole("tabpanel")).toHaveCount(1);
     await dock.getByRole("tab", { name: "Preview" }).click();
+    await expectCustomPreviewUnavailable();
     await dock.getByRole("button", { name: "Banner List" }).click();
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
     await page.waitForFunction(() => innerWidth >= 1400);
@@ -146,6 +159,9 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
     await drawer.getByRole("button", { name: "Run diagnostics" }).click();
     await expect(drawer.getByRole("button", { name: "Export theme" })).toBeDisabled();
     await drawer.getByRole("button", { name: "Close Project drawer" }).click();
+    await expect(dock.locator("[data-launcher-screen]")).toHaveCount(2);
+    await expect(dock.getByRole("heading", { name: "Preview unavailable" })).toHaveCount(0);
+    await expect(dock.getByText("Draft preview is live", { exact: true })).toBeVisible();
     await certifyCurrentVisual(page, projectRoot);
     await page.getByRole("button", { name: "Project", exact: true }).click();
     const certifiedDrawer = page.getByRole("dialog", { name: "Project" });

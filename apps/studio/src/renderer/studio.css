@@ -1299,6 +1299,26 @@
     padding: 13px 0 17px;
     background: transparent;
   }
+  .preview-empty-state {
+    display: grid;
+    gap: 6px;
+    max-width: 280px;
+    padding: 32px 20px;
+    text-align: center;
+  }
+  .preview-empty-state h3,
+  .preview-empty-state p {
+    margin: 0;
+  }
+  .preview-empty-state h3 {
+    color: #dbe6f7;
+    font: 700 12px var(--data);
+  }
+  .preview-empty-state p {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.5;
+  }
   .device-shell {
     position: relative;
     width: min(350px, 100%, calc((100vh - 205px) * 0.9344));
