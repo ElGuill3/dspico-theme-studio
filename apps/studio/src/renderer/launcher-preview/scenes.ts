@@ -57,6 +57,17 @@ const ink = (pixels: Uint8Array, text: string, left: number, top: number, color:
         if ((bits >> ((x + y * 3) % 7)) & 1) paint(pixels, left + index * 4 + x, top + y, 1, 1, color);
   }
 };
+const paintCover = (
+  pixels: Uint8Array,
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+  color: readonly number[],
+) => {
+  paint(pixels, left, top, width, height, color);
+  paint(pixels, left + 4, top + 4, width - 8, height - 8, [color[2]!, color[0]!, color[1]!]);
+};
 const cover = (
   pixels: Uint8Array,
   name: string,
@@ -66,11 +77,57 @@ const cover = (
   height: number,
   color: readonly number[],
 ) => {
-  paint(pixels, left, top, width, height, color);
-  paint(pixels, left + 4, top + 4, width - 8, height - 8, [color[2]!, color[0]!, color[1]!]);
+  paintCover(pixels, left, top, width, height, color);
   ink(pixels, name, left + 6, top + height - 12, [255, 255, 255]);
 };
-const topContent = (top: Uint8Array, fixture: LauncherFixtureV1, color: readonly number[], showCover: boolean) => {
+const filenameInk = (
+  pixels: Uint8Array,
+  text: string,
+  left: number,
+  top: number,
+  width: number,
+  textColor: readonly number[],
+  blendColor: readonly number[],
+) => {
+  for (const [index, character] of [...text].entries()) {
+    const origin = left + index * 4;
+    if (origin >= left + width) break;
+    const bits = character.charCodeAt(0);
+    for (let y = 0; y < 5; y += 1) {
+      let occupied = false;
+      for (let x = 0; x < 3; x += 1)
+        if ((bits >> ((x + y * 3) % 7)) & 1) {
+          const target = origin + x;
+          if (target >= left && target < left + width) {
+            paint(pixels, target, top + y, 1, 1, textColor);
+            occupied = true;
+          }
+        }
+      const fringe = origin + 3;
+      if (occupied && fringe >= left && fringe < left + width) paint(pixels, fringe, top + y, 1, 1, blendColor);
+    }
+  }
+};
+const customTopContent = (top: Uint8Array, fixture: LauncherFixtureV1, showCover: boolean) => {
+  const { cover, filename } = LAUNCHER_PREVIEW_AUTHORITY_V1.custom;
+  ink(top, `${fixture.status.nickname} ${fixture.status.batteryPercent}%`, 8, 6, [255, 255, 255]);
+  if (showCover) paintCover(top, cover.left, cover.top, cover.width, cover.height, [255, 255, 255]);
+  filenameInk(
+    top,
+    fixture.names[fixture.selectedIndex]!,
+    filename.left,
+    filename.top,
+    filename.width,
+    filename.textColor,
+    filename.blendColor,
+  );
+};
+const materialTopContent = (
+  top: Uint8Array,
+  fixture: LauncherFixtureV1,
+  color: readonly number[],
+  showCover: boolean,
+) => {
   ink(top, `${fixture.status.nickname} ${fixture.status.batteryPercent}%`, 8, 6, color);
   if (showCover) cover(top, fixture.names[fixture.selectedIndex]!, 75, 18, 106, 96, color);
 };
@@ -163,7 +220,7 @@ export function renderCustomScenesV1(
   assertFixture(fixture);
   const top = stage(assets.top),
     bottom = stage(assets.bottom);
-  topContent(top, fixture, [255, 255, 255], mode !== "coverflow");
+  customTopContent(top, fixture, mode !== "coverflow");
   paintChrome(bottom, mode, assets.scrim);
   if (mode === "horizontal-grid" || mode === "vertical-grid") paintGrid(bottom, fixture, assets, mode);
   if (mode === "banner-list") paintBanner(bottom, fixture, assets);
@@ -210,7 +267,7 @@ export function renderMaterialScenesV1(
   paint(top, 0, 0, 256, 192, roles.inverseOnSurface);
   paint(bottom, 0, 0, 256, 96, roles.inverseOnSurface);
   paint(bottom, 0, 96, 256, 96, roles.secondaryContainer);
-  topContent(top, fixture, roles.onSurface, mode !== "coverflow");
+  materialTopContent(top, fixture, roles.onSurface, mode !== "coverflow");
   const vertical = mode === "vertical-grid" || mode === "banner-list";
   paint(bottom, 0, 0, vertical ? 42 : 256, vertical ? 192 : 42, roles.inverseOnSurface);
   if (mode === "horizontal-grid" || mode === "vertical-grid")

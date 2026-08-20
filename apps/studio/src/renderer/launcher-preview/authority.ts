@@ -73,6 +73,10 @@ export const LAUNCHER_PREVIEW_AUTHORITY_V1 = {
     bundle: false,
     rule: "Import only hash-admitted launcher bytes; never bundle launcher artwork.",
   },
+  custom: {
+    cover: { left: 75, top: 18, width: 106, height: 96 },
+    filename: { left: 18, top: 170, width: 220, textColor: [30, 30, 30], blendColor: [200, 200, 200] },
+  },
   layouts: {
     "horizontal-grid": { source: layoutSources[2].path, bounds: [0, 42, 256, 150], padding: [10, 0], spacing: [4, 4] },
     "vertical-grid": { source: layoutSources[3].path, bounds: [42, 0, 214, 192], padding: [0, 3], spacing: [9, 3] },
