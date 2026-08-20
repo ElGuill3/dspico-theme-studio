@@ -174,7 +174,7 @@ export class PortableProjectStore {
     const previousBytes = await present(projectPath) ? await this.readProjectBytes() : undefined;
     const previousProjectSha256 = previousBytes ? digest(previousBytes) : null;
     let owned: string[] = [];
-    try { if (previousBytes) owned = collectMediaReferencesV3(migrateProfileV3(previousBytes.toString("utf8")).state).map(({ path }) => path); } catch {}
+    try { if (previousBytes) owned = collectMediaReferencesV3(migrateProfileV3(previousBytes.toString("utf8")).state).map(({ path }) => path); } catch { /* unmigratable previous projects have no safely identifiable owned media */ }
     await mkdir(stage, { recursive: true });
     await durable(path.join(stage, ".transaction.json"), json({ version: 1, identity: V3_STAGE_IDENTITY, rootSha256: this.rootSha256, transaction, projectSha256 } satisfies V3StageIdentity));
     for (const ref of refs) {
