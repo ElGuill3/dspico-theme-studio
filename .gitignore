@@ -4,6 +4,7 @@
 # Generated project and tooling output
 .codegraph/
 .vite/
+coverage/
 dist/
 out/
 node_modules/
