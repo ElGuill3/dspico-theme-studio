@@ -74,7 +74,7 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
       await expect(dock.getByText("Draft preview is live", { exact: true })).toHaveCount(0);
       await expect(dock.locator("[data-fidelity]")).toHaveCount(0);
       await expect(dock.locator("[data-launcher-screen]")).toHaveCount(2);
-      await expect(dock.locator("[data-launcher-chrome]")).toHaveCount(2);
+      await expect(dock.locator("[data-launcher-chrome]")).toHaveCount(0);
       await expect(dock.locator("[data-preview-chrome]")).toHaveCount(1);
       await expect(shell).toHaveAttribute("data-placeholder-roles", placeholders.join(" "));
     };

@@ -348,8 +348,6 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await writeFile(path.join(root, "project-selection.txt"), materialRoot);
 
       await expect(previewView.getByRole("button")).toHaveCount(4);
-      await expect(page.getByText("Pico Launcher", { exact: true })).toBeVisible();
-      await expect(page.getByText("[ SELECT ]   [ Y ] Settings", { exact: true })).toBeVisible();
       for (const label of ["Horizontal Grid", "Vertical Grid", "Coverflow"]) {
         const control = previewView.getByRole("button", { name: label });
         await control.click();

@@ -180,9 +180,6 @@ function PhysicalPreview({ frame, screen }: { frame: LauncherPreviewFrameV1; scr
           role="img"
           aria-label={`${screen} launcher screen`}
         />
-        <span className="launcher-status" data-launcher-chrome={screen}>
-          {screen === "top" ? "Pico Launcher" : "[ SELECT ]   [ Y ] Settings"}
-        </span>
       </div>
     </section>
   );
