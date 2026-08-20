@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
@@ -12,6 +12,7 @@ import {
 import { LAUNCHER_V1_PROFILE } from "../packages/dspico-contract/src/profile-v1-3.js";
 import { compileCustomPublicationV3 } from "../apps/studio/src/custom-authoring-v3.js";
 import { PortableProjectStore } from "../apps/studio/src/portable-project-store.js";
+import { neutralPreviewPngV1 } from "../packages/test-fixtures/src/neutral-preview-png.js";
 
 const HANDOFF_LABEL = "NOT READY — CARTRIDGE TEST ONLY";
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
@@ -29,10 +30,7 @@ test("creates a complete physical-test handoff through the Electron writer", asy
   await mkdir(path.join(root, "export"));
   await writeFile(path.join(root, "project-selection.txt"), projectRoot);
   await writeFile(path.join(root, "input.wav"), testWav());
-  await copyFile(
-    path.resolve("apps/studio/src/renderer/assets/launcher-preview/coverflow-bottom.png"),
-    path.join(root, "input.png"),
-  );
+  await writeFile(path.join(root, "input.png"), neutralPreviewPngV1);
   const app = await electron.launch({
     args: [
       "--no-sandbox",

@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CUSTOM_VISUAL_ROLES_V1,
@@ -27,6 +25,7 @@ import {
   legacyCustomProjectV3,
 } from "./custom-authoring-v3.js";
 import { importPng } from "./png-import.js";
+import { neutralPreviewPngV1 } from "../../../packages/test-fixtures/src/neutral-preview-png.js";
 
 const metadata = { name: "Custom", description: "Custom mixed media", author: "Ada" };
 const publicationBytes = (publication: ReturnType<typeof compileCustomPublicationV3>, filePath: string) =>
@@ -117,9 +116,7 @@ const addSound = (
 };
 
 const complete = () => {
-  const pngBytes = new Uint8Array(
-    readFileSync(path.resolve("apps/studio/src/renderer/assets/launcher-preview/coverflow-bottom.png")),
-  );
+  const pngBytes = neutralPreviewPngV1;
   const png = importPng(pngBytes, provenance);
   const { pixels: _pixels, sourceBytes: _sourceBytes, ...assetRecord } = png;
   void _pixels;
