@@ -135,7 +135,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
     const workspace = page.getByRole("region", { name: "Theme canvas" });
     const previewView = page.getByRole("group", { name: "Preview mode" });
     const coverflow = previewView.getByRole("button", { name: "Coverflow" });
-    const bannerList = previewView.getByRole("button", { name: "Banner" });
+    const bannerList = previewView.getByRole("button", { name: "Banner List" });
 
     await test.step("Launch and shell boundary", async () => {
       const onboarding = page.getByRole("dialog", { name: "Build a theme in seven documents" });
@@ -250,14 +250,34 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(workspace).toBeVisible();
       await showDockTab(page, "Preview");
       await expect(page.locator('[data-preview-chrome="device-frame"]')).toBeVisible();
-      await expect(workspace.locator("canvas")).toHaveCount(1);
+      await expect(workspace.locator("[data-workspace-surface]")).toHaveCount(1);
       const drawer = await openProjectDrawer(page);
       const name = drawer.getByLabel("Name");
       await expect(name).toBeVisible();
       await name.fill("Original E2E theme");
       await name.blur();
       await expect(projectName(page)).toHaveText("Original E2E theme");
+      const launcherBuffers = () =>
+        page.evaluate(() =>
+          [...document.querySelectorAll<HTMLCanvasElement>("[data-launcher-screen]")].map((canvas) => {
+            let hash = 2_166_136_261;
+            for (const byte of canvas.getContext("2d")!.getImageData(0, 0, 256, 192).data)
+              hash = Math.imul(hash ^ byte, 16_777_619);
+            return hash >>> 0;
+          }),
+        );
+      const initialBuffers = await launcherBuffers();
       await drawer.getByLabel("Primary color").fill("#123456");
+      await expect
+        .poll(async () => (await launcherBuffers()).every((hash, index) => hash !== initialBuffers[index]))
+        .toBe(true);
+      const recoloredBuffers = await launcherBuffers();
+      await drawer.getByLabel("Dark theme").click();
+      await expect
+        .poll(async () => (await launcherBuffers()).every((hash, index) => hash !== recoloredBuffers[index]))
+        .toBe(true);
+      await expect(page.locator('[data-fidelity="material-fields"]')).toContainText("launcher-vector-backed");
+      await expect(page.locator('[data-fidelity="raster"]')).toContainText("Chromium approximation");
       await closeProjectDrawer(page);
       await openProjectDrawer(page);
       await expect(drawer.getByLabel("Primary color")).toHaveValue("#123456");
@@ -304,12 +324,18 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(projectName(page)).toHaveText("Edited E2E theme");
       await writeFile(path.join(root, "project-selection.txt"), materialRoot);
 
-      await coverflow.click();
-      await expect(coverflow).toHaveAttribute("aria-pressed", "true");
+      await expect(previewView.getByRole("button")).toHaveCount(4);
+      await expect(page.getByText("Pico Launcher", { exact: true })).toBeVisible();
+      await expect(page.getByText("[ SELECT ]   [ Y ] Settings", { exact: true })).toBeVisible();
+      for (const label of ["Horizontal Grid", "Vertical Grid", "Coverflow"]) {
+        const control = previewView.getByRole("button", { name: label });
+        await control.click();
+        await expect(control).toHaveAttribute("aria-pressed", "true");
+      }
       await bannerList.click();
       await expect(bannerList).toHaveAttribute("aria-pressed", "true");
-      await expect(page.locator('[data-launcher-overlay="banner-list-top"]')).toBeVisible();
-      await expect(page.locator('[data-launcher-overlay="banner-list-bottom"]')).toBeVisible();
+      await expect(page.locator("[data-launcher-screen]")).toHaveCount(2);
+      await expect(page.locator('[data-mode="banner-list"]')).toHaveCount(2);
       await page.getByRole("button", { name: "Undo" }).click();
       await expect(projectName(page)).toHaveText("Original E2E theme");
       await page.getByRole("button", { name: "Redo" }).click();
@@ -346,8 +372,8 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(drawer.getByText("0 diagnostics", { exact: true })).toBeVisible();
       await expect(page.locator('[data-screen="top"]')).toBeVisible();
       await expect(page.locator('[data-screen="bottom"]')).toBeVisible();
-      await expect(page.getByText("launcher-vector-backed", { exact: true })).toBeVisible();
-      await expect(page.getByText("Chromium approximation", { exact: true })).toBeVisible();
+      await expect(page.getByText("Geometry: launcher-vector-backed", { exact: true })).toBeVisible();
+      await expect(page.getByText("Canvas raster: Chromium approximation", { exact: true })).toBeVisible();
 
       await drawer.getByRole("button", { name: "Export theme" }).click();
       const summary = drawer.getByTestId("export-summary");
@@ -420,7 +446,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await bannerList.click();
       await expect(bannerList).toHaveAttribute("aria-pressed", "true");
       await dock.getByRole("button", { name: "Collapse workspace dock" }).click();
-      await expect(page.locator('[data-launcher-overlay="banner-list-top"]')).toHaveCount(0);
+      await expect(page.locator("[data-launcher-screen]")).toHaveCount(0);
       dock = await showDockTab(page, "Preview");
       await expect(bannerList).toHaveAttribute("aria-pressed", "true");
 
@@ -569,16 +595,9 @@ test("completes the offline Material and Custom lifecycles through the hardened 
           contentWidth,
           mobileBreakpointActive: previewPanel !== null && getComputedStyle(previewPanel).position === "absolute",
           noHorizontalOverflow: contentWidth <= viewportWidth,
-          overlayAlignment: [...document.querySelectorAll<HTMLElement>("[data-launcher-overlay]")].every((overlay) => {
-            const overlayBounds = overlay.getBoundingClientRect();
-            const screenBounds = overlay.parentElement!.getBoundingClientRect();
-            return (
-              Math.abs(overlayBounds.x - screenBounds.x) < 0.01 &&
-              Math.abs(overlayBounds.y - screenBounds.y) < 0.01 &&
-              Math.abs(overlayBounds.width - screenBounds.width) < 0.01 &&
-              Math.abs(overlayBounds.height - screenBounds.height) < 0.01
-            );
-          }),
+          launcherScreens: [...document.querySelectorAll<HTMLCanvasElement>("[data-launcher-screen]")].every(
+            (screen) => screen.width === 256 && screen.height === 192,
+          ),
           viewportHeight: window.innerHeight,
           viewportWidth,
         };
@@ -595,7 +614,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       expect(responsiveEvidence).toMatchObject({
         mobileBreakpointActive: true,
         noHorizontalOverflow: true,
-        overlayAlignment: true,
+        launcherScreens: true,
       });
       expect(await readFile(path.join(materialRoot, "project.json"))).toEqual(materialExport.projectBefore);
       expect(await readFile(path.join(root, "export/theme/report.json"))).toEqual(materialExport.reportBefore);
@@ -735,14 +754,11 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await workspace.getByRole("button", { name: "Import image" }).click();
       await showDockTab(page, "Preview");
       await bannerList.click();
-      const deviceTopCanvas = page.locator('[data-render-plan-screen="top"]');
+      const deviceTopCanvas = page.locator('[data-launcher-screen="top"]');
       await expect(deviceTopCanvas).toBeVisible();
-      await expect(page.locator('[data-render-plan-screen="bottom"]')).toBeVisible();
-      const deviceTopOverlay = page.locator('[data-screen="top"] [data-launcher-overlay]');
-      await expect(deviceTopOverlay).toBeVisible();
-      expect(await deviceTopOverlay.getAttribute("data-launcher-overlay")).toBe("banner-list-top");
+      await expect(page.locator('[data-launcher-screen="bottom"]')).toBeVisible();
       const renderEvidence = await page
-        .locator('[data-workspace-surface="top-background"], [data-render-plan-screen="top"]')
+        .locator('[data-workspace-surface="top-background"], [data-launcher-screen="top"]')
         .evaluateAll((canvases) =>
           canvases.map((canvas) => ({
             pixels: (canvas as HTMLCanvasElement).toDataURL(),
@@ -2552,7 +2568,9 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await expect(gridLayer).toHaveAttribute("aria-current", "true");
     await workspace.getByRole("button", { name: "banner-cell", exact: true }).click();
     await page.getByRole("button", { name: "Save" }).click();
+    const publicationSequence = await page.locator(".status").getAttribute("data-accepted-sequence");
     await page.getByRole("button", { name: "Open project" }).click();
+    await expect(page.locator(".status")).not.toHaveAttribute("data-accepted-sequence", publicationSequence!);
     await workspace.getByRole("button", { name: "grid-cell-selected", exact: true }).click();
     await showDockTab(page, "Layers");
     await workspace.getByRole("button", { name: "Select Rectangle" }).click();

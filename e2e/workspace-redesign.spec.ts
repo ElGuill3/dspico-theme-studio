@@ -85,7 +85,7 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
     await dock.getByRole("tab", { name: "Properties" }).click();
     await expect(dock.getByRole("tabpanel")).toHaveCount(1);
     await dock.getByRole("tab", { name: "Preview" }).click();
-    await dock.getByRole("button", { name: "Banner" }).click();
+    await dock.getByRole("button", { name: "Banner List" }).click();
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1440, 900));
     await page.waitForFunction(() => innerWidth >= 1400);
     if (screenshots) await page.screenshot({ path: path.join(screenshots, "wide-editor-1440x900.png") });
@@ -112,7 +112,7 @@ test("owns the viewport with one dock and an overlay project drawer", async () =
     await page.keyboard.press("Shift+Tab");
     await expect(page.locator("#workspace-dock")).toBeVisible();
     await expect(
-      page.getByRole("group", { name: "Preview mode" }).getByRole("button", { name: "Banner" }),
+      page.getByRole("group", { name: "Preview mode" }).getByRole("button", { name: "Banner List" }),
     ).toHaveAttribute("aria-pressed", "true");
     await page.keyboard.press("Tab");
     await expect(page.locator(".tool-rail, #workspace-dock")).toHaveCount(0);

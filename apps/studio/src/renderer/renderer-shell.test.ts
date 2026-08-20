@@ -36,25 +36,35 @@ describe("renderer shell", () => {
     expect(preview).not.toContain('"Material colors"');
   });
 
-  it("keeps launcher view selection local to the preview compositor", () => {
+  it("uses a local package-driven launcher compositor without screenshot overlays", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
     const css = readFileSync(path.join(rendererRoot, "studio.css"), "utf8");
 
     expect(renderer).toContain("workspaceLayout.normal.previewMode");
     expect(renderer).toContain('role="group" aria-label="Preview mode"');
-    expect(renderer).toContain('aria-pressed={launcherView === "coverflow"}');
-    expect(renderer).toContain('aria-pressed={launcherView === "banner-list"}');
-    expect(renderer).toContain("data-launcher-overlay={`${launcherView}-${screen}`}");
+    for (const label of ["Horizontal Grid", "Vertical Grid", "Banner List", "Coverflow"])
+      expect(renderer).toContain(label);
+    expect(renderer).toContain("renderLauncherPreview");
+    expect(renderer).toContain("visualPackage.files");
+    expect(renderer).toContain('kind: "material"');
+    expect(renderer).toContain('data-fidelity="material-fields"');
+    expect(renderer).toContain("frame.metadata.fidelity.materialFields");
+    expect(renderer).toContain('data-fidelity="unavailable"');
+    expect(renderer).not.toContain("material.primitives");
     expect(renderer).not.toMatch(/setLauncherView[\s\S]{0,120}window\.studio/);
     expect(renderer).not.toContain("scene.content");
-    expect(renderer).not.toContain("launcher-items");
-    expect(css).toContain('url("./assets/launcher-preview/coverflow-top.png")');
-    expect(css).toContain('url("./assets/launcher-preview/coverflow-bottom.png")');
-    expect(css).toContain('url("./assets/launcher-preview/banner-list-top.png")');
-    expect(css).toContain('url("./assets/launcher-preview/banner-list-bottom.png")');
-    expect(css).toContain("pointer-events: none");
+    expect(renderer).not.toMatch(/launcher[-_]overlay/);
+    expect(css).not.toContain("launcher-preview/");
     expect(readFileSync(path.join(root, "vite.renderer.config.mts"), "utf8")).toContain("assetsInlineLimit: 0");
     expect(readFileSync(path.join(root, "vite.e2e.config.mts"), "utf8")).toContain("assetsInlineLimit: 0");
+  });
+
+  it("captures dark-theme input before asynchronous Material preview persistence", () => {
+    const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
+
+    expect(renderer).toContain("darkTheme: tokens.darkTheme");
+    expect(renderer).toMatch(/aria-label="Dark theme"[\s\S]{0,500}const darkTheme = event\.target\.checked/);
+    expect(renderer).toMatch(/const darkTheme = event\.target\.checked[\s\S]{0,500}value: darkTheme/);
   });
 
   it("wires an accessible creator Canvas workspace and inert preview chrome", () => {
@@ -288,12 +298,13 @@ describe("renderer shell", () => {
     expect(workspace).toMatch(/paintWorkspaceSurface\([\s\S]*?cropMode,\s*\[\],/);
   });
 
-  it("feeds role documents to the shared workspace and a pure Custom plan to device Canvas", () => {
+  it("feeds role documents to the shared workspace and one compiled package to device Canvas", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
     const workspace = readFileSync(path.join(rendererRoot, "workspace/read-only-workspace.tsx"), "utf8");
 
-    expect(renderer).toContain("createCustomRenderPlan(customProject)");
-    expect(renderer).toContain("renderPlan={customRenderPlan}");
+    expect(renderer).toContain("compileEffectiveCustomVisualsV3(result.customAuthoring)");
+    expect(renderer).toContain("visualPackage={visualPackage}");
+    expect(renderer).toContain("renderLauncherPreview");
     expect(workspace).toContain("visualDocuments");
     expect(workspace).toContain("CUSTOM_VISUAL_ROLES_V1.map");
     expect(workspace).not.toContain("LauncherView");
