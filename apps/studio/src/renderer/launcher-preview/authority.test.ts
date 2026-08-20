@@ -12,7 +12,24 @@ describe("launcher preview authority", () => {
     expect(JSON.stringify(LAUNCHER_PREVIEW_AUTHORITY_V1)).not.toContain('"tag"');
     expect(LAUNCHER_PREVIEW_AUTHORITY_V1.fixture.bundle).toBe(false);
     expect(LAUNCHER_PREVIEW_AUTHORITY_V1.license.spdx).toBe("Zlib");
+    expect(LAUNCHER_PREVIEW_AUTHORITY_V1.license.noticeSha256).toBe(
+      LAUNCHER_PREVIEW_AUTHORITY_V1.layoutSources[6].sha256,
+    );
+    expect(LAUNCHER_PREVIEW_AUTHORITY_V1.evidence).toMatchObject({
+      manifestSha256: "44ae2fad3345a1ee9438ef2be7fad02cc038aa3c9bd20850d3ab406a0b872293",
+      sources: expect.any(Array),
+    });
+    expect(LAUNCHER_PREVIEW_AUTHORITY_V1.evidence.sources).toHaveLength(8);
     expect(() => importLauncherPaletteFixtureV1(new Uint8Array(64))).toThrow(LauncherPreviewError);
+  });
+
+  it("admits the direct Coverflow implementation after the pinned license row", () => {
+    expect(LAUNCHER_PREVIEW_AUTHORITY_V1.layoutSources.at(-1)).toEqual({
+      path: "arm9/source/romBrowser/views/CoverFlowRecyclerView.cpp",
+      blobOid: "967f86defdbbcb8cf75ce793416b50a82a189ace",
+      sha256: "3f01e11c942b020ed761696e17daecc382ca81c4447154921eba63b8e432b965",
+    });
+    expect(LAUNCHER_PREVIEW_AUTHORITY_V1.layoutSources[6].path).toBe("LICENSE.txt");
   });
 
   it("covers the four source-backed layouts and refuses File List without a frame", () => {

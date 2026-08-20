@@ -68,6 +68,15 @@ describe("Material launcher parity gate", () => {
     }
   });
 
+  it("admits the direct Carousel implementation after the pinned Material license row", () => {
+    expect(MATERIAL_C648_SOURCES_V1[8]?.path).toBe("licenses/Material.txt");
+    expect(MATERIAL_C648_SOURCES_V1.at(-1)).toEqual({
+      path: "arm9/source/romBrowser/Theme/Material/CarouselRecyclerView.cpp",
+      blobOid: "748343301302686277200a20b8c9d2e10443c3ed",
+      sha256: "d56a10a3e1f200ac47a37b2175950367a3f6d3802a9aac0da61cc9d04c692b28",
+    });
+  });
+
   it.each(Object.entries(vectors))("matches c648 %s roles and preview primitives", (_, vector) => {
     const preview = materialPreviewV1(vector.input);
     expect(preview.roles).toEqual(vector.roles);

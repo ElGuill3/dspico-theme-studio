@@ -74,6 +74,11 @@ export const MATERIAL_C648_SOURCES_V1 = [
     "d645695673349e3947e8e5ae42332d0ac3164cd7",
     "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
   ),
+  source(
+    "arm9/source/romBrowser/Theme/Material/CarouselRecyclerView.cpp",
+    "748343301302686277200a20b8c9d2e10443c3ed",
+    "d56a10a3e1f200ac47a37b2175950367a3f6d3802a9aac0da61cc9d04c692b28",
+  ),
 ] as const;
 export const MATERIAL_COLOR_UTILITIES_V1 = {
   package: "@material/material-color-utilities",
