@@ -77,3 +77,12 @@ jobs:
 
       - name: End-to-end tests
         run: xvfb-run -a pnpm run test:e2e
+
+      - name: Upload E2E diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-diagnostics
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: warn

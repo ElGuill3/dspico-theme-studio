@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, truncate, writeFile } from "node
 import os from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { _electron as electron } from "playwright";
+import { _electron as electron, type ElectronApplication } from "playwright";
 import { compositeCustomLayersV1 } from "../packages/dspico-contract/src/index.js";
 import { launcherV1Fixture } from "../packages/test-fixtures/src/launcher-v1.js";
 import { applyOperationV3, createProjectV2, createProjectV3 } from "../packages/theme-core/src/index.js";
@@ -12,6 +12,37 @@ import { certifyCurrentVisual } from "./visual-receipt.js";
 import { neutralPreviewPngV1, neutralPreviewPngVariantV1 } from "../packages/test-fixtures/src/neutral-preview-png.js";
 
 test.describe.configure({ mode: "serial" });
+
+const ELECTRON_CLOSE_GRACE_MS = 5_000;
+
+const closeElectronApp = async (electronApp: ElectronApplication): Promise<void> => {
+  const child = electronApp.process();
+  const close = Promise.resolve()
+    .then(() => electronApp.close())
+    .catch(() => {});
+  let timer: NodeJS.Timeout | undefined;
+
+  try {
+    await Promise.race([
+      close,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ELECTRON_CLOSE_GRACE_MS);
+      }),
+    ]);
+    if (child.exitCode === null && child.signalCode === null && child.pid) {
+      try {
+        process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL");
+      } catch {
+        // The process may have exited between the status check and the signal.
+      }
+    }
+    await close;
+  } catch {
+    // Cleanup must not replace the original test failure.
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
 
 type BrowserStudio = {
   edit(operation: { version: 1; type: "set-token"; key: string; value: unknown }): Promise<unknown>;
@@ -1417,7 +1448,16 @@ test("completes the offline Material and Custom lifecycles through the hardened 
           globalThis as typeof globalThis & { studio: { requestClose(draftDirty?: boolean): void } }
         ).studio.requestClose(true),
       );
-      await expect.poll(async () => readFile(path.join(root, "close-decision.log"), "utf8")).toContain("keep");
+      await expect
+        .poll(async () => {
+          try {
+            return await readFile(path.join(root, "close-decision.log"), "utf8");
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+            throw error;
+          }
+        })
+        .toContain("keep");
       await page.evaluate(() =>
         (globalThis as typeof globalThis & { studio: { setDraftDirty(dirty: boolean): void } }).studio.setDraftDirty(
           false,
@@ -1449,7 +1489,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(page.getByText("Project reopened.")).toBeVisible();
     });
   } finally {
-    await electronApp.close();
+    await closeElectronApp(electronApp);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1519,7 +1559,7 @@ test("surfaces blocked diagnostics and recovers root-bound Custom saves on open"
       await expect(page.getByRole("button", { name: "Save" })).toBeEnabled();
       expect(await readdir(path.join(root, ".studio"))).not.toContain("v3-journal.json");
     } finally {
-      await app.close();
+      await closeElectronApp(app);
       await rm(root, { recursive: true, force: true });
     }
   };
@@ -1650,7 +1690,7 @@ test("surfaces blocked diagnostics and recovers root-bound Custom saves on open"
     expect(results.validation.diagnostics?.length).toBeGreaterThan(0);
     expect(results.blocked.diagnostics).toEqual(results.validation.diagnostics);
   } finally {
-    await app.close();
+    await closeElectronApp(app);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -2724,7 +2764,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await expect(workspace.getByRole("button", { name: "Select pasted.png" })).toHaveCount(0);
     await expect(workspace.locator('[aria-current="true"]')).toHaveCount(0);
   } finally {
-    await electronApp.close();
+    await closeElectronApp(electronApp);
     await rm(root, { recursive: true, force: true });
   }
 });
