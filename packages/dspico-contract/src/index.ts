@@ -15,7 +15,7 @@ import {
   type CustomVisualRoleV1,
   type CustomVisualSourceV1,
 } from "./custom-v1-3.js";
-import { LAUNCHER_V1_PROFILE, LAUNCHER_V1_VISUAL_FILES } from "./profile-v1-3.js";
+import { LAUNCHER_V1_PROFILE } from "./profile-v1-3.js";
 import { textLayerContainsPixelCenterV1, validTextContentV1 } from "./pixel-font-v1.js";
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };

@@ -15,6 +15,12 @@ import {
 } from "./index.js";
 
 const metadata = { name: "Theme", description: "Offline theme", author: "Author" };
+type MutablePersistedV3 = {
+  initial: { profile: { manifestSha256: string } };
+  operations: { role: string; asset: { role: string; id: string } }[];
+  snapshots: { revision: number; project: { profile: { manifestSha256: string } } }[];
+  cursor: number;
+};
 
 describe("V3 legacy migration", () => {
   it("migrates V1 and keeps the exact source bytes and hash", () => {
@@ -64,13 +70,13 @@ describe("V3 legacy migration", () => {
         rightsToExport: true,
       },
     });
-    const source = JSON.parse(saveProjectV3(state)) as Record<string, any>;
+    const source = JSON.parse(saveProjectV3(state)) as MutablePersistedV3;
     const rewrite = (value: unknown): unknown =>
       JSON.parse(
         JSON.stringify(value).replaceAll("navigation-sound", "launch-sound").replaceAll("wav:navigation", "wav:launch"),
       );
-    source.initial = rewrite(state.project);
-    source.operations = rewrite(source.operations);
+    source.initial = rewrite(state.project) as MutablePersistedV3["initial"];
+    source.operations = rewrite(source.operations) as MutablePersistedV3["operations"];
     source.snapshots = [{ revision: 0, project: structuredClone(source.initial) }];
     source.cursor = 0;
     source.initial.profile.manifestSha256 = "068f1efdc2bda015bacc70a94473ac79c0754938ff96823368206b13bf5ceb46";
@@ -99,7 +105,7 @@ describe("V3 legacy migration", () => {
         applyOperationV3(createProjectV3({ projectId: "redo", metadata }), sound("navigation", 1)),
         select,
       );
-      const persisted = JSON.parse(saveProjectV3({ ...state, cursor: 0 })) as Record<string, any>;
+      const persisted = JSON.parse(saveProjectV3({ ...state, cursor: 0 })) as MutablePersistedV3;
       persisted.initial.profile.manifestSha256 = "068f1efdc2bda015bacc70a94473ac79c0754938ff96823368206b13bf5ceb46";
       persisted.operations[0].role = "launch-sound";
       persisted.operations[0].asset.role = "launch-sound";

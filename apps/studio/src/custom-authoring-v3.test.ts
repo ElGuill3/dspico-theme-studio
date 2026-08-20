@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   CUSTOM_VISUAL_ROLES_V1,
   CUSTOM_VISUAL_SLOTS_V1,
@@ -222,6 +222,8 @@ const complete = () => {
   state = withVisualEvidence(state, media);
   return { state, media, png, sound, bcstmRef };
 };
+
+afterEach(async () => new Promise<void>((resolve) => setImmediate(resolve)));
 
 describe("active V3 Custom package", () => {
   const canonicalSoundSubsets: readonly (readonly [
