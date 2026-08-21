@@ -2009,10 +2009,12 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await showDockTab(page, "Layers");
     await expect(workspace.getByRole("button", { name: "Select Rectangle" })).toHaveAttribute("aria-current", "true");
     await showDockTab(page, "Properties");
-    const fill = workspace.getByLabel("Fill color hex");
+    const fill = workspace.getByLabel("Fill color hex"),
+      beforeFillCursor = (await customState(root)).cursor;
     await fill.fill("#123456");
     await fill.press("Tab");
     await expect(workspace.getByRole("status")).toHaveText("Rectangle fill updated.");
+    await expect.poll(async () => (await customState(root)).cursor).toBe(beforeFillCursor + 1);
     const westResize = workspace.getByRole("button", {
         name: "Resize Rectangle from w",
       }),
