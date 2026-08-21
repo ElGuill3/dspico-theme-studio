@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "electron";
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -54,6 +54,9 @@ protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ]);
 const e2eRoot = process.env.DSPICO_STUDIO_E2E_ROOT ? path.resolve(process.env.DSPICO_STUDIO_E2E_ROOT) : undefined;
+const e2eSaveDelayMs = e2eRoot ? Math.max(0, Number(process.env.DSPICO_STUDIO_E2E_SAVE_DELAY_MS) || 0) : 0;
+const e2eSaveDelayMarker = e2eRoot ? path.join(e2eRoot, ".dspico-e2e-delay-save") : undefined;
+const e2eSaveBlockedMarker = e2eRoot ? path.join(e2eRoot, ".dspico-e2e-save-blocked") : undefined;
 const viteDevServerUrl =
   typeof MAIN_WINDOW_VITE_DEV_SERVER_URL === "string" ? MAIN_WINDOW_VITE_DEV_SERVER_URL : undefined;
 const rendererUrl = selectStudioRendererUrl(viteDevServerUrl, Boolean(e2eRoot));
@@ -285,6 +288,29 @@ const dependencies: StudioDependencies = {
     await materialStore.save("project.json", state);
   },
   saveCustom: async (state: ProjectStateV3, options, media = []) => {
+    if (
+      e2eSaveDelayMs &&
+      e2eSaveDelayMarker &&
+      e2eSaveBlockedMarker &&
+      (await readFile(e2eSaveDelayMarker).then(
+        () => true,
+        () => false,
+      ))
+    )
+      try {
+        await writeFile(e2eSaveBlockedMarker, "visual save is blocked");
+        const deadline = Date.now() + e2eSaveDelayMs;
+        while (
+          Date.now() < deadline &&
+          (await readFile(e2eSaveDelayMarker).then(
+            () => true,
+            () => false,
+          ))
+        )
+          await new Promise((resolve) => setTimeout(resolve, 10));
+      } finally {
+        await rm(e2eSaveBlockedMarker, { force: true });
+      }
     if (options?.newProject) {
       const selected = await chooseProjectRoot("create");
       if (!selected) throw new ProjectDialogCancelled();

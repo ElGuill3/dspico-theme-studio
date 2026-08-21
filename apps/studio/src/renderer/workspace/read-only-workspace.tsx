@@ -97,7 +97,7 @@ const layerLockedV3 = (layer: Pick<VisualLayerV3, "locked">): boolean => layer.l
 const LOCKED_EDIT_EXPLANATION = "Locked layers cannot be edited, but visibility may still be toggled.";
 
 type Screen = "top" | "bottom";
-type Commit = (operation: VisualDocumentOperationV3, announcement: string) => void;
+type Commit = (operation: VisualDocumentOperationV3, announcement: string) => Promise<boolean>;
 const propertyFields: readonly {
   key: InspectorPropertyKey;
   label: string;
@@ -708,6 +708,14 @@ type CanvasGesture =
       mode: "crop";
       handle: CropHandle;
     };
+type TransientLayerTransform = {
+  id: string;
+  xQ16: number;
+  yQ16: number;
+  widthQ16?: number;
+  heightQ16?: number;
+  crop?: LayerV2["crop"];
+};
 type GuideGesture = {
   key: string;
   pointerId: number;
@@ -808,6 +816,8 @@ function Artboard({
     onViewport(next, message);
   };
   const drag = useRef<CanvasGesture | undefined>(undefined);
+  const commitSerial = useRef(0);
+  const pendingTransform = useRef<number | undefined>(undefined);
   const pan = useRef<{ pointerId: number; x: number; y: number; viewport: DocumentViewport } | undefined>(undefined);
   const authorityKey = gestureAuthorityKey(documentKey, authorityVersion);
   const cropMode = activeTool === "crop";
@@ -821,16 +831,7 @@ function Artboard({
       width: width * displayScale,
       height: height * displayScale,
     };
-  const [transient, setTransient] = useState<
-    {
-      id: string;
-      xQ16: number;
-      yQ16: number;
-      widthQ16?: number;
-      heightQ16?: number;
-      crop?: LayerV2["crop"];
-    }[]
-  >();
+  const [transient, setTransient] = useState<TransientLayerTransform[]>();
   const [guides, setGuides] = useState<SnapGuide[]>([]);
   const [guideDraft, setGuideDraft] = useState<DocumentGuideV3 | undefined>(undefined);
   const guideDrag = useRef<GuideGesture | undefined>(undefined);
@@ -838,6 +839,8 @@ function Artboard({
   const [rulerPosition, setRulerPosition] = useState({ x: 0, y: 0 });
   const addVerticalGuide = useRef<HTMLButtonElement>(null);
   useEffect(() => {
+    commitSerial.current += 1;
+    pendingTransform.current = undefined;
     drag.current = undefined;
     pan.current = undefined;
     guideDrag.current = undefined;
@@ -847,6 +850,8 @@ function Artboard({
     setGuideDraft(undefined);
   }, [documentKey]);
   useEffect(() => {
+    commitSerial.current += 1;
+    pendingTransform.current = undefined;
     drag.current = undefined;
     pan.current = undefined;
     guideDrag.current = undefined;
@@ -857,6 +862,8 @@ function Artboard({
   }, [authorityVersion]);
   useEffect(() => {
     if (!selectionLocked) return;
+    commitSerial.current += 1;
+    pendingTransform.current = undefined;
     drag.current = undefined;
     setTransient(undefined);
     setGuides([]);
@@ -876,7 +883,7 @@ function Artboard({
         setSpaceHeld(false);
         setPanning(false);
         setGuideDraft(undefined);
-        setTransient(undefined);
+        if (pendingTransform.current === undefined) setTransient(undefined);
         setGuides([]);
       };
     globalThis.document.addEventListener("keydown", keydown);
@@ -988,6 +995,10 @@ function Artboard({
       return;
     }
     if (event.button !== 0) return;
+    if (pendingTransform.current !== undefined) {
+      announce("Wait for the current transform to finish saving.");
+      return;
+    }
     const start = point(event);
     if (cropMode && isImageLayerV3(selectedLayer) && !layerLockedV3(selectedLayer)) {
       const handle = cropHandleAtPoint(selectedLayer, start, 6 / displayScale);
@@ -1116,6 +1127,23 @@ function Artboard({
     }
     updateGesture(point(event));
   };
+  const persistTransform = (
+    finalTransient: TransientLayerTransform[],
+    operation: VisualDocumentOperationV3,
+    message: string,
+  ) => {
+    cancelGesture();
+    const serial = ++commitSerial.current;
+    pendingTransform.current = serial;
+    setTransient(finalTransient);
+    const settle = (succeeded: boolean) => {
+      if (pendingTransform.current !== serial) return;
+      pendingTransform.current = undefined;
+      setTransient(undefined);
+      if (!succeeded) announce("Transform was not saved; authoritative geometry restored.");
+    };
+    void commit(operation, message).then(settle, () => settle(false));
+  };
   const finishGesture = (end?: { x: number; y: number }) => {
     if (!drag.current || drag.current.key !== authorityKey) return;
     const gesture = drag.current,
@@ -1139,23 +1167,26 @@ function Artboard({
           const layer = gesture.layers.find(({ id }) => id === position.layerId)!;
           return position.xQ16 !== layer.xQ16 || position.yQ16 !== layer.yQ16;
         });
-      cancelGesture();
-      if (changed)
-        commit(
-          gesture.layers.length === 1
-            ? {
-                version: 2,
-                type: "move-layer",
-                screen,
-                layerId: positions[0]!.layerId,
-                xQ16: positions[0]!.xQ16,
-                yQ16: positions[0]!.yQ16,
-              }
-            : { version: 3, type: "set-layer-positions", positions },
-          gesture.layers.length === 1
-            ? `${gesture.layers[0]!.name} moved to ${positions[0]!.xQ16 / 65536}, ${positions[0]!.yQ16 / 65536}.`
-            : `${gesture.layers.length} layers moved.`,
-        );
+      if (!changed) {
+        cancelGesture();
+        return;
+      }
+      persistTransform(
+        positions.map((position) => ({ id: position.layerId, ...position })),
+        gesture.layers.length === 1
+          ? {
+              version: 2,
+              type: "move-layer",
+              screen,
+              layerId: positions[0]!.layerId,
+              xQ16: positions[0]!.xQ16,
+              yQ16: positions[0]!.yQ16,
+            }
+          : { version: 3, type: "set-layer-positions", positions },
+        gesture.layers.length === 1
+          ? `${gesture.layers[0]!.name} moved to ${positions[0]!.xQ16 / 65536}, ${positions[0]!.yQ16 / 65536}.`
+          : `${gesture.layers.length} layers moved.`,
+      );
       return;
     }
     const raw: {
@@ -1191,33 +1222,36 @@ function Artboard({
               },
               gesture.mode === "resize" ? gesture.handle : undefined,
             );
-    cancelGesture();
     if (
-      transform.xQ16 !== gesture.layer.xQ16 ||
-      transform.yQ16 !== gesture.layer.yQ16 ||
-      transform.widthQ16 !== gesture.layer.widthQ16 ||
-      transform.heightQ16 !== gesture.layer.heightQ16
-    )
-      commit(
-        {
-          version: 2,
-          type: "set-layer-properties",
-          screen,
-          layerId: gesture.layer.id,
-          xQ16: transform.xQ16,
-          yQ16: transform.yQ16,
-          widthQ16: transform.widthQ16,
-          heightQ16: transform.heightQ16,
-          opacity: gesture.layer.opacity,
-          crop:
-            gesture.mode === "crop"
-              ? (transform as { crop: LayerV2["crop"] }).crop
-              : !isImageLayerV3(gesture.layer)
-                ? { x: 0, y: 0, width: 1, height: 1 }
-                : gesture.layer.crop,
-        },
-        `${gesture.layer.name} ${gesture.mode === "crop" ? "cropped" : "resized"} at ${transform.xQ16 / 65536}, ${transform.yQ16 / 65536}.`,
-      );
+      transform.xQ16 === gesture.layer.xQ16 &&
+      transform.yQ16 === gesture.layer.yQ16 &&
+      transform.widthQ16 === gesture.layer.widthQ16 &&
+      transform.heightQ16 === gesture.layer.heightQ16
+    ) {
+      cancelGesture();
+      return;
+    }
+    persistTransform(
+      [{ id: gesture.layer.id, ...transform }],
+      {
+        version: 2,
+        type: "set-layer-properties",
+        screen,
+        layerId: gesture.layer.id,
+        xQ16: transform.xQ16,
+        yQ16: transform.yQ16,
+        widthQ16: transform.widthQ16,
+        heightQ16: transform.heightQ16,
+        opacity: gesture.layer.opacity,
+        crop:
+          gesture.mode === "crop"
+            ? (transform as { crop: LayerV2["crop"] }).crop
+            : !isImageLayerV3(gesture.layer)
+              ? { x: 0, y: 0, width: 1, height: 1 }
+              : gesture.layer.crop,
+      },
+      `${gesture.layer.name} ${gesture.mode === "crop" ? "cropped" : "resized"} at ${transform.xQ16 / 65536}, ${transform.yQ16 / 65536}.`,
+    );
   };
   const finishPointer = (event: React.PointerEvent<HTMLElement>) => {
     if (pan.current?.pointerId === event.pointerId) return cancelGesture();
@@ -1540,7 +1574,9 @@ function Artboard({
               onPointerMove={pointerMove}
               onPointerUp={finishPointer}
               onPointerCancel={cancelGesture}
-              onLostPointerCapture={cancelGesture}
+              onLostPointerCapture={() => {
+                if (pendingTransform.current === undefined) cancelGesture();
+              }}
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => {
                 event.preventDefault();
@@ -1932,7 +1968,7 @@ export function CreatorWorkspace({
   acceptedSequence: number;
   onAdd(role: CustomVisualRoleV1): void;
   onImport(role: CustomVisualRoleV1, file: File): Promise<void>;
-  onOperation(role: CustomVisualRoleV1, operation: VisualDocumentOperationV3): void;
+  onOperation(role: CustomVisualRoleV1, operation: VisualDocumentOperationV3): Promise<boolean>;
 }) {
   const [role, setRole] = useState<CustomVisualRoleV1>("top-background");
   const [viewports, setViewports] = useState<Partial<Record<CustomVisualRoleV1, DocumentViewport>>>({});
@@ -1978,10 +2014,10 @@ export function CreatorWorkspace({
     if (!selectedLayer || !selectedDraftKey) return;
     setInspectorDrafts((current) => cacheInspectorDraft(current, selectedDraftKey, selectedLayer, next));
   };
-  const commit: Commit = (operation, message) => {
+  const commit: Commit = async (operation, message) => {
     if (readOnly) {
       setAnnouncement("This project is read-only until recovery diagnostics are resolved.");
-      return;
+      return false;
     }
     const targets = new Set(mutatedLayerIds(operation));
     for (const target of [...targets]) {
@@ -1990,10 +2026,10 @@ export function CreatorWorkspace({
     }
     if (layers.some(({ id, locked }) => targets.has(id) && locked)) {
       setAnnouncement(LOCKED_EDIT_EXPLANATION);
-      return;
+      return false;
     }
-    onOperation(role, operation);
     setAnnouncement(message);
+    return onOperation(role, operation);
   };
   useEffect(() => {
     const revisions = new Map<string, string>();

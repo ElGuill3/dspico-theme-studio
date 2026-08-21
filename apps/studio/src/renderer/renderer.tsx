@@ -548,8 +548,9 @@ function Studio() {
     action: () => Promise<StudioResult>,
     resynchronize = false,
     replaceProject = false,
+    invalidateWorkspaceAuthority = true,
   ) => {
-    setWorkspaceAuthority((authority) => authority + 1);
+    if (invalidateWorkspaceAuthority) setWorkspaceAuthority((authority) => authority + 1);
     if (authority.invalidFields().length > 0) {
       await authority.run(action);
       return false;
@@ -826,7 +827,7 @@ function Studio() {
     });
   };
   const editLayer = (role: CustomVisualRoleV1, operation: VisualDocumentOperationV3) =>
-    void run("Layer updated.", () => window.studio.editVisualDocument(role, operation));
+    run("Layer updated.", () => window.studio.editVisualDocument(role, operation), false, false, false);
 
   const assignVisual = (role: CustomVisualRoleV1) =>
     void run(
