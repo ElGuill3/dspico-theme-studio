@@ -50,6 +50,12 @@ describe("renderer shell", () => {
     expect(renderer).toContain('data-fidelity="material-fields"');
     expect(renderer).toContain("frame.metadata.fidelity.materialFields");
     expect(renderer).toContain("data-preview-state={launcherPreview.kind}");
+    expect(renderer).toContain("1:1 pixels");
+    expect(renderer).toContain('data-pixel-scale={logicalPixels ? "1" : "device"}');
+    expect(css).toMatch(/\.device-shell \{[\s\S]*?width: min\(350px, 100%, calc\(\(100vh - 205px\) \* 0\.9344\)\);/);
+    expect(css).not.toContain("width: min(270px, 100%)");
+    expect(css).toMatch(/\.device-shell\.logical-pixels \{[\s\S]*?width: 256px;[\s\S]*?aspect-ratio: auto;/);
+    expect(css).toMatch(/\.logical-pixels \.device-render-canvas \{[\s\S]*?width: 256px;[\s\S]*?height: 192px;/);
     expect(renderer).not.toContain("material.primitives");
     expect(renderer).not.toMatch(/setLauncherView[\s\S]{0,120}window\.studio/);
     expect(renderer).not.toContain("scene.content");

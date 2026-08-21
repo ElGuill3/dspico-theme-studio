@@ -202,6 +202,7 @@ function DevicePreview({
   preview?: PreviewModel;
   busy: boolean;
 }) {
+  const [logicalPixels, setLogicalPixels] = useState(false);
   const launcherPreview = useMemo<LauncherPreviewState>(() => {
     if (customPreview.kind === "invalid") return { kind: "invalid" };
     try {
@@ -243,6 +244,14 @@ function DevicePreview({
           <h2>Live preview</h2>
         </div>
         <div className="preview-controls">
+          <button
+            type="button"
+            className="pixel-scale-toggle"
+            aria-pressed={logicalPixels}
+            onClick={() => setLogicalPixels((active) => !active)}
+          >
+            1:1 pixels
+          </button>
           <div className="mode-switcher" role="group" aria-label="Preview mode">
             {launcherViews.map(({ id, label }) => (
               <button
@@ -262,8 +271,9 @@ function DevicePreview({
         <>
           <div className="device-stage">
             <div
-              className="device-shell"
+              className={`device-shell${logicalPixels ? " logical-pixels" : ""}`}
               aria-label="DSpico dual-screen device preview"
+              data-pixel-scale={logicalPixels ? "1" : "device"}
               data-preview-state={launcherPreview.kind}
               data-started-roles={
                 launcherPreview.kind === "partial" ? launcherPreview.startedRoles.join(" ") : undefined

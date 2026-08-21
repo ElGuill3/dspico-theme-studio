@@ -470,6 +470,16 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(page.locator("[data-launcher-screen]")).toHaveCount(0);
       dock = await showDockTab(page, "Preview");
       await expect(bannerList).toHaveAttribute("aria-pressed", "true");
+      const pixelScale = dock.getByRole("button", { name: "1:1 pixels" });
+      await pixelScale.click();
+      await expect(dock.locator(".device-shell")).toHaveAttribute("data-pixel-scale", "1");
+      for (const canvas of await dock.locator("[data-launcher-screen]").all()) {
+        const bounds = (await canvas.boundingBox())!;
+        expect(bounds.width).toBe(256);
+        expect(bounds.height).toBe(192);
+      }
+      await pixelScale.click();
+      await expect(dock.locator(".device-shell")).toHaveAttribute("data-pixel-scale", "device");
 
       await bannerList.focus();
       await page.keyboard.press("Tab");
