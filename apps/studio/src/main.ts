@@ -35,6 +35,7 @@ import {
   compileCustomPublicationV3,
   customAuthoringSnapshotV3,
   diagnoseCustomPublicationV3,
+  type CustomAuthoringSnapshotV3,
 } from "./custom-authoring-v3.js";
 import { openProjectFolder, prepareNewProjectFolder, ProjectDialogCancelled } from "./project-folder.js";
 import { ExportRevealCapability } from "./export-reveal.js";
@@ -87,6 +88,7 @@ const customAssets = new Map<string, { asset: ImportedPngV1; bytes: Uint8Array }
 const customMedia = new Map<string, Uint8Array>();
 let materialStore: import("./project-store.js").ProjectStore | undefined;
 let customStore: PortableProjectStore | undefined;
+let customAuthoringCache: CustomAuthoringSnapshotV3 | undefined;
 let recoveryRestoreRequested = false;
 const replaceProjectAuthority = async (
   candidate:
@@ -98,6 +100,7 @@ const replaceProjectAuthority = async (
   customStore = candidate.type === "custom" ? candidate.store : undefined;
   customAssets.clear();
   customMedia.clear();
+  customAuthoringCache = undefined;
   if (candidate.type === "custom") for (const [sha256, bytes] of candidate.media) customMedia.set(sha256, bytes);
   exportReveal.clear();
 };
@@ -150,7 +153,10 @@ const openSelectedProject = async (expected?: "material" | "custom") => {
       ),
       customAuthoring,
       location: detected.label,
-      commit: () => replaceProjectAuthority({ type: "custom", store: candidateStore, media }),
+      commit: async () => {
+        await replaceProjectAuthority({ type: "custom", store: candidateStore, media });
+        customAuthoringCache = customAuthoring;
+      },
       discard: () => candidateStore.close(),
     };
   } catch (error) {
@@ -310,7 +316,8 @@ const dependencies: StudioDependencies = {
     customMedia.clear();
     for (const [sha256, bytes] of nextMedia) customMedia.set(sha256, bytes);
   },
-  hydrateCustom: async (project) => customAuthoringSnapshotV3(project, customMedia),
+  hydrateCustom: async (project) =>
+    (customAuthoringCache = customAuthoringSnapshotV3(project, customMedia, customAuthoringCache)),
   validate: (project: MaterialProjectV1) => validateTheme(materialTheme(project), project.acknowledgments),
   validateCustom: async (project: ThemeProjectV3) => {
     const diagnostics = diagnoseCustomPublicationV3(project, customMedia);

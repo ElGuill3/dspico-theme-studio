@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { CUSTOM_VISUAL_ROLES_V1, type CustomVisualRoleV1 } from "../../../../packages/dspico-contract/src/index.js";
+import {
+  compileCustomVisualPackageV1,
+  CUSTOM_VISUAL_ROLES_V1,
+  type CustomVisualRoleV1,
+} from "../../../../packages/dspico-contract/src/index.js";
 import type { MaterialProjectV1, VisualDocumentOperationV3 } from "../../../../packages/theme-core/src/index.js";
 import { metadataErrorV3, type MetadataFieldV3 } from "../../../../packages/theme-core/src/limits-v3.js";
 import { createPreviewModel, type PreviewModel } from "../../../../packages/theme-core/src/preview.js";
@@ -22,7 +26,7 @@ import {
   type WorkspaceDockTab,
   type WorkspaceLayoutState,
 } from "./workspace/workspace-layout.js";
-import { compileEffectiveCustomVisualsV3, effectiveCustomVisualSourcesV3 } from "../custom-visuals-v3.js";
+import { effectiveCustomVisualSourcesV3, type EffectiveCustomVisualCacheV3 } from "../custom-visuals-v3.js";
 import { manualSdGuidance } from "./export-guidance.js";
 import { isCancellation, safeErrorMessage } from "../app-resilience.js";
 import { HelpDialog } from "./help-dialog.js";
@@ -370,6 +374,7 @@ function Studio() {
   const diagnosticsRef = useRef<HTMLUListElement>(null);
   const looseDrafts = useRef(new Set<HTMLElement>());
   const pendingPanelFocus = useRef<WorkspaceDockTab | "artboard" | undefined>(undefined);
+  const visualCompositionCache = useRef<EffectiveCustomVisualCacheV3>(new Map());
 
   useEffect(() => {
     const denyExternalNavigation = (event: MouseEvent) => {
@@ -424,6 +429,7 @@ function Studio() {
     resultRef.current = next;
     setResult(next);
     if (replaceProject) {
+      visualCompositionCache.current.clear();
       looseDrafts.current.clear();
       window.studio.setDraftDirty(false);
       setWorkspaceIdentity((identity) => identity + 1);
@@ -887,7 +893,7 @@ function Studio() {
     const authoring = result?.customAuthoring;
     if (!authoring) return { kind: "not-custom" };
     try {
-      const sources = effectiveCustomVisualSourcesV3(authoring),
+      const sources = effectiveCustomVisualSourcesV3(authoring, visualCompositionCache.current),
         startedRoles = sources.map(({ role }) => role);
       if (startedRoles.length < CUSTOM_VISUAL_ROLES_V1.length)
         return {
@@ -896,7 +902,7 @@ function Studio() {
           startedRoles,
           placeholderRoles: CUSTOM_VISUAL_ROLES_V1.filter((role) => !startedRoles.includes(role)),
         };
-      return { kind: "ready", visualPackage: compileEffectiveCustomVisualsV3(authoring) };
+      return { kind: "ready", visualPackage: compileCustomVisualPackageV1(sources) };
     } catch {
       return { kind: "invalid" };
     }

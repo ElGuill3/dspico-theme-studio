@@ -121,6 +121,23 @@ describe("Custom launcher preview compositor", () => {
     },
   );
 
+  it("invalidates the bounded decode cache when visual bytes mutate in place", () => {
+    const mutable = Object.fromEntries(
+        Object.entries(files).map(([path, bytes]) => [path, bytes.slice()]),
+      ) as typeof files,
+      first = renderLauncherPreview({ theme: { kind: "custom", files: mutable }, mode: "horizontal-grid", fixture });
+    mutable["topbg.bin"][0] ^= 0x1f;
+    const second = renderLauncherPreview({
+      theme: { kind: "custom", files: mutable },
+      mode: "horizontal-grid",
+      fixture,
+    });
+    expect(second.top).not.toEqual(first.top);
+    expect(
+      renderLauncherPreview({ theme: { kind: "custom", files: mutable }, mode: "horizontal-grid", fixture }),
+    ).toEqual(second);
+  });
+
   it("refuses malformed custom bytes and unsupported layouts without returning a frame", () => {
     expect(() =>
       renderLauncherPreview({

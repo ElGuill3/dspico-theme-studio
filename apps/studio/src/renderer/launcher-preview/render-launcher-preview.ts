@@ -11,6 +11,7 @@ import {
   type CustomVisualSourceV1,
   type RgbaImageV1,
 } from "../../../../../packages/dspico-contract/src/index.js";
+import { LAUNCHER_V1_VISUAL_FILES } from "../../../../../packages/dspico-contract/src/profile-v1-3.js";
 import { createLauncherPreviewFrameModelV1, LauncherPreviewError } from "./authority.js";
 import type { LauncherFixtureV1 } from "./fixture.js";
 import { materialPreviewV1 } from "./material.js";
@@ -28,15 +29,31 @@ export type LauncherPreviewFrameV1 = {
   metadata: LauncherPreviewMetadataV1 & { authority: string };
 };
 
-const decode = (files: V13VisualFilesV1) => ({
-  top: decodeXbgr555(files["topbg.bin"], 256, 192),
-  bottom: decodeXbgr555(files["bottombg.bin"], 256, 192),
-  grid: decodeA3I5(files["gridcell.bin"], files["gridcellPltt.bin"], 64, 64),
-  gridSelected: decodeA3I5(files["gridcellSelected.bin"], files["gridcellSelectedPltt.bin"], 64, 64),
-  banner: decodeA3I5(files["bannerListCell.bin"], files["bannerListCellPltt.bin"], 256, 49),
-  bannerSelected: decodeA3I5(files["bannerListCellSelected.bin"], files["bannerListCellSelectedPltt.bin"], 256, 49),
-  scrim: decodeA5I3(files["scrim.bin"], files["scrimPltt.bin"], 8, 42),
-});
+let decodedCustomFiles: { files: V13VisualFilesV1; assets: CustomPreviewAssetsV1 } | undefined;
+const sameBytes = (left: Uint8Array, right: Uint8Array) => {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) if (left[index] !== right[index]) return false;
+  return true;
+};
+const sameFiles = (left: V13VisualFilesV1, right: V13VisualFilesV1) =>
+  LAUNCHER_V1_VISUAL_FILES.every((path) => sameBytes(left[path], right[path]));
+const decode = (files: V13VisualFilesV1) => {
+  if (decodedCustomFiles && sameFiles(decodedCustomFiles.files, files)) return decodedCustomFiles.assets;
+  const assets = {
+    top: decodeXbgr555(files["topbg.bin"], 256, 192),
+    bottom: decodeXbgr555(files["bottombg.bin"], 256, 192),
+    grid: decodeA3I5(files["gridcell.bin"], files["gridcellPltt.bin"], 64, 64),
+    gridSelected: decodeA3I5(files["gridcellSelected.bin"], files["gridcellSelectedPltt.bin"], 64, 64),
+    banner: decodeA3I5(files["bannerListCell.bin"], files["bannerListCellPltt.bin"], 256, 49),
+    bannerSelected: decodeA3I5(files["bannerListCellSelected.bin"], files["bannerListCellSelectedPltt.bin"], 256, 49),
+    scrim: decodeA5I3(files["scrim.bin"], files["scrimPltt.bin"], 8, 42),
+  };
+  decodedCustomFiles = {
+    files: Object.fromEntries(LAUNCHER_V1_VISUAL_FILES.map((path) => [path, files[path].slice()])) as V13VisualFilesV1,
+    assets,
+  };
+  return assets;
+};
 const assetKeys = {
   "top-background": "top",
   "bottom-background": "bottom",

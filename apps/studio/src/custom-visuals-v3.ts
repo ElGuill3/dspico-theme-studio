@@ -23,13 +23,23 @@ export type EffectiveCustomVisualsV3 = {
   visualSources: Partial<Record<CustomVisualRoleV1, CustomVisualSourceV1>>;
   visualDocuments: Record<CustomVisualRoleV1, VisualDocumentV3>;
 };
+export type EffectiveCustomVisualCacheV3 = Map<
+  CustomVisualRoleV1,
+  { contentSha256: string; source: CustomVisualSourceV1 }
+>;
 
-export function effectiveCustomVisualSourcesV3(snapshot: EffectiveCustomVisualsV3): CustomVisualSourceV1[] {
+export function effectiveCustomVisualSourcesV3(
+  snapshot: EffectiveCustomVisualsV3,
+  cache?: EffectiveCustomVisualCacheV3,
+): CustomVisualSourceV1[] {
   return CUSTOM_VISUAL_ROLES_V1.map((role) => {
     const document = snapshot.visualDocuments[role];
     if (document.layers.some((layer) => layer.locked !== undefined && typeof layer.locked !== "boolean"))
       throw new Error(`Invalid visual layer lock in ${role}.`);
     if (!document.layers.length) return snapshot.visualSources[role];
+    const contentSha256 = sha256(new TextEncoder().encode(JSON.stringify(document))),
+      cached = cache?.get(role);
+    if (cached?.contentSha256 === contentSha256) return cached.source;
     const pixels = compositeCustomLayersV1(
       document.width,
       document.height,
@@ -64,7 +74,7 @@ export function effectiveCustomVisualSourcesV3(snapshot: EffectiveCustomVisualsV
       ),
       Object.values(snapshot.images),
     );
-    return {
+    const source = {
       role,
       sourceSha256: sha256(pixels),
       width: document.width,
@@ -73,6 +83,8 @@ export function effectiveCustomVisualSourcesV3(snapshot: EffectiveCustomVisualsV
       provenance: { source: "Authored visual document", rightsToExport: true },
       recipe: { composition: "q16-crop-source-over-v1" },
     } satisfies CustomVisualSourceV1;
+    cache?.set(role, { contentSha256, source });
+    return source;
   }).filter((source): source is CustomVisualSourceV1 => Boolean(source));
 }
 
