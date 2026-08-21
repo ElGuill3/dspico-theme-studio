@@ -300,7 +300,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         .poll(async () => (await launcherBuffers()).every((hash, index) => hash !== recoloredBuffers[index]))
         .toBe(true);
       await expect(page.locator('[data-fidelity="material-fields"]')).toContainText("launcher-vector-backed");
-      await expect(page.locator('[data-fidelity="raster"]')).toContainText("Chromium approximation");
+      await expect(page.locator('[data-fidelity="raster"]')).toContainText("deterministic CPU approximation");
       await closeProjectDrawer(page);
       await openProjectDrawer(page);
       await expect(drawer.getByLabel("Primary color")).toHaveValue("#123456");
@@ -394,7 +394,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(page.locator('[data-screen="top"]')).toBeVisible();
       await expect(page.locator('[data-screen="bottom"]')).toBeVisible();
       await expect(page.getByText("Geometry: launcher-vector-backed", { exact: true })).toBeVisible();
-      await expect(page.getByText("Canvas raster: Chromium approximation", { exact: true })).toBeVisible();
+      await expect(page.getByText("Canvas raster: deterministic CPU approximation", { exact: true })).toBeVisible();
 
       await drawer.getByRole("button", { name: "Export theme" }).click();
       const summary = drawer.getByTestId("export-summary");
