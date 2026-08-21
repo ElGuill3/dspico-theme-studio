@@ -1,20 +1,15 @@
-import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 import { encodeV13VisualFiles, sha256, type RgbaImageV1 } from "../../../../../packages/dspico-contract/src/index.js";
-import { LauncherPreviewError } from "./authority.js";
-import { importLauncherPaletteFixtureV1 } from "./fixture.js";
+import { LAUNCHER_PREVIEW_AUTHORITY_V1, LauncherPreviewError } from "./authority.js";
+import { neutralLauncherFixtureV1 } from "./fixture.js";
 import { renderLauncherPreview } from "./render-launcher-preview.js";
 
-const root = process.env.DSPICO_LAUNCHER_RUNTIME_ROOT;
-if (!root) throw new Error("DSPICO_LAUNCHER_RUNTIME_ROOT is required for launcher preview fixture admission.");
-const palette = execFileSync("git", [
-  "-C",
-  root,
-  "show",
-  "c648ce888f9b24a1a269795dd0391528e5d12251:_pico/themes/raspberry/gridcellSelectedPltt.bin",
-]);
-const fixture = importLauncherPaletteFixtureV1(palette);
+const fixture = {
+  ...neutralLauncherFixtureV1(),
+  names: ["Neutral One", "Neutral Two", "Neutral Three"],
+  selectedIndex: 1,
+};
 const image = (width: number, height: number, rgba: readonly number[]): RgbaImageV1 => ({
   width,
   height,
@@ -39,20 +34,20 @@ const renderMaterial = (mode: string, primaryColor = { r: 138, g: 217, b: 255 },
   });
 const goldens = {
   "horizontal-grid": {
-    top: "291b23e16492a87c4753078639b4826b9c3dc6c24a2422062ce0b096f0e710b3",
-    bottom: "291c3b01acb05e902c4f1ba39e92291d55297ba145f97910051d180553c2f46a",
+    top: "43a9ac5980f8943d8b3b6a63a88aed561420dd9bbe8f7b44c6e6b132137dafe2",
+    bottom: "c65fc232d19a4497134b336e8f809be2ff247852aad1e19f9bde3bb31bd8fd71",
   },
   "vertical-grid": {
-    top: "291b23e16492a87c4753078639b4826b9c3dc6c24a2422062ce0b096f0e710b3",
-    bottom: "17abb82d0e8f9f811ca4d8c8955166ee239d665f376a6fa6a577e7b78636f2fc",
+    top: "43a9ac5980f8943d8b3b6a63a88aed561420dd9bbe8f7b44c6e6b132137dafe2",
+    bottom: "be6cdb7890d7176ac51fa105ad0d240e01623b682e9696264d404048e620bd85",
   },
   "banner-list": {
-    top: "291b23e16492a87c4753078639b4826b9c3dc6c24a2422062ce0b096f0e710b3",
-    bottom: "cb13e20381dbe0acdfafa26322f495a091a2f87bbaa07b7e72f5493260000dca",
+    top: "43a9ac5980f8943d8b3b6a63a88aed561420dd9bbe8f7b44c6e6b132137dafe2",
+    bottom: "057f81224c735bdeddef035a70b97cb84639ae8ef40443dc645addf042d76b97",
   },
   coverflow: {
-    top: "427c5fa2bd93e27391c15e78375b810cd76443b7478e1fb3aeff8e4bbd1c4522",
-    bottom: "748a08be71583d4907731318209a082cda67a63a7e90f5ae3f70dfbd643e1eff",
+    top: "2e20e3fba25ea4fd45aa170e9b3eb04e5564047923c441aadc44eb44f0c83c3e",
+    bottom: "64f85e14bad7ecdd998e494d7f6a37880f081d189278341db808817516f8d935",
   },
 } as const;
 
@@ -61,8 +56,7 @@ describe("Custom launcher preview compositor", () => {
     const first = render(mode);
     const second = render(mode);
     expect(first).toEqual(second);
-    expect(sha256(first.top)).toBe(goldens[mode as keyof typeof goldens].top);
-    expect(sha256(first.bottom)).toBe(goldens[mode as keyof typeof goldens].bottom);
+    expect({ top: sha256(first.top), bottom: sha256(first.bottom) }).toEqual(goldens[mode as keyof typeof goldens]);
   });
 
   it("makes grid focus bright while darkening inactive space through the decoded scrim", () => {
@@ -77,6 +71,35 @@ describe("Custom launcher preview compositor", () => {
   it("centers Coverflow focus with two dimmed geometric neighbors on each side when available", () => {
     const frame = render("coverflow", 2, ["One", "Two", "Three", "Four", "Five"]);
     expect(frame.metadata.coverflow).toMatchObject({ centeredIndex: 2, dimmedLeft: 2, dimmedRight: 2 });
+  });
+
+  it("consumes app-bar, grid-cell, and banner-cell geometry from the admitted composition authority", () => {
+    const composition = LAUNCHER_PREVIEW_AUTHORITY_V1.composition,
+      appBar = composition.appBar as unknown as { extent: number; buttonSize: number },
+      gridOffset = composition.gridCell.textureOffset as unknown as [number, number],
+      bannerOffset = composition.bannerCell.textureOffset as unknown as [number, number],
+      originalAppBar = { ...appBar },
+      originalGridX = gridOffset[0],
+      originalBannerX = bannerOffset[0],
+      horizontal = render("horizontal-grid").bottom,
+      banner = render("banner-list").bottom;
+    try {
+      appBar.extent -= 1;
+      expect(render("horizontal-grid").bottom).not.toEqual(horizontal);
+      appBar.extent = originalAppBar.extent;
+      appBar.buttonSize -= 1;
+      expect(render("horizontal-grid").bottom).not.toEqual(horizontal);
+      appBar.buttonSize = originalAppBar.buttonSize;
+      gridOffset[0] += 1;
+      expect(render("horizontal-grid").bottom).not.toEqual(horizontal);
+      gridOffset[0] = originalGridX;
+      bannerOffset[0] += 1;
+      expect(render("banner-list").bottom).not.toEqual(banner);
+    } finally {
+      Object.assign(appBar, originalAppBar);
+      gridOffset[0] = originalGridX;
+      bannerOffset[0] = originalBannerX;
+    }
   });
 
   it("renders fixture-driven status, content, and pinned Coverflow transforms", () => {
@@ -94,12 +117,66 @@ describe("Custom launcher preview compositor", () => {
     expect(changed.top).not.toEqual(base.top);
     expect(changed.bottom).not.toEqual(base.bottom);
     expect(base.metadata.coverflow?.transforms).toEqual([
-      { offset: -2, x: 92, width: 106, depth: -80, angle: -65, mask: 112 },
-      { offset: -1, x: 98, width: 106, depth: -50, angle: -55, mask: 112 },
-      { offset: 0, x: 128, width: 106, depth: 0, angle: 0, mask: 255 },
-      { offset: 1, x: 158, width: 106, depth: -50, angle: 55, mask: 112 },
-      { offset: 2, x: 164, width: 106, depth: -80, angle: 65, mask: 112 },
+      {
+        offset: -2,
+        x: 92,
+        width: 106,
+        renderedWidth: 73,
+        top: 61,
+        depth: -80,
+        angle: 65,
+        mask: 255,
+        reflectionRows: 20,
+      },
+      {
+        offset: -1,
+        x: 98,
+        width: 106,
+        renderedWidth: 76,
+        top: 61,
+        depth: -50,
+        angle: 55,
+        mask: 255,
+        reflectionRows: 20,
+      },
+      { offset: 0, x: 128, width: 106, renderedWidth: 106, top: 63, depth: 0, angle: 0, mask: 255, reflectionRows: 20 },
+      {
+        offset: 1,
+        x: 158,
+        width: 106,
+        renderedWidth: 76,
+        top: 61,
+        depth: -50,
+        angle: -55,
+        mask: 255,
+        reflectionRows: 20,
+      },
+      {
+        offset: 2,
+        x: 164,
+        width: 106,
+        renderedWidth: 73,
+        top: 61,
+        depth: -80,
+        angle: -65,
+        mask: 255,
+        reflectionRows: 20,
+      },
     ]);
+  });
+
+  it("uses the launcher's asymmetric Material carousel geometry and rounded clipping", () => {
+    const frame = renderMaterial("coverflow");
+    expect(frame.metadata.coverflow?.transforms).toEqual([
+      { offset: -2, x: -34, width: 106, renderedWidth: 36, top: 56, depth: -7, mask: 255, cornerRadius: 18 },
+      { offset: -1, x: 6, width: 106, renderedWidth: 36, top: 56, depth: -6, mask: 255, cornerRadius: 18 },
+      { offset: 0, x: 46, width: 106, renderedWidth: 106, top: 56, depth: -5, mask: 255, cornerRadius: 18 },
+      { offset: 1, x: 156, width: 106, renderedWidth: 54, top: 56, depth: -6, mask: 255, cornerRadius: 18 },
+      { offset: 2, x: 214, width: 106, renderedWidth: 36, top: 56, depth: -7, mask: 255, cornerRadius: 18 },
+    ]);
+    const pixel = (x: number, y: number) => Array.from(frame.bottom.slice((y * 256 + x) * 4, (y * 256 + x) * 4 + 3));
+    expect(pixel(170, 80)).toEqual([189, 134, 248]);
+    expect(pixel(156, 56)).toEqual(pixel(0, 56));
   });
 
   it.each(["horizontal-grid", "vertical-grid", "banner-list", "coverflow"])(
@@ -116,7 +193,7 @@ describe("Custom launcher preview compositor", () => {
       expect(base.metadata.fidelity).toEqual({
         geometry: "launcher-vector-backed",
         materialFields: "launcher-vector-backed",
-        raster: "Chromium approximation",
+        raster: "deterministic CPU approximation",
       });
     },
   );

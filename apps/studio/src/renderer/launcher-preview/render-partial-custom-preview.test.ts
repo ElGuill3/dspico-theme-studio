@@ -31,7 +31,7 @@ describe("partial Custom launcher preview", () => {
       }
       expect(frame.metadata.fidelity).toEqual({
         geometry: "launcher-vector-backed",
-        raster: "Chromium approximation",
+        raster: "deterministic CPU approximation",
       });
     },
   );
