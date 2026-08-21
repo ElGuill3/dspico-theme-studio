@@ -2555,8 +2555,62 @@ body {
 .diagnostic-list li {
   background: var(--chrome);
 }
-.device-shell {
-  width: min(270px, 100%);
+.pixel-scale-toggle {
+  justify-self: end;
+  min-height: 28px;
+  padding: 4px 8px;
+  font: 700 10px var(--data);
+}
+.pixel-scale-toggle[aria-pressed="true"] {
+  border-color: var(--cyan);
+  color: #071820;
+  background: var(--cyan);
+}
+.device-stage:has(.logical-pixels) {
+  place-items: start center;
+  overflow: auto;
+}
+.device-shell.logical-pixels {
+  display: grid;
+  gap: 12px;
+  width: 256px;
+  max-width: none;
+  aspect-ratio: auto;
+  filter: none;
+}
+.logical-pixels .device-chrome {
+  display: none;
+}
+.logical-pixels .physical-preview {
+  position: relative;
+  top: auto;
+  left: auto;
+  display: grid;
+  gap: 4px;
+  width: 256px;
+  height: auto;
+  aspect-ratio: auto;
+  overflow: visible;
+}
+.logical-pixels .screen-heading {
+  position: static;
+  display: flex;
+  justify-content: space-between;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  color: var(--muted);
+  font: 700 9px var(--data);
+  text-transform: uppercase;
+}
+.logical-pixels .ds-screen,
+.logical-pixels .device-render-canvas {
+  width: 256px;
+  height: 192px;
+}
+.device-render-canvas {
+  image-rendering: pixelated;
 }
 @media (max-width: 1100px) {
   .creator-editor.dock-visible,
