@@ -31,4 +31,29 @@ describe("effective Custom visuals", () => {
     expect(effectiveCustomVisualSourcesV3(input)).toEqual([source]);
     expect(() => compileEffectiveCustomVisualsV3(input)).toThrow("Exactly seven visual roles are required.");
   });
+
+  it("reuses unchanged role composition by document content hash", () => {
+    const input = empty(),
+      role = "grid-cell" as const,
+      cache = new Map();
+    input.visualDocuments[role].layers.push({
+      kind: "shape",
+      shape: "rectangle",
+      id: "shape-1",
+      name: "Shape",
+      visible: true,
+      locked: false,
+      opacity: 65536,
+      rotation: 0,
+      fill: "#123456",
+      xQ16: 0,
+      yQ16: 0,
+      widthQ16: 8 * 65536,
+      heightQ16: 8 * 65536,
+    });
+    const first = effectiveCustomVisualSourcesV3(input, cache)[0]!;
+    expect(effectiveCustomVisualSourcesV3(input, cache)[0]).toBe(first);
+    input.visualDocuments[role].layers[0]!.xQ16 = 65536;
+    expect(effectiveCustomVisualSourcesV3(input, cache)[0]).not.toBe(first);
+  });
 });

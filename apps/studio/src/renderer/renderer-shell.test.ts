@@ -302,7 +302,8 @@ describe("renderer shell", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
     const workspace = readFileSync(path.join(rendererRoot, "workspace/read-only-workspace.tsx"), "utf8");
 
-    expect(renderer).toContain("compileEffectiveCustomVisualsV3(authoring)");
+    expect(renderer).toContain("compileCustomVisualPackageV1(sources)");
+    expect(renderer).toContain("visualCompositionCache.current");
     expect(renderer).toContain("customPreview={customPreview}");
     expect(renderer).toContain("renderLauncherPreview");
     expect(workspace).toContain("visualDocuments");

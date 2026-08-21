@@ -269,19 +269,28 @@ const visualDocuments = (project: ThemeProjectV3): Record<CustomVisualRoleV1, Vi
 export function customAuthoringSnapshotV3(
   project: ThemeProjectV3,
   media: ReadonlyMap<string, Uint8Array>,
+  previous?: CustomAuthoringSnapshotV3,
 ): CustomAuthoringSnapshotV3 {
   const images: CustomAuthoringSnapshotV3["images"] = {};
   for (const asset of project.assets) {
     if (asset.media.mediaType !== "image/png" || images[asset.media.sha256]) continue;
     const sourceBytes = bytesFor(media, asset.media.sha256);
-    images[asset.media.sha256] = importPng(sourceBytes, asset.provenance as ImportedPngV1["provenance"]);
+    const cached = previous?.images[asset.media.sha256],
+      provenance = asset.provenance as ImportedPngV1["provenance"];
+    images[asset.media.sha256] =
+      cached &&
+      cached.sourceSha256 === asset.media.sha256 &&
+      JSON.stringify(cached.provenance) === JSON.stringify(provenance)
+        ? cached
+        : importPng(sourceBytes, provenance);
   }
   const visualSources: CustomAuthoringSnapshotV3["visualSources"] = {};
   for (const role of CUSTOM_VISUAL_ROLES_V1) {
     const asset = assetFor(project, role);
     if (!asset) continue;
     const sourceBytes = bytesFor(media, asset.media.sha256);
-    const decoded = importPng(sourceBytes, asset.provenance as ImportedPngV1["provenance"]);
+    const decoded =
+      images[asset.media.sha256] ?? importPng(sourceBytes, asset.provenance as ImportedPngV1["provenance"]);
     visualSources[role] = {
       role,
       sourceSha256: decoded.sourceSha256,
