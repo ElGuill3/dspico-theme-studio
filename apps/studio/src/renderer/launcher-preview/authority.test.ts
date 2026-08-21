@@ -28,13 +28,29 @@ describe("launcher preview authority", () => {
     expect(Object.values(LAUNCHER_PREVIEW_AUTHORITY_V1.layouts).map(({ source }) => source)).toEqual(
       LAUNCHER_PREVIEW_AUTHORITY_V1.layoutSources.slice(2, 6).map(({ path }) => path),
     );
+    expect(LAUNCHER_PREVIEW_AUTHORITY_V1.composition).toMatchObject({
+      appBar: { extent: 42, buttonSize: 32 },
+      gridCell: { itemSize: 44, textureOffset: [-2, -2], textureSize: [48, 48], iconOffset: [6, 6], iconSize: 32 },
+      bannerCell: {
+        itemSize: [203, 44],
+        textureOffset: [-3, -2],
+        textureSize: [209, 49],
+        iconOffset: [6, 6],
+        iconSize: 32,
+      },
+      customCoverflow: { reflectionRows: 20 },
+      materialCoverflow: { selected: [46, 106], next: [156, 54], radius: 18, clip: [6, 250] },
+    });
   });
 
   const root = process.env.DSPICO_LAUNCHER_RUNTIME_ROOT;
   if (root)
     it("imports the admitted launcher palette only after clean c648 evidence verifies", () => {
       captureLauncherFixtures(root);
-      for (const source of LAUNCHER_PREVIEW_AUTHORITY_V1.layoutSources) {
+      for (const source of [
+        ...LAUNCHER_PREVIEW_AUTHORITY_V1.layoutSources,
+        ...LAUNCHER_PREVIEW_AUTHORITY_V1.sceneSources,
+      ]) {
         const prefix = `${LAUNCHER_PREVIEW_AUTHORITY_V1.launcherCommit}:${source.path}`;
         expect(execFileSync("git", ["-C", root, "rev-parse", prefix], { encoding: "utf8" }).trim()).toBe(
           source.blobOid,
