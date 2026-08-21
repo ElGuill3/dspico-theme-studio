@@ -1713,6 +1713,7 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     env: {
       ...process.env,
       DSPICO_STUDIO_E2E_ROOT: root,
+      DSPICO_STUDIO_E2E_SAVE_DELAY_MS: "5000",
       ELECTRON_DISABLE_SANDBOX: "1",
     },
   });
@@ -1841,7 +1842,12 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await gridLayer.press("ArrowRight");
     await showDockTab(page, "Properties");
     await expect(workspace.getByLabel("X", { exact: true })).toHaveValue("1");
-    const gridBounds = (await gridCanvas.boundingBox())!;
+    const saveDelayMarker = path.join(root, ".dspico-e2e-delay-save"),
+      saveBlockedMarker = path.join(root, ".dspico-e2e-save-blocked"),
+      beforeMoveCursor = (await customState(root)).cursor;
+    await writeFile(saveDelayMarker, "delay the next visual save");
+    const originalGridPixels = await gridCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL()),
+      gridBounds = (await gridCanvas.boundingBox())!;
     await page.mouse.move(gridBounds.x + gridBounds.width / 2, gridBounds.y + gridBounds.height / 2);
     await page.mouse.down();
     await page.mouse.move(
@@ -1849,10 +1855,41 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
       gridBounds.y + gridBounds.height / 2,
     );
     await expect(gridCanvas).not.toHaveAttribute("data-snap-guides", "0");
+    const movedGridPixels = await gridCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL());
+    expect(movedGridPixels).not.toBe(originalGridPixels);
     await page.mouse.up();
+    await expect
+      .poll(() =>
+        readFile(saveBlockedMarker).then(
+          () => true,
+          () => false,
+        ),
+      )
+      .toBe(true);
+    await page.evaluate(() => globalThis.dispatchEvent(new Event("blur")));
+    expect(await gridCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL())).toBe(movedGridPixels);
     await expect(gridCanvas).toHaveAttribute("data-snap-guides", "0");
     await expect(workspace.getByRole("status")).toContainText("moved to");
+    await expect(workspace.getByLabel("X", { exact: true })).toHaveValue("1");
+    expect((await customState(root)).cursor).toBe(beforeMoveCursor);
+    await rm(saveDelayMarker);
+    await expect.poll(async () => (await customState(root)).cursor).toBe(beforeMoveCursor + 1);
     await expect(workspace.getByLabel("X", { exact: true })).toHaveValue("0");
+    await expect
+      .poll(() => gridCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL()))
+      .toBe(movedGridPixels);
+    await page.getByRole("button", { name: "Undo" }).click();
+    await expect.poll(async () => (await customState(root)).cursor).toBe(beforeMoveCursor);
+    await expect(workspace.getByLabel("X", { exact: true })).toHaveValue("1");
+    await expect
+      .poll(() => gridCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL()))
+      .toBe(originalGridPixels);
+    await page.getByRole("button", { name: "Redo" }).click();
+    await expect.poll(async () => (await customState(root)).cursor).toBe(beforeMoveCursor + 1);
+    await expect(workspace.getByLabel("X", { exact: true })).toHaveValue("0");
+    await expect
+      .poll(() => gridCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL()))
+      .toBe(movedGridPixels);
     await workspace.getByRole("button", { name: "Rotate dropped.png right" }).click();
     await expect(workspace.getByLabel("Layer rotation")).toHaveValue("90");
     await expect(workspace.getByRole("status")).toHaveText("dropped.png rotated to 90 degrees.");
@@ -1972,10 +2009,12 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await showDockTab(page, "Layers");
     await expect(workspace.getByRole("button", { name: "Select Rectangle" })).toHaveAttribute("aria-current", "true");
     await showDockTab(page, "Properties");
-    const fill = workspace.getByLabel("Fill color hex");
+    const fill = workspace.getByLabel("Fill color hex"),
+      beforeFillCursor = (await customState(root)).cursor;
     await fill.fill("#123456");
     await fill.press("Tab");
     await expect(workspace.getByRole("status")).toHaveText("Rectangle fill updated.");
+    await expect.poll(async () => (await customState(root)).cursor).toBe(beforeFillCursor + 1);
     const westResize = workspace.getByRole("button", {
         name: "Resize Rectangle from w",
       }),
@@ -2337,7 +2376,9 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     expect((await customState(root)).operations.length).toBe(beforeLock + 1);
     await expect(workspace.getByLabel("X", { exact: true })).toHaveValue(beforeLockX);
     await expect(
-      workspace.getByText("Locked layers cannot be edited, but visibility may still be toggled.", { exact: true }),
+      workspace.locator(".locked-explanation", {
+        hasText: "Locked layers cannot be edited, but visibility may still be toggled.",
+      }),
     ).toBeVisible();
     await expect(workspace.getByRole("status")).toContainText(
       "Locked layers cannot be edited, but visibility may still be toggled.",
