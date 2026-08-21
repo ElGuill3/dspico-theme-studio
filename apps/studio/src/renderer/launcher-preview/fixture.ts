@@ -5,7 +5,7 @@ export type LauncherFixtureV1 = {
   palette: Uint8Array;
   names: readonly string[];
   selectedIndex: number;
-  status: { nickname: string; batteryPercent: number };
+  status: { nickname: string; batteryPercent: number; dateTime?: string; speakerLevel?: number };
   source: typeof LAUNCHER_PREVIEW_AUTHORITY_V1.fixture.source;
 };
 
@@ -15,7 +15,7 @@ export function importLauncherPaletteFixtureV1(sourceBytes: Uint8Array): Launche
     palette: admitLauncherPreviewFixtureV1(sourceBytes),
     names: ["Neutral One", "Neutral Two", "Neutral Three"],
     selectedIndex: 1,
-    status: { nickname: "Studio", batteryPercent: 100 },
+    status: { nickname: "Studio", batteryPercent: 100, dateTime: "08/20 14:35", speakerLevel: 2 },
     source: LAUNCHER_PREVIEW_AUTHORITY_V1.fixture.source,
   };
 }
@@ -23,8 +23,8 @@ export function importLauncherPaletteFixtureV1(sourceBytes: Uint8Array): Launche
 export const neutralLauncherFixtureV1 = (): LauncherFixtureV1 => ({
   version: 1,
   palette: new Uint8Array(),
-  names: ["Neutral One", "Neutral Two", "Neutral Three", "Neutral Four", "Neutral Five"],
+  names: ["Alpha Quest", "Blue Harbor", "Circuit Run", "Delta Falls", "Ember Path"],
   selectedIndex: 2,
-  status: { nickname: "Studio", batteryPercent: 100 },
+  status: { nickname: "Studio", batteryPercent: 100, dateTime: "08/20 14:35", speakerLevel: 2 },
   source: LAUNCHER_PREVIEW_AUTHORITY_V1.fixture.source,
 });

@@ -40,6 +40,63 @@ const layoutSources = [
     "ce9bd8c9fa3f0743078f7a9b593157c749380dc1915547b0ac6d0ea39b1bb771",
   ),
 ] as const;
+const sceneSources = [
+  source(
+    "arm9/source/themes/custom/CustomTheme.cpp",
+    "3463acf93c20071b78b34d73583d85d87f954f8c",
+    "bfe4ed94c858315176cdbf6c3b3fe5735e3f48f7ad0a88c5f4c1a5110288ff92",
+  ),
+  source(
+    "arm9/source/romBrowser/views/AppBarView.cpp",
+    "128c3254d5d88b6432d12ec0bfaace102eaca422",
+    "8227a8b77e40b4f41ca96dc0312f5e2e00f054dff826d1811fef71a99501e6e2",
+  ),
+  source(
+    "arm9/source/romBrowser/Theme/custom/CustomAppBarView.cpp",
+    "8ffdfd2f6cc6b681f6a9ff66e40e3420c4c0305d",
+    "69f3473e58416a16d233886980cc415c4f810cddb77d7a46adb44a41b4a0f239",
+  ),
+  source(
+    "arm9/source/romBrowser/Theme/custom/CustomIconGridItemView.cpp",
+    "4674fb83f8a2815b997726ce1e37010e37eb17bf",
+    "d4d5c4fcc1c56e059b1c4d1d3b6976922b0ce32307af82c77a2509ea46b9c59d",
+  ),
+  source(
+    "arm9/source/romBrowser/Theme/custom/CustomBannerListItemView.cpp",
+    "a2dea5e4080dfbfcdab727167e51824f1876ba57",
+    "d42b98376c53b010adedf9103eb68f20382d9c31d32856edc90e8366ddca1b4d",
+  ),
+  source(
+    "arm9/source/romBrowser/views/RomBrowserTopScreenView.cpp",
+    "e5a1ac2e7f5300cc9229d0e102494afe78fad2d2",
+    "0931b367072583f1a08ad99ca5cd806fc81fcdd91529f2a64d68d4b62c28b13f",
+  ),
+  source(
+    "arm9/source/romBrowser/views/StatusBarFormat.h",
+    "77a2db90283fcd068c2413aa1204383bf9ed3f77",
+    "aaa0a96a1bd7f10d41d6c71a6a4047a6d90f1878933f8f1f64eb1e958b59aa21",
+  ),
+  source(
+    "arm9/source/romBrowser/views/CoverFlowRecyclerView.cpp",
+    "967f86defdbbcb8cf75ce793416b50a82a189ace",
+    "3f01e11c942b020ed761696e17daecc382ca81c4447154921eba63b8e432b965",
+  ),
+  source(
+    "arm9/source/romBrowser/views/CoverView.cpp",
+    "015b4993ceb00cdf8e718cfa6a739e3f43173de2",
+    "b2e05c5240dc6d54a55eb7ffef9009da62433ee0c79980d4bb71a33b94ad9b45",
+  ),
+  source(
+    "arm9/source/romBrowser/Theme/Material/CarouselRecyclerView.cpp",
+    "748343301302686277200a20b8c9d2e10443c3ed",
+    "d56a10a3e1f200ac47a37b2175950367a3f6d3802a9aac0da61cc9d04c692b28",
+  ),
+  source(
+    "arm9/source/romBrowser/Theme/Material/MaterialFileInfoCardView.cpp",
+    "153cbcdf3f6bf98b92b7ef094d65a08c105d35d4",
+    "a4077e05bd35468789c41aadcfe67c60edcb0ef7a5167e18a2229f62fc4a4873",
+  ),
+] as const;
 const fixtureCandidate = LAUNCHER_V1_PROFILE.evidence.find(
   ({ path }) => path === "_pico/themes/raspberry/gridcellSelectedPltt.bin",
 );
@@ -62,6 +119,7 @@ export const LAUNCHER_PREVIEW_AUTHORITY_V1 = {
   launcherCommit: commit,
   evidence: { manifestSha256: LAUNCHER_V1_PROFILE.manifestSha256, sources: LAUNCHER_V1_PROFILE.evidence },
   layoutSources,
+  sceneSources,
   license: { spdx: "Zlib", attribution: "Copyright (c) 2025 LNH team", noticeSha256: layoutSources[6].sha256 },
   fixture: {
     source: fixture,
@@ -73,6 +131,45 @@ export const LAUNCHER_PREVIEW_AUTHORITY_V1 = {
     "vertical-grid": { source: layoutSources[3].path, bounds: [42, 0, 214, 192], padding: [0, 3], spacing: [9, 3] },
     "banner-list": { source: layoutSources[4].path, bounds: [42, 0, 214, 192], padding: [0, 3], spacing: [0, 3] },
     coverflow: { source: layoutSources[5].path, topCover: false },
+  },
+  composition: {
+    appBar: { extent: 42, buttonSize: 32 },
+    gridCell: { itemSize: 44, textureOffset: [-2, -2], textureSize: [48, 48], iconOffset: [6, 6], iconSize: 32 },
+    bannerCell: {
+      itemSize: [203, 44],
+      textureOffset: [-3, -2],
+      textureSize: [209, 49],
+      iconOffset: [6, 6],
+      iconSize: 32,
+    },
+    top: {
+      statusHeight: 16,
+      cover: [75, 18, 106, 96],
+      customIcon: [24, 132],
+      customLines: [
+        [70, 126],
+        [70, 141],
+        [70, 155],
+      ],
+      customFilename: [18, 170],
+      materialIcon: [24, 128],
+      materialLines: [
+        [70, 122],
+        [70, 137],
+        [70, 151],
+      ],
+      materialFilename: [18, 168],
+    },
+    customCoverflow: { reflectionRows: 20 },
+    materialCoverflow: {
+      y: 56,
+      selected: [46, 106],
+      next: [156, 54],
+      smallWidth: 36,
+      spacing: 4,
+      radius: 18,
+      clip: [6, 250],
+    },
   },
 } as const;
 
