@@ -1226,12 +1226,15 @@ export function paintWorkspaceSurface(
         crop?: LayerV2["crop"];
       }[],
   images: ReadonlyMap<string, NormalizedRgbaAssetV1> = new Map(),
-  selected: readonly string[] = [],
+  _selected: readonly string[] = [],
   size: { width: number; height: number } = SURFACE_SIZE,
-  cropMode = false,
+  _cropMode = false,
   guides: readonly SnapGuide[] = [],
-  lockedSelected: readonly string[] = [],
+  _lockedSelected: readonly string[] = [],
 ): void {
+  void _selected;
+  void _cropMode;
+  void _lockedSelected;
   context.clearRect(0, 0, size.width, size.height);
   context.imageSmoothingEnabled = false;
   if (palette) {
@@ -1347,40 +1350,6 @@ export function paintWorkspaceSurface(
         destination.width / 65536,
         destination.height / 65536,
       );
-  }
-  const selectedLayers = plannedLayers.filter(({ id }) => selected.includes(id));
-  if (selectedLayers.length) {
-    const bounds = selectionVisualBoundsQ16(
-        selectedLayers.map((layer) => ({
-          xQ16: layer.destinationQ16.x,
-          yQ16: layer.destinationQ16.y,
-          widthQ16: layer.destinationQ16.width,
-          heightQ16: layer.destinationQ16.height,
-          rotation: layer.rotation,
-        })),
-      )!,
-      left = bounds.x / 65536,
-      top = bounds.y / 65536,
-      right = (bounds.x + bounds.width) / 65536,
-      bottom = (bounds.y + bounds.height) / 65536;
-    context.globalAlpha = 1;
-    context.strokeStyle = "#4ed8e8";
-    context.lineWidth = 1;
-    context.strokeRect(left + 0.5, top + 0.5, bounds.width / 65536 - 1, bounds.height / 65536 - 1);
-    context.fillStyle = "#4ed8e8";
-    const handleSize = cropMode ? 6 : 5;
-    if (selectedLayers.length === 1 && !lockedSelected.includes(selectedLayers[0]!.id))
-      for (const [x, y] of [
-        [left, top],
-        [(left + right) / 2, top],
-        [right, top],
-        [right, (top + bottom) / 2],
-        [right, bottom],
-        [(left + right) / 2, bottom],
-        [left, bottom],
-        [left, (top + bottom) / 2],
-      ])
-        context.fillRect(x - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
   }
   context.globalAlpha = 1;
   if (grid) {

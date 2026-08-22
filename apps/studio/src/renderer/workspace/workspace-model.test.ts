@@ -244,10 +244,13 @@ describe("read-only workspace model", () => {
       ],
     };
 
-    paintWorkspaceSurface(context, { background: "#000000", accent: "#ffffff" }, false, surface);
+    paintWorkspaceSurface(context, { background: "#000000", accent: "#ffffff" }, false, surface, undefined, new Map(), [
+      "first",
+    ]);
 
     expect(context.fillRect).toHaveBeenNthCalledWith(4, 1, 2, 3, 4);
     expect(context.fillRect).toHaveBeenNthCalledWith(5, 5, 6, 7, 8);
+    expect(context.strokeRect).not.toHaveBeenCalled();
     expect(context.globalAlpha).toBe(1);
   });
 
