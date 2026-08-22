@@ -21,7 +21,10 @@ export type VisualDocumentOperationV3 =
   | OperationV2
   | { version: 3; type: "add-shape-layer"; layer: ShapeLayerV3 }
   | { version: 3; type: "set-shape-fill"; layerId: string; fill: string }
+  | { version: 3; type: "set-shape-corner-radius"; layerId: string; cornerRadiusQ16: number }
   | { version: 3; type: "add-text-layer"; layer: TextLayerV3 }
+  | { version: 3; type: "set-text-fill"; layerId: string; fill: string }
+  | { version: 3; type: "set-layer-opacity"; layerId: string; opacity: number }
   | {
       version: 3;
       type: "set-layer-rotation";
@@ -146,12 +149,29 @@ export const isVisualDocumentOperationV3 = (operation: unknown): operation is Vi
     return exact(["version", "type", "layer"]) && isVisualLayerV3(value.layer) && value.layer.kind === "shape";
   if (value.type === "add-text-layer")
     return exact(["version", "type", "layer"]) && isVisualLayerV3(value.layer) && value.layer.kind === "text";
-  if (value.type === "set-shape-fill")
+  if (value.type === "set-shape-fill" || value.type === "set-text-fill")
     return (
       exact(["version", "type", "layerId", "fill"]) &&
       typeof value.layerId === "string" &&
       Boolean(value.layerId) &&
       canonicalHexColorV3(value.fill)
+    );
+  if (value.type === "set-shape-corner-radius")
+    return (
+      exact(["version", "type", "layerId", "cornerRadiusQ16"]) &&
+      typeof value.layerId === "string" &&
+      Boolean(value.layerId) &&
+      Number.isSafeInteger(value.cornerRadiusQ16) &&
+      Number(value.cornerRadiusQ16) >= 0
+    );
+  if (value.type === "set-layer-opacity")
+    return (
+      exact(["version", "type", "layerId", "opacity"]) &&
+      typeof value.layerId === "string" &&
+      Boolean(value.layerId) &&
+      Number.isSafeInteger(value.opacity) &&
+      Number(value.opacity) >= 0 &&
+      Number(value.opacity) <= 65536
     );
   if (value.type === "set-layer-rotation")
     return (
@@ -530,6 +550,21 @@ const editVisualDocument = (
     const layer = layers.find(({ id }) => id === operation.layerId);
     if (isShapeLayerV3(layer)) layer.fill = operation.fill;
     else fail("Unknown shape layer");
+  } else if (operation.type === "set-text-fill") {
+    const layer = layers.find(({ id }) => id === operation.layerId);
+    if (isTextLayerV3(layer)) layer.fill = operation.fill;
+    else fail("Unknown text layer");
+  } else if (operation.type === "set-shape-corner-radius") {
+    const layer = layers.find(({ id }) => id === operation.layerId);
+    if (!isShapeLayerV3(layer)) return fail("Unknown rectangle layer");
+    if (layer.shape !== "rectangle") return fail("Unknown rectangle layer");
+    const radius = Math.min(operation.cornerRadiusQ16, Math.floor(Math.min(layer.widthQ16, layer.heightQ16) / 2));
+    if (radius === 0) delete layer.cornerRadiusQ16;
+    else layer.cornerRadiusQ16 = radius;
+  } else if (operation.type === "set-layer-opacity") {
+    const layer = layers.find(({ id }) => id === operation.layerId);
+    if (!layer) fail("Unknown layer");
+    layer!.opacity = operation.opacity;
   } else if (operation.type === "set-layer-rotation") {
     const layer = layers.find(({ id }) => id === operation.layerId);
     if (!layer) fail("Unknown layer");
@@ -662,6 +697,11 @@ const editVisualDocument = (
           opacity: operation.opacity,
           ...(isShapeLayerV3(layer) || isTextLayerV3(layer) ? {} : { crop: operation.crop }),
         });
+        if (isShapeLayerV3(layer) && layer.cornerRadiusQ16 !== undefined) {
+          const radius = Math.min(layer.cornerRadiusQ16, Math.floor(Math.min(layer.widthQ16, layer.heightQ16) / 2));
+          if (radius === 0) delete layer.cornerRadiusQ16;
+          else layer.cornerRadiusQ16 = radius;
+        }
       }
       if (operation.type !== "remove-layer" && !isVisualLayerV3(layer)) fail("Invalid layer operation");
     } else {

@@ -50,7 +50,12 @@ export function effectiveCustomVisualSourcesV3(
                 id: layer.id,
                 order,
                 ...(isShapeLayerV3(layer)
-                  ? { kind: "shape" as const, shape: layer.shape, fill: layer.fill }
+                  ? {
+                      kind: "shape" as const,
+                      shape: layer.shape,
+                      ...(layer.cornerRadiusQ16 === undefined ? {} : { cornerRadiusQ16: layer.cornerRadiusQ16 }),
+                      fill: layer.fill,
+                    }
                   : isTextLayerV3(layer)
                     ? {
                         kind: "text" as const,

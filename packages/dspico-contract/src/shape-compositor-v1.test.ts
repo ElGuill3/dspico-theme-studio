@@ -61,6 +61,46 @@ describe("native shape compositing", () => {
     expect([...pixels.slice(40, 44)]).toEqual([0, 255, 0, 255]);
   });
 
+  it("uses deterministic rounded rectangle containment at pixel centers", () => {
+    const pixels = compositeCustomLayersV1(
+      4,
+      4,
+      [
+        {
+          kind: "shape",
+          id: "rounded",
+          order: 0,
+          shape: "rectangle",
+          cornerRadiusQ16: 2 * 65536,
+          fill: "#00ff00",
+          opacity: 65536,
+          destinationQ16: { x: 0, y: 0, width: 4 * 65536, height: 4 * 65536 },
+        },
+      ],
+      [],
+    );
+    const visible = Array.from({ length: 16 }, (_, index) => index).filter((index) => pixels[index * 4 + 3]);
+
+    expect(visible).toEqual([1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14]);
+  });
+
+  it("rejects radius data on ellipses and radii outside rectangle bounds", () => {
+    const layer = {
+      kind: "shape" as const,
+      id: "shape",
+      order: 0,
+      shape: "rectangle" as const,
+      cornerRadiusQ16: 3 * 65536,
+      fill: "#00ff00",
+      opacity: 65536,
+      destinationQ16: { x: 0, y: 0, width: 4 * 65536, height: 4 * 65536 },
+    };
+    expect(() => compositeCustomLayersV1(4, 4, [layer], [])).toThrow("Invalid shape layer");
+    expect(() =>
+      compositeCustomLayersV1(4, 4, [{ ...layer, shape: "ellipse" as const, cornerRadiusQ16: 65536 }], []),
+    ).toThrow("Invalid shape layer");
+  });
+
   it("rejects non-canonical shape input at the compositor boundary", () => {
     expect(() =>
       compositeCustomLayersV1(
