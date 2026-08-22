@@ -908,7 +908,13 @@ export const snapLayerTransformQ16 = (
                 priority: 2,
               },
             ]),
-      ];
+      ].filter(
+        ({ delta }) =>
+          mode === "move" ||
+          (axis === "x"
+            ? bounds.width + (handle.includes("w") ? -delta : delta)
+            : bounds.height + (handle.includes("n") ? -delta : delta)) >= 65536,
+      );
     },
     thresholdQ16 = Math.round(((options.thresholdPx ?? 5) * 65536) / options.displayScale),
     xSnap = closestSnap(deltas("x"), thresholdQ16),

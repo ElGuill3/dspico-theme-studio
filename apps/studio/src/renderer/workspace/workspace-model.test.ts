@@ -1302,6 +1302,117 @@ describe("read-only workspace model", () => {
     );
   });
 
+  it.each(RESIZE_HANDLES)("rejects a %s snap that would cross the opposite edge", (handle) => {
+    const subject = {
+        ...layer("subject", 10, 10, 10, 10),
+        kind: "shape" as const,
+        shape: "rectangle" as const,
+        fill: "#ffffff",
+      },
+      before = layerVisualBoundsQ16(subject),
+      target = layer(
+        "target",
+        handle.includes("w") ? 20 : handle.includes("e") ? 6 : 0,
+        handle.includes("n") ? 20 : handle.includes("s") ? 6 : 0,
+        4,
+        4,
+      ),
+      raw = pointerTransformQ16(
+        subject,
+        { x: 0, y: 0 },
+        {
+          x: handle.includes("w") ? 100 : handle.includes("e") ? -100 : 0,
+          y: handle.includes("n") ? 100 : handle.includes("s") ? -100 : 0,
+        },
+        "resize",
+        handle,
+      ),
+      snapped = snapLayerTransformQ16(
+        subject,
+        raw,
+        "resize",
+        [subject, target],
+        { width: 256, height: 192 },
+        { enabled: true, grid: 1, displayScale: 1 },
+        handle,
+      ),
+      after = layerVisualBoundsQ16({ ...subject, ...snapped });
+
+    expect(after.width).toBeGreaterThanOrEqual(65536);
+    expect(after.height).toBeGreaterThanOrEqual(65536);
+    if (!handle.includes("w")) expect(after.x).toBe(before.x);
+    if (!handle.includes("e")) expect(after.x + after.width).toBe(before.x + before.width);
+    if (!handle.includes("n")) expect(after.y).toBe(before.y);
+    if (!handle.includes("s")) expect(after.y + after.height).toBe(before.y + before.height);
+  });
+
+  it.each([
+    ["zero", 0, 0],
+    ["sub-pixel", 0.25, 0],
+    ["crossed", -10, 0],
+    ["zero rotated", 0, 90],
+    ["sub-pixel rotated", 0.25, 90],
+    ["crossed rotated", -10, 90],
+  ] as const)("keeps a %s rounded resize above the compositor minimum", (_case, offset, rotation) => {
+    const subject = {
+        ...layer("rounded", 10, 10, 12, 8),
+        kind: "shape" as const,
+        shape: "rectangle" as const,
+        cornerRadiusQ16: 4 * 65536,
+        fill: "#ffffff",
+        rotation,
+      },
+      before = layerVisualBoundsQ16(subject),
+      top = before.y / 65536,
+      bottom = (before.y + before.height) / 65536,
+      target = layer("target", 0, top - 4, 4, 4),
+      raw = pointerTransformQ16(subject, { x: 0, y: bottom }, { x: 0, y: top + offset }, "resize", "s"),
+      snapped = snapLayerTransformQ16(
+        subject,
+        raw,
+        "resize",
+        [subject, target],
+        { width: 256, height: 192 },
+        { enabled: true, grid: 1, displayScale: 1 },
+        "s",
+      ),
+      snappedBounds = layerVisualBoundsQ16({ ...subject, ...snapped }),
+      cornerRadiusQ16 = Math.min(
+        subject.cornerRadiusQ16,
+        Math.floor(Math.min(snapped.widthQ16, snapped.heightQ16) / 2),
+      );
+
+    expect(layerVisualBoundsQ16({ ...subject, ...raw }).height).toBe(65536);
+    expect(snappedBounds.height).toBeGreaterThanOrEqual(65536);
+    expect(snappedBounds.y).toBe(before.y);
+    expect(snapped.guides).not.toContainEqual({ axis: "y", positionQ16: before.y });
+    expect(() =>
+      compositeCustomLayersV1(
+        256,
+        192,
+        [
+          {
+            kind: "shape",
+            id: subject.id,
+            order: 0,
+            shape: subject.shape,
+            cornerRadiusQ16,
+            fill: subject.fill,
+            opacity: subject.opacity,
+            rotation: subject.rotation,
+            destinationQ16: {
+              x: snapped.xQ16,
+              y: snapped.yQ16,
+              width: snapped.widthQ16,
+              height: snapped.heightQ16,
+            },
+          },
+        ],
+        [],
+      ),
+    ).not.toThrow();
+  });
+
   it("fits imported images inside the 256 by 192 artboard without scaling small images up", () => {
     expect(fitImageToArtboard(512, 192)).toEqual({ width: 256, height: 96 });
     expect(fitImageToArtboard(32, 24)).toEqual({ width: 32, height: 24 });
