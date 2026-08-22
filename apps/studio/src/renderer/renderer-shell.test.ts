@@ -106,24 +106,30 @@ describe("renderer shell", () => {
     expect(css).not.toMatch(/gradient\(/);
   });
 
-  it("keeps the artboard first and mounts one tabbed dock panel at a time", () => {
+  it("keeps the artboard first, stacks edit panels, and uses Preview as the alternate dock view", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8"),
       workspace = readFileSync(path.join(rendererRoot, "workspace/read-only-workspace.tsx"), "utf8"),
       css = readFileSync(path.join(rendererRoot, "studio.css"), "utf8"),
       artboard = workspace.indexOf("<Artboard"),
-      dock = workspace.indexOf('id="workspace-dock"');
+      dock = workspace.indexOf('id="workspace-dock"'),
+      layers = workspace.indexOf('id="dock-panel-layers"'),
+      properties = workspace.indexOf('id="dock-panel-properties"');
     expect(artboard).toBeGreaterThan(0);
     expect(artboard).toBeLessThan(dock);
-    expect(workspace).toContain('role="tablist" aria-label="Workspace panels"');
-    expect(workspace).toContain('dockTab === "layers"');
-    expect(workspace).toContain('dockTab === "properties"');
+    expect(workspace).toContain('role="group" aria-label="Workspace panels"');
+    expect(workspace).toContain('dockTab !== "preview"');
     expect(workspace).toContain('dockTab === "preview"');
+    expect(workspace).toContain("compact-${dockTab}");
+    expect(layers).toBeGreaterThan(dock);
+    expect(layers).toBeLessThan(properties);
+    expect(workspace).not.toContain('role="tabpanel"');
     expect(renderer).toContain('pendingPanelFocus.current = "artboard"');
+    expect(renderer).toContain("document.getElementById(`dock-panel-${pending}`)");
     expect(renderer).toContain('document.querySelector<HTMLElement>(".workspace-canvas")');
-    expect(css).toContain(".workspace-dock");
+    expect(css).toContain(".dock-edit-stack");
   });
 
-  it("keeps Inspector drafts outside unmounted panel content and synchronizes layout storage events", () => {
+  it("keeps Inspector drafts outside dock view content and synchronizes layout storage events", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8"),
       workspace = readFileSync(path.join(rendererRoot, "workspace/read-only-workspace.tsx"), "utf8");
     expect(workspace).toContain("useState<InspectorDraftCache>");
@@ -132,6 +138,39 @@ describe("renderer shell", () => {
     expect(renderer).toContain("workspaceLayoutFromStorageEvent(event, layoutStorage)");
     expect(renderer).toContain('globalThis.addEventListener("storage", storage)');
     expect(renderer).toContain('globalThis.removeEventListener("storage", storage)');
+  });
+
+  it("makes dock width and edit split accessible, keyboard-resizable, and pointer-safe", () => {
+    const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8"),
+      workspace = readFileSync(path.join(rendererRoot, "workspace/read-only-workspace.tsx"), "utf8"),
+      css = readFileSync(path.join(rendererRoot, "studio.css"), "utf8");
+    expect(workspace.match(/role="separator"/g)).toHaveLength(2);
+    expect(workspace).toContain('aria-orientation="vertical"');
+    expect(workspace).toContain('aria-orientation="horizontal"');
+    expect(workspace).toContain("aria-valuemin={MIN_WORKSPACE_DOCK_WIDTH}");
+    expect(workspace).toContain("aria-valuemax={MAX_WORKSPACE_EDIT_SPLIT}");
+    expect(workspace).toContain("aria-valuenow={dockWidth}");
+    expect(workspace).toContain("aria-valuenow={editSplit}");
+    expect(workspace).toContain("dockWidthAfterKey(dockWidth, event.key)");
+    expect(workspace).toContain("editSplitAfterKey(editSplit, event.key)");
+    expect(workspace).toContain("setPointerCapture(event.pointerId)");
+    expect(workspace).toContain("onPointerCancel=");
+    expect(workspace).toContain("onLostPointerCapture=");
+    expect(workspace).toContain('globalThis.addEventListener("blur", stop)');
+    expect(workspace).toContain('globalThis.document.body.classList.add("workspace-resizing")');
+    expect(workspace).toContain('globalThis.document.body.classList.remove("workspace-resizing")');
+    expect(workspace).toContain('"--workspace-dock-width"');
+    expect(workspace).toContain('"--dock-edit-split"');
+    expect(renderer).toContain("dockWidth={visibleLayout.dockWidth}");
+    expect(renderer).toContain("editSplit={visibleLayout.editSplit}");
+    expect(renderer).toContain("dockWidth: clampWorkspaceDockWidth(dockWidth)");
+    expect(renderer).toContain("editSplit: clampWorkspaceEditSplit(editSplit)");
+    expect(renderer).toContain(
+      "else if (event.shiftKey && visible.dockOpen) pendingPanelFocus.current = visible.dockTab",
+    );
+    expect(css).toContain("grid-template-columns: minmax(0, 1fr) var(--workspace-dock-width)");
+    expect(css).toContain("flex: var(--dock-edit-split) 1 0");
+    expect(css).toMatch(/\.layers-panel,\s*\.layer-inspector,\s*\.dock-preview \{[^}]*overflow-y: auto;/);
   });
 
   it("keeps the source-local logo in the launch card and removes branding from editor chrome", () => {
@@ -181,7 +220,7 @@ describe("renderer shell", () => {
     expect(collapseControl).toBeGreaterThan(-1);
     expect(collapseControl).toBeLessThan(dockTabs);
     expect(css).toMatch(
-      /\.creator-editor\.toolbar-visible\.dock-visible \{[^}]*grid-template-columns: 52px minmax\(0, 1fr\) 320px;/,
+      /\.creator-editor\.toolbar-visible\.dock-visible \{[^}]*grid-template-columns: 52px minmax\(0, 1fr\) var\(--workspace-dock-width\);/,
     );
     expect(css).toMatch(/\.workspace-dock \{[^}]*grid-column: 2;[^}]*border-left:/);
     expect(css).toMatch(/\.creator-editor\.toolbar-visible\.dock-visible \.workspace-dock \{[^}]*grid-column: 3;/);
@@ -191,6 +230,10 @@ describe("renderer shell", () => {
       /@media \(max-width: 1100px\)[\s\S]*?\.creator-editor \.workspace-dock[\s\S]*?position: absolute;/,
     );
     expect(css).toMatch(/@media \(max-width: 1100px\)[\s\S]*?\.creator-editor \.workspace-dock[^}]*right: 0;/);
+    expect(css).toMatch(
+      /@media \(max-width: 1100px\)[\s\S]*?\.dock-edit-stack\.compact-layers > \.layer-inspector,[\s\S]*?\.dock-edit-stack\.compact-properties > \.layers-panel[^}]*display: none;/,
+    );
+    expect(css).toMatch(/@media \(max-width: 1100px\)[\s\S]*?\.dock-stack-separator[^}]*display: none;/);
     expect(css).toMatch(/body,\s*#root[\s\S]*?overflow: hidden;/);
   });
 
@@ -254,10 +297,11 @@ describe("renderer shell", () => {
     expect(workspace).toContain('addShape("rectangle")');
     expect(workspace).toContain('addShape("ellipse")');
     expect(workspace).toContain('aria-label="Fill color picker"');
-    expect(workspace).toContain('aria-label="Fill color hex"');
+    expect(workspace).toContain("aria-label={ariaLabel}");
+    expect(workspace).toContain('ariaLabel="Fill color hex"');
     expect(workspace).toContain('aria-label="Add text"');
     expect(workspace).toContain('aria-label="Text content"');
-    expect(workspace).toContain('aria-label="Text color hex"');
+    expect(workspace).toContain('ariaLabel="Text color hex"');
     expect(workspace).toContain('aria-label="Text pixel size"');
     expect(workspace).toContain('aria-label="Text alignment"');
     expect(workspace).toContain('aria-label="Layer rotation"');

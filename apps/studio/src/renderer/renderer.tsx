@@ -16,8 +16,10 @@ import { AudioWorkbench } from "./audio-workbench.js";
 import { BrandMark } from "./brand-mark.js";
 import { DraftAuthority, type DraftEdit } from "./draft-authority.js";
 import { ProjectDrawer, type ProjectDrawerTab } from "./project-drawer.js";
-import { CreatorWorkspace, importedLayerSize } from "./workspace/read-only-workspace.js";
+import { CreatorWorkspace, importedLayerSize, type CreatorWorkspaceHandle } from "./workspace/read-only-workspace.js";
 import {
+  clampWorkspaceDockWidth,
+  clampWorkspaceEditSplit,
   loadWorkspaceLayout,
   saveWorkspaceLayout,
   toggleWorkspaceFocus,
@@ -28,7 +30,7 @@ import {
 } from "./workspace/workspace-layout.js";
 import { effectiveCustomVisualSourcesV3, type EffectiveCustomVisualCacheV3 } from "../custom-visuals-v3.js";
 import { manualSdGuidance } from "./export-guidance.js";
-import { isCancellation, safeErrorMessage } from "../app-resilience.js";
+import { flushDraftsForClose, isCancellation, safeErrorMessage } from "../app-resilience.js";
 import { HelpDialog } from "./help-dialog.js";
 import { dismissOnboarding, onboardingDismissed, suppressGlobalShortcut } from "./shortcuts.js";
 import { GlobalFailureCapture, StudioErrorBoundary } from "./recovery-shell.js";
@@ -385,6 +387,8 @@ function Studio() {
   const looseDrafts = useRef(new Set<HTMLElement>());
   const pendingPanelFocus = useRef<WorkspaceDockTab | "artboard" | undefined>(undefined);
   const visualCompositionCache = useRef<EffectiveCustomVisualCacheV3>(new Map());
+  const creatorWorkspace = useRef<CreatorWorkspaceHandle>(null);
+  const workspaceVisualDraftDirty = useRef(false);
 
   useEffect(() => {
     const denyExternalNavigation = (event: MouseEvent) => {
@@ -426,7 +430,7 @@ function Studio() {
     const target =
       pending === "artboard"
         ? document.querySelector<HTMLElement>(".workspace-canvas")
-        : document.getElementById(`dock-tab-${pending}`);
+        : (document.getElementById(`dock-panel-${pending}`) ?? document.getElementById(`dock-tab-${pending}`));
     target?.focus();
     pendingPanelFocus.current = undefined;
   }, [workspaceLayout]);
@@ -559,7 +563,10 @@ function Studio() {
     resynchronize = false,
     replaceProject = false,
     invalidateWorkspaceAuthority = true,
+    flushWorkspaceVisualDrafts = true,
   ) => {
+    if (flushWorkspaceVisualDrafts && (await creatorWorkspace.current?.flushPendingVisualDrafts()) === false)
+      return false;
     if (invalidateWorkspaceAuthority) setWorkspaceAuthority((authority) => authority + 1);
     if (authority.invalidFields().length > 0) {
       await authority.run(action);
@@ -619,6 +626,7 @@ function Studio() {
             document.getElementById("workspace-dock")?.contains(active)
           )
             pendingPanelFocus.current = "artboard";
+          else if (event.shiftKey && visible.dockOpen) pendingPanelFocus.current = visible.dockTab;
           return next;
         });
         setStatus(event.shiftKey ? "Dock toggled." : "Tools and dock toggled.");
@@ -730,13 +738,21 @@ function Studio() {
   };
 
   const draftDirty = () =>
-    authority.hasDrafts() || Object.keys(customMetadataFocus.current).length > 0 || looseDrafts.current.size > 0;
+    authority.hasDrafts() ||
+    workspaceVisualDraftDirty.current ||
+    Object.keys(customMetadataFocus.current).length > 0 ||
+    looseDrafts.current.size > 0;
+  const updateWorkspaceVisualDraftDirty = (dirty: boolean) => {
+    workspaceVisualDraftDirty.current = dirty;
+    window.studio.setDraftDirty(draftDirty());
+  };
   useEffect(() => {
     window.studio.setDraftDirty(false);
     const changed = (event: Event) => {
       const target = event.target;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        if (!target.matches('[type="color"], [type="checkbox"], [type="file"]')) looseDrafts.current.add(target);
+        if (!target.matches('[type="color"], [type="checkbox"], [type="file"], [data-managed-draft]'))
+          looseDrafts.current.add(target);
         window.studio.setDraftDirty(draftDirty());
       }
     };
@@ -766,11 +782,22 @@ function Studio() {
       void (async () => {
         for (const field of Object.keys(customMetadataFocus.current) as MetadataFieldV3[])
           await commitCustomMetadata(field);
-        const saved = await authority.flush();
-        const dirty = !saved || draftDirty();
+        const closeStatus = await flushDraftsForClose(
+          [
+            () => authority.flush(),
+            () =>
+              creatorWorkspace.current?.flushPendingVisualDrafts() ??
+              Promise.resolve(!workspaceVisualDraftDirty.current),
+          ],
+          draftDirty,
+        );
+        const dirty = closeStatus === "invalid";
         window.studio.setDraftDirty(dirty);
-        window.studio.closeDraftDecision({ status: dirty ? "invalid" : "clean" });
-      })().catch(() => window.studio.closeDraftDecision({ status: "invalid" }));
+        window.studio.closeDraftDecision({ status: closeStatus });
+      })().catch(() => {
+        window.studio.setDraftDirty(true);
+        window.studio.closeDraftDecision({ status: "invalid" });
+      });
     });
     return () => {
       document.removeEventListener("input", changed, true);
@@ -836,8 +863,15 @@ function Studio() {
       return addImportedLayer(role, imported.asset);
     });
   };
-  const editLayer = (role: CustomVisualRoleV1, operation: VisualDocumentOperationV3) =>
-    run("Layer updated.", () => window.studio.editVisualDocument(role, operation), false, false, false);
+  const editLayer = (role: CustomVisualRoleV1, operation: VisualDocumentOperationV3, skipPendingVisualDrafts = false) =>
+    run(
+      "Layer updated.",
+      () => window.studio.editVisualDocument(role, operation),
+      false,
+      false,
+      false,
+      !skipPendingVisualDrafts,
+    );
 
   const assignVisual = (role: CustomVisualRoleV1) =>
     void run(
@@ -933,6 +967,16 @@ function Studio() {
   };
   const setLauncherView = (previewMode: LauncherView) =>
     setWorkspaceLayout((current) => ({ normal: { ...current.normal, previewMode } }));
+  const setDockWidth = (dockWidth: number) =>
+    setWorkspaceLayout((current) => ({
+      ...current,
+      normal: { ...current.normal, dockWidth: clampWorkspaceDockWidth(dockWidth) },
+    }));
+  const setEditSplit = (editSplit: number) =>
+    setWorkspaceLayout((current) => ({
+      ...current,
+      normal: { ...current.normal, editSplit: clampWorkspaceEditSplit(editSplit) },
+    }));
   const displayedMetadata = customProject ? customMetadata : draft.metadata;
   const sdGuidance = result?.publication
     ? manualSdGuidance(result.publication.folderName, result.publication.zipName, result.publication.files)
@@ -1071,6 +1115,7 @@ function Studio() {
             <section className="editor-region" aria-label="Theme composition workspace">
               <CreatorWorkspace
                 key={workspaceIdentity}
+                ref={creatorWorkspace}
                 instance={workspaceIdentity}
                 customProject={customProject}
                 authorityVersion={workspaceAuthority}
@@ -1081,7 +1126,11 @@ function Studio() {
                 toolbarVisible={visibleLayout.toolbarVisible}
                 dockOpen={visibleLayout.dockOpen}
                 dockTab={visibleLayout.dockTab}
+                dockWidth={visibleLayout.dockWidth}
+                editSplit={visibleLayout.editSplit}
                 onDockTab={selectDockTab}
+                onDockWidth={setDockWidth}
+                onEditSplit={setEditSplit}
                 onCloseDock={closeDock}
                 preview={
                   <DevicePreview
@@ -1096,6 +1145,7 @@ function Studio() {
                 acceptedSequence={acceptedSequence.current}
                 onAdd={addLayer}
                 onImport={importLayer}
+                onPendingVisualDraftChange={updateWorkspaceVisualDraftDirty}
                 onOperation={editLayer}
               />
             </section>

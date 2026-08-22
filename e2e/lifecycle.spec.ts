@@ -49,7 +49,10 @@ const showDockTab = async (page: Page, tab: "Layers" | "Properties" | "Preview")
   if ((await page.locator("#workspace-dock").count()) === 0)
     await page.getByRole("button", { name: "Open workspace dock" }).click();
   const dock = page.locator("#workspace-dock");
-  await dock.getByRole("tab", { name: tab }).click();
+  const view = dock.getByRole("button", { name: tab, exact: true });
+  await view.click();
+  await expect(view).toHaveAttribute("aria-pressed", "true");
+  await expect(dock.locator(`#dock-panel-${tab.toLowerCase()}`)).toBeFocused();
   return dock;
 };
 const launcherCanvasEvidence = (page: Page) =>
@@ -455,8 +458,9 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         zipBefore = await readFile(path.join(root, "export/theme.zip"));
 
       let dock = await showDockTab(page, "Layers");
-      await expect(dock.getByRole("tabpanel")).toHaveCount(1);
-      await expect(dock.getByRole("tab", { name: "Layers" })).toHaveAttribute("aria-selected", "true");
+      await expect(dock.locator("#dock-panel-layers")).toBeVisible();
+      await expect(dock.locator("#dock-panel-properties")).toBeVisible();
+      await expect(dock.getByRole("button", { name: "Layers", exact: true })).toHaveAttribute("aria-pressed", "true");
       const constrainedWidth = (await artboard.boundingBox())!.width;
       await dock.getByRole("button", { name: "Collapse workspace dock" }).click();
       await expect(page.locator("#workspace-dock")).toHaveCount(0);
@@ -515,17 +519,15 @@ test("completes the offline Material and Custom lifecycles through the hardened 
       await expect(page.getByRole("heading", { name: "Build every screen in one focused canvas." })).toBeVisible();
       await page.getByRole("button", { name: "Open project", exact: true }).click();
       await expect(workspace).toBeVisible();
-      await expect(page.locator("#workspace-dock").getByRole("tab", { name: "Properties" })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
+      await expect(
+        page.locator("#workspace-dock").getByRole("button", { name: "Properties", exact: true }),
+      ).toHaveAttribute("aria-pressed", "true");
       await page.evaluate(() =>
         dispatchEvent(new StorageEvent("storage", { key: "unrelated", newValue: null, storageArea: localStorage })),
       );
-      await expect(page.locator("#workspace-dock").getByRole("tab", { name: "Properties" })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
+      await expect(
+        page.locator("#workspace-dock").getByRole("button", { name: "Properties", exact: true }),
+      ).toHaveAttribute("aria-pressed", "true");
       await page.evaluate(() =>
         dispatchEvent(
           new StorageEvent("storage", {
@@ -538,10 +540,9 @@ test("completes the offline Material and Custom lifecycles through the hardened 
           }),
         ),
       );
-      await expect(page.locator("#workspace-dock").getByRole("tab", { name: "Preview" })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
+      await expect(
+        page.locator("#workspace-dock").getByRole("button", { name: "Preview", exact: true }),
+      ).toHaveAttribute("aria-pressed", "true");
       await expect(bannerList).toHaveAttribute("aria-pressed", "true");
       await page.evaluate(() =>
         dispatchEvent(
@@ -552,10 +553,9 @@ test("completes the offline Material and Custom lifecycles through the hardened 
           }),
         ),
       );
-      await expect(page.locator("#workspace-dock").getByRole("tab", { name: "Layers" })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      );
+      await expect(
+        page.locator("#workspace-dock").getByRole("button", { name: "Layers", exact: true }),
+      ).toHaveAttribute("aria-pressed", "true");
 
       const exportDrawer = await openProjectDrawer(page, "Export");
       await exportDrawer.getByRole("button", { name: "Run diagnostics" }).click();

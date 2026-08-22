@@ -2198,6 +2198,54 @@ body {
   color: var(--text);
   background: var(--panel);
 }
+.context-layer-properties {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+}
+.context-layer-identity {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.context-layer-properties input[type="number"] {
+  width: 48px;
+  min-height: 25px;
+  padding: 2px 4px;
+}
+.context-opacity-fields {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.context-opacity-fields input[type="range"] {
+  width: 104px;
+  min-height: 25px;
+  accent-color: #8fcbd6;
+}
+.context-layer-properties input[type="color"] {
+  width: 28px;
+  min-height: 25px;
+  padding: 2px;
+}
+.context-fill-fields {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.context-fill-hex {
+  width: 72px;
+  min-height: 25px;
+  padding: 2px 5px;
+}
+.context-selection-summary {
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+  color: var(--text);
+}
 .creator-editor {
   position: relative;
   display: grid;
@@ -2210,10 +2258,10 @@ body {
   grid-template-columns: 52px minmax(0, 1fr) 18px;
 }
 .creator-editor.dock-visible {
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) var(--workspace-dock-width);
 }
 .creator-editor.toolbar-visible.dock-visible {
-  grid-template-columns: 52px minmax(0, 1fr) 320px;
+  grid-template-columns: 52px minmax(0, 1fr) var(--workspace-dock-width);
 }
 .creator-editor > .artboard-stage {
   grid-row: 1;
@@ -2280,6 +2328,7 @@ body {
   height: 20px;
 }
 .workspace-dock {
+  position: relative;
   z-index: 5;
   display: grid;
   grid-row: 1;
@@ -2290,6 +2339,40 @@ body {
   overflow: hidden;
   border-left: 1px solid var(--line);
   background: var(--panel);
+}
+.dock-resize-handle {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  touch-action: none;
+  cursor: ew-resize;
+  user-select: none;
+}
+.dock-resize-handle::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: var(--line);
+  content: "";
+}
+.dock-resize-handle:hover::after,
+.dock-resize-handle:focus-visible::after {
+  width: 2px;
+  background: var(--cyan);
+}
+.dock-resize-handle:focus-visible,
+.dock-stack-separator:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: -2px;
+}
+body.workspace-resizing,
+body.workspace-resizing * {
+  user-select: none;
 }
 .creator-editor.toolbar-visible.dock-visible .workspace-dock {
   grid-column: 3;
@@ -2311,7 +2394,7 @@ body {
   background: transparent;
   font-size: 9px;
 }
-.dock-tabs button[aria-selected="true"] {
+.dock-tabs button[aria-pressed="true"] {
   border-bottom: 2px solid var(--cyan);
   color: var(--text);
 }
@@ -2332,6 +2415,50 @@ body {
   overflow-y: auto;
   border: 0;
   background: var(--panel);
+}
+.dock-edit-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.layers-panel:focus-visible,
+.layer-inspector:focus-visible,
+.dock-preview:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: -2px;
+}
+.dock-edit-stack > .layers-panel {
+  flex: var(--dock-edit-split) 1 0;
+  overflow: hidden;
+}
+.dock-edit-stack > .layer-inspector {
+  flex: calc(100 - var(--dock-edit-split)) 1 0;
+}
+.dock-stack-separator {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 9px;
+  min-width: 0;
+  touch-action: none;
+  cursor: ns-resize;
+  user-select: none;
+  background: var(--chrome);
+}
+.dock-stack-separator::after {
+  position: absolute;
+  top: 4px;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--line);
+  content: "";
+}
+.dock-stack-separator:hover::after,
+.dock-stack-separator:focus-visible::after {
+  height: 2px;
+  background: var(--cyan);
 }
 .layers-panel {
   display: flex;
@@ -2683,17 +2810,29 @@ body {
     top: 0;
     right: 0;
     bottom: 0;
-    width: min(340px, calc(100% - 52px));
+    width: min(var(--workspace-dock-width), calc(100% - 52px));
     border-left: 1px solid var(--line);
     box-shadow: -12px 0 32px rgb(0 0 0 / 0.45);
   }
   .creator-editor.dock-visible::after {
     position: absolute;
     z-index: 9;
-    inset: 0 min(340px, calc(100% - 52px)) 0 52px;
+    inset: 0 min(var(--workspace-dock-width), calc(100% - 52px)) 0 52px;
     background: rgb(13 16 22 / 0.34);
     content: "";
     pointer-events: none;
+  }
+  .dock-resize-handle,
+  .dock-edit-stack > .dock-stack-separator {
+    display: none;
+  }
+  .dock-edit-stack.compact-layers > .layer-inspector,
+  .dock-edit-stack.compact-properties > .layers-panel {
+    display: none;
+  }
+  .dock-edit-stack.compact-layers > .layers-panel,
+  .dock-edit-stack.compact-properties > .layer-inspector {
+    flex: 1 1 auto;
   }
 }
 @media (max-width: 800px) {
