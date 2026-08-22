@@ -1831,9 +1831,15 @@ const validClipboardLayer = (value: unknown): value is VisualLayerV3 => {
   if (record.kind === "shape")
     return (
       (record.shape === "rectangle" || record.shape === "ellipse") &&
+      (record.cornerRadiusQ16 === undefined ||
+        (record.shape === "rectangle" &&
+          Number.isSafeInteger(record.cornerRadiusQ16) &&
+          Number(record.cornerRadiusQ16) >= 0 &&
+          Number(record.cornerRadiusQ16) <=
+            Math.floor(Math.min(Number(layer.widthQ16), Number(layer.heightQ16)) / 2))) &&
       typeof record.fill === "string" &&
       /^#[0-9a-f]{6}$/.test(record.fill) &&
-      Object.keys(layer).every((key) => [...common, "kind", "shape", "fill"].includes(key))
+      Object.keys(layer).every((key) => [...common, "kind", "shape", "cornerRadiusQ16", "fill"].includes(key))
     );
   if (record.kind === "text")
     return (

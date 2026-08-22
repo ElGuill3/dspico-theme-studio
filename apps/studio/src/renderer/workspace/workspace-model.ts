@@ -46,6 +46,7 @@ export type WorkspaceLayer =
       id: string;
       order: number;
       shape: ShapeLayerV3["shape"];
+      cornerRadiusQ16?: number;
       fill: string;
       opacity: number;
       rotation?: QuarterTurnV1;
@@ -73,6 +74,8 @@ export const visualDocumentSurface = (
   document: { width: number; height: number; layers: readonly VisualLayerV3[] },
   assigned?: { sourceSha256: string; width: number; height: number },
   screen: "top" | "bottom" = "top",
+  fillOverrides: ReadonlyMap<string, string> = new Map(),
+  opacityOverrides: ReadonlyMap<string, number> = new Map(),
 ): WorkspaceSurface => {
   const layers = document.layers.length
     ? document.layers
@@ -114,13 +117,14 @@ export const visualDocumentSurface = (
                 ? {
                     kind: "shape" as const,
                     shape: layer.shape,
-                    fill: layer.fill,
+                    ...(layer.cornerRadiusQ16 === undefined ? {} : { cornerRadiusQ16: layer.cornerRadiusQ16 }),
+                    fill: fillOverrides.get(layer.id) ?? layer.fill,
                   }
                 : isTextLayerV3(layer)
                   ? {
                       kind: "text" as const,
                       content: layer.content,
-                      fill: layer.fill,
+                      fill: fillOverrides.get(layer.id) ?? layer.fill,
                       scale: layer.scale,
                       alignment: layer.alignment,
                     }
@@ -129,7 +133,7 @@ export const visualDocumentSurface = (
                       asset: layer.asset,
                       source: layer.crop,
                     }),
-              opacity: layer.opacity,
+              opacity: opacityOverrides.get(layer.id) ?? layer.opacity,
               rotation: layer.rotation ?? 0,
               destinationQ16: {
                 x: layer.xQ16,
@@ -604,15 +608,22 @@ export const layerAtPoint = (
       );
       return Boolean(sourcePixel && image.pixels[(sourcePixel.y * image.width + sourcePixel.x) * 4 + 3]);
     }
-    if (isTextLayerV3(layer) || layer.shape === "rectangle") return true;
+    if (isTextLayerV3(layer)) return true;
     const local = unrotatePointQ16V1(
-      point.x * 65536 - bounds.x,
-      point.y * 65536 - bounds.y,
+      Math.round(point.x * 65536) - bounds.x,
+      Math.round(point.y * 65536) - bounds.y,
       layer.widthQ16,
       layer.heightQ16,
       layer.rotation ?? 0,
     );
-    return shapeContainsPixelCenterV1(layer.shape, local.x, local.y, layer.widthQ16, layer.heightQ16);
+    return shapeContainsPixelCenterV1(
+      layer.shape,
+      local.x,
+      local.y,
+      layer.widthQ16,
+      layer.heightQ16,
+      layer.cornerRadiusQ16,
+    );
   });
 export const resizeHandleAtPoint = (
   layer: VisualLayerV3,
@@ -1245,6 +1256,14 @@ export function paintWorkspaceSurface(
     return {
       ...layer,
       destinationQ16: destination,
+      ...(layer.kind === "shape" && layer.cornerRadiusQ16 !== undefined
+        ? {
+            cornerRadiusQ16: Math.min(
+              layer.cornerRadiusQ16,
+              Math.floor(Math.min(destination.width, destination.height) / 2),
+            ),
+          }
+        : {}),
       ...(layerTransient?.crop && (layer.kind === "image" || layer.kind === undefined)
         ? { source: layerTransient.crop }
         : {}),
@@ -1282,7 +1301,16 @@ export function paintWorkspaceSurface(
             ),
             relativeX = local.x,
             relativeY = local.y;
-          if (shapeContainsPixelCenterV1(layer.shape, relativeX, relativeY, destination.width, destination.height))
+          if (
+            shapeContainsPixelCenterV1(
+              layer.shape,
+              relativeX,
+              relativeY,
+              destination.width,
+              destination.height,
+              layer.cornerRadiusQ16,
+            )
+          )
             context.fillRect(x, y, 1, 1);
         }
     } else if (layer.kind === "text") {
