@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
   CUSTOM_VISUAL_DOCUMENTS_V1,
   CUSTOM_VISUAL_ROLES_V1,
@@ -17,7 +17,15 @@ import type {
   VisualDocumentV3,
 } from "../../../../../packages/theme-core/src/index.js";
 import type { ImportedPngV1 } from "../../png-import.js";
+import { createDraftStateAggregator, DraftAuthority } from "../draft-authority.js";
 import { shortcutTitle } from "../shortcuts.js";
+import {
+  createLatestFrameQueue,
+  findFillPreviewLayer,
+  normalizeHexColor,
+  type FillPreviewTarget,
+  type LatestFrameQueue,
+} from "./fill-preview.js";
 import {
   cacheInspectorDraft,
   createInspectorDraft,
@@ -89,6 +97,16 @@ import {
   zoomViewportAtPoint,
   normalizeViewport,
 } from "./workspace-model.js";
+import {
+  MAX_WORKSPACE_DOCK_WIDTH,
+  MAX_WORKSPACE_EDIT_SPLIT,
+  MIN_WORKSPACE_DOCK_WIDTH,
+  MIN_WORKSPACE_EDIT_SPLIT,
+  clampWorkspaceDockWidth,
+  clampWorkspaceEditSplit,
+  dockWidthAfterKey,
+  editSplitAfterKey,
+} from "./workspace-layout.js";
 
 const isShapeLayerV3 = (layer: VisualLayerV3 | undefined): layer is ShapeLayerV3 => layer?.kind === "shape";
 const isTextLayerV3 = (layer: VisualLayerV3 | undefined): layer is TextLayerV3 => layer?.kind === "text";
@@ -96,6 +114,7 @@ const isImageLayerV3 = (layer: VisualLayerV3 | undefined): layer is LayerV2 =>
   Boolean(layer && !isShapeLayerV3(layer) && !isTextLayerV3(layer));
 const layerLockedV3 = (layer: Pick<VisualLayerV3, "locked">): boolean => layer.locked ?? false;
 const LOCKED_EDIT_EXPLANATION = "Locked layers cannot be edited, but visibility may still be toggled.";
+const INVALID_FILL_MESSAGE = "Fill color must use six hexadecimal digits, for example #1a2b3c.";
 
 type Screen = "top" | "bottom";
 type Commit = (operation: VisualDocumentOperationV3, announcement: string) => Promise<boolean>;
@@ -115,6 +134,68 @@ const propertyFields: readonly {
   { key: "cropHeight", label: "Crop height", min: 1 },
   { key: "opacity", label: "Opacity", min: 0, max: 100 },
 ] as const;
+
+function HexColorInput({
+  value,
+  ariaLabel,
+  className,
+  disabled,
+  stopEscapePropagation = false,
+  onCommit,
+  onInvalid,
+}: {
+  value: string;
+  ariaLabel: string;
+  className?: string;
+  disabled?: boolean;
+  stopEscapePropagation?: boolean;
+  onCommit(value: string): void;
+  onInvalid(): void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (globalThis.document.activeElement !== input.current) setDraft(value);
+  }, [value]);
+  const commit = () => {
+    const normalized = normalizeHexColor(draft);
+    if (!normalized) {
+      setDraft(value);
+      onInvalid();
+      return;
+    }
+    setDraft(normalized);
+    onCommit(normalized);
+  };
+  return (
+    <input
+      ref={input}
+      type="text"
+      className={className}
+      aria-label={ariaLabel}
+      autoCapitalize="none"
+      autoComplete="off"
+      maxLength={7}
+      pattern="#?[0-9a-fA-F]{6}"
+      spellCheck={false}
+      value={draft}
+      disabled={disabled}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.currentTarget.blur();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          if (stopEscapePropagation) event.stopPropagation();
+          setDraft(value);
+        }
+      }}
+    />
+  );
+}
+
 function LayerInspector({
   layer,
   selectedLayers,
@@ -125,6 +206,8 @@ function LayerInspector({
   onClose,
   draft,
   onDraft,
+  onFillChange,
+  onFillCommit,
 }: {
   layer: VisualLayerV3;
   selectedLayers: VisualLayerV3[];
@@ -135,8 +218,18 @@ function LayerInspector({
   onClose(): void;
   draft: InspectorDraft;
   onDraft(draft: InspectorDraft): void;
+  onFillChange(fill: string): void;
+  onFillCommit(): Promise<boolean>;
 }) {
   const locked = selectedLayers.some(layerLockedV3);
+  const fillCommit = useRef(onFillCommit);
+  fillCommit.current = onFillCommit;
+  useEffect(
+    () => () => {
+      void fillCommit.current();
+    },
+    [],
+  );
   const rename = () => {
     const next = draft.name.trim();
     if (!next || next === layer.name) return onDraft({ ...draft, name: layer.name });
@@ -228,10 +321,37 @@ function LayerInspector({
       `${selectedLayers.length} layers distributed with equal ${axis} spacing.`,
     );
   };
+  const commitCornerRadius = () => {
+    if (!isShapeLayerV3(layer) || layer.shape !== "rectangle") return;
+    const value = Number(draft.properties.cornerRadius),
+      radiusQ16 = Math.round(value * 65536);
+    if (!Number.isFinite(value) || !Number.isSafeInteger(radiusQ16) || radiusQ16 < 0) {
+      onDraft({
+        ...draft,
+        properties: { ...draft.properties, cornerRadius: String((layer.cornerRadiusQ16 ?? 0) / 65536) },
+      });
+      announce("Corner radius must be a non-negative number.");
+      return;
+    }
+    const clamped = Math.min(radiusQ16, Math.floor(Math.min(layer.widthQ16, layer.heightQ16) / 2));
+    onDraft({ ...draft, properties: { ...draft.properties, cornerRadius: String(clamped / 65536) } });
+    if (clamped === (layer.cornerRadiusQ16 ?? 0)) return;
+    commit(
+      {
+        version: 3,
+        type: "set-shape-corner-radius",
+        layerId: layer.id,
+        cornerRadiusQ16: clamped,
+      },
+      `${layer.name} corner radius updated.`,
+    );
+  };
   const apply = (event: React.FormEvent) => {
     event.preventDefault();
     const value = Object.fromEntries(
-      Object.entries(draft.properties).map(([key, entry]) => [key, Number(entry)]),
+      Object.entries(draft.properties)
+        .filter(([key]) => key !== "cornerRadius")
+        .map(([key, entry]) => [key, Number(entry)]),
     ) as Record<InspectorPropertyKey, number>;
     const valid =
       Object.values(value).every(Number.isSafeInteger) &&
@@ -247,23 +367,36 @@ function LayerInspector({
       value.opacity >= 0 &&
       value.opacity <= 100;
     if (!valid) return announce(`${layer.name} properties are outside valid bounds.`);
+    const xQ16 = value.x * 65536,
+      yQ16 = value.y * 65536,
+      widthQ16 = value.width * 65536,
+      heightQ16 = value.height * 65536,
+      opacity = Math.round((value.opacity * 65536) / 100),
+      crop = { x: value.cropX, y: value.cropY, width: value.cropWidth, height: value.cropHeight },
+      changed =
+        xQ16 !== layer.xQ16 ||
+        yQ16 !== layer.yQ16 ||
+        widthQ16 !== layer.widthQ16 ||
+        heightQ16 !== layer.heightQ16 ||
+        opacity !== layer.opacity ||
+        (isImageLayerV3(layer) &&
+          (crop.x !== layer.crop.x ||
+            crop.y !== layer.crop.y ||
+            crop.width !== layer.crop.width ||
+            crop.height !== layer.crop.height));
+    if (!changed) return announce(`${layer.name} properties are already up to date.`);
     commit(
       {
         version: 2,
         type: "set-layer-properties",
         screen,
         layerId: layer.id,
-        xQ16: value.x * 65536,
-        yQ16: value.y * 65536,
-        widthQ16: value.width * 65536,
-        heightQ16: value.height * 65536,
-        opacity: Math.round((value.opacity * 65536) / 100),
-        crop: {
-          x: value.cropX,
-          y: value.cropY,
-          width: value.cropWidth,
-          height: value.cropHeight,
-        },
+        xQ16,
+        yQ16,
+        widthQ16,
+        heightQ16,
+        opacity,
+        crop,
       },
       `${layer.name} properties updated.`,
     );
@@ -384,48 +517,55 @@ function LayerInspector({
             </button>
           </fieldset>
           {isShapeLayerV3(layer) && (
-            <label className="shape-fill-field">
-              <span>Fill</span>
-              <span>
-                <input
-                  type="color"
-                  aria-label="Fill color picker"
-                  value={draft.fill}
-                  onChange={(event) => {
-                    onDraft({ ...draft, fill: event.target.value });
-                    commit(
-                      {
-                        version: 3,
-                        type: "set-shape-fill",
-                        layerId: layer.id,
-                        fill: event.target.value,
-                      },
-                      `${layer.name} fill updated.`,
-                    );
-                  }}
-                />
-                <input
-                  aria-label="Fill color hex"
-                  pattern="#[0-9a-f]{6}"
-                  value={draft.fill}
-                  onChange={(event) => onDraft({ ...draft, fill: event.target.value })}
-                  onBlur={(event) => {
-                    const fill = event.currentTarget.value;
-                    if (/^#[0-9a-f]{6}$/.test(fill) && fill !== layer.fill)
-                      commit(
-                        {
-                          version: 3,
-                          type: "set-shape-fill",
-                          layerId: layer.id,
-                          fill,
-                        },
-                        `${layer.name} fill updated.`,
-                      );
-                    else onDraft({ ...draft, fill: layer.fill });
-                  }}
-                />
-              </span>
-            </label>
+            <>
+              {layer.shape === "rectangle" && (
+                <label>
+                  <span>Corner radius</span>
+                  <input
+                    type="number"
+                    aria-label="Corner radius"
+                    min="0"
+                    max={Math.floor(Math.min(layer.widthQ16, layer.heightQ16) / 2) / 65536}
+                    step="0.5"
+                    value={draft.properties.cornerRadius}
+                    onChange={(event) =>
+                      onDraft({
+                        ...draft,
+                        properties: { ...draft.properties, cornerRadius: event.target.value },
+                      })
+                    }
+                    onBlur={commitCornerRadius}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        event.currentTarget.blur();
+                      }
+                    }}
+                  />
+                </label>
+              )}
+              <label className="shape-fill-field">
+                <span>Fill</span>
+                <span>
+                  <input
+                    type="color"
+                    aria-label="Fill color picker"
+                    value={draft.fill}
+                    onChange={(event) => onFillChange(event.target.value)}
+                    onBlur={() => void onFillCommit()}
+                  />
+                  <HexColorInput
+                    ariaLabel="Fill color hex"
+                    value={draft.fill}
+                    onCommit={(fill) => {
+                      onFillChange(fill);
+                      void onFillCommit();
+                    }}
+                    onInvalid={() => announce(INVALID_FILL_MESSAGE)}
+                  />
+                </span>
+              </label>
+            </>
           )}
           {isTextLayerV3(layer) && (
             <>
@@ -441,11 +581,11 @@ function LayerInspector({
               </label>
               <label className="text-fill-field">
                 <span>Text color</span>
-                <input
-                  aria-label="Text color hex"
-                  pattern="#[0-9a-f]{6}"
+                <HexColorInput
+                  ariaLabel="Text color hex"
                   value={draft.text.fill}
-                  onChange={(event) => onDraft({ ...draft, text: { ...draft.text, fill: event.target.value } })}
+                  onCommit={(fill) => onDraft({ ...draft, text: { ...draft.text, fill } })}
+                  onInvalid={() => announce(INVALID_FILL_MESSAGE)}
                 />
               </label>
               <label>
@@ -481,10 +621,11 @@ function LayerInspector({
               <button
                 type="button"
                 onClick={() => {
-                  const scale = Number(draft.text.scale);
+                  const scale = Number(draft.text.scale),
+                    fill = normalizeHexColor(draft.text.fill);
                   if (
                     !validTextContentV1(draft.text.content) ||
-                    !/^#[0-9a-f]{6}$/.test(draft.text.fill) ||
+                    !fill ||
                     !Number.isInteger(scale) ||
                     scale < 1 ||
                     scale > 16
@@ -496,7 +637,7 @@ function LayerInspector({
                       type: "set-text-properties",
                       layerId: layer.id,
                       content: draft.text.content,
-                      fill: draft.text.fill,
+                      fill,
                       scale,
                       alignment: draft.text.alignment,
                     },
@@ -2023,26 +2164,8 @@ function ToolIcon({ name }: { name: keyof typeof TOOL_ICON_PATHS }) {
   );
 }
 
-export function CreatorWorkspace({
-  customProject,
-  authorityVersion,
-  instance,
-  images = {},
-  visualDocuments,
-  visualSources = {},
-  readOnly = false,
-  toolbarVisible,
-  dockOpen,
-  dockTab,
-  onDockTab,
-  onCloseDock,
-  preview,
-  status,
-  acceptedSequence,
-  onAdd,
-  onImport,
-  onOperation,
-}: {
+export type CreatorWorkspaceHandle = { flushPendingVisualDrafts(): Promise<boolean> };
+type CreatorWorkspaceProps = {
   customProject?: ThemeProjectV2;
   authorityVersion: number;
   instance: number;
@@ -2053,15 +2176,78 @@ export function CreatorWorkspace({
   toolbarVisible: boolean;
   dockOpen: boolean;
   dockTab: CreatorDockTab;
+  dockWidth: number;
+  editSplit: number;
   onDockTab(tab: CreatorDockTab): void;
+  onDockWidth(width: number): void;
+  onEditSplit(split: number): void;
   onCloseDock(): void;
   preview: React.ReactNode;
   status: string;
   acceptedSequence: number;
   onAdd(role: CustomVisualRoleV1): void;
   onImport(role: CustomVisualRoleV1, file: File): Promise<void>;
-  onOperation(role: CustomVisualRoleV1, operation: VisualDocumentOperationV3): Promise<boolean>;
-}) {
+  onPendingVisualDraftChange(pending: boolean): void;
+  onOperation(
+    role: CustomVisualRoleV1,
+    operation: VisualDocumentOperationV3,
+    skipPendingVisualDrafts?: boolean,
+  ): Promise<boolean>;
+};
+type VisualPersistence = { persist(): Promise<boolean>; announcement?: string };
+type WorkspaceResize =
+  | { kind: "dock"; owner: HTMLElement; pointerId: number; right: number }
+  | { kind: "split"; owner: HTMLElement; pointerId: number; top: number; height: number };
+const stopWorkspaceResize = (state: { current: WorkspaceResize | undefined }, pointerId?: number) => {
+  const active = state.current;
+  if (!active || (pointerId !== undefined && active.pointerId !== pointerId)) return;
+  if (active.owner.hasPointerCapture(active.pointerId)) active.owner.releasePointerCapture(active.pointerId);
+  state.current = undefined;
+  globalThis.document.body.classList.remove("workspace-resizing");
+};
+type QueuedFillPreview = FillPreviewTarget & {
+  role: CustomVisualRoleV1;
+  field: string;
+  revision: number;
+  fill: string;
+};
+type QueuedOpacityPreview = {
+  projectId: string;
+  role: CustomVisualRoleV1;
+  layerId: string;
+  field: string;
+  revision: number;
+  opacity: number;
+};
+
+export const CreatorWorkspace = forwardRef<CreatorWorkspaceHandle, CreatorWorkspaceProps>(function CreatorWorkspace(
+  {
+    customProject,
+    authorityVersion,
+    instance,
+    images = {},
+    visualDocuments,
+    visualSources = {},
+    readOnly = false,
+    toolbarVisible,
+    dockOpen,
+    dockTab,
+    dockWidth,
+    editSplit,
+    onDockTab,
+    onDockWidth,
+    onEditSplit,
+    onCloseDock,
+    preview,
+    status,
+    acceptedSequence,
+    onAdd,
+    onImport,
+    onPendingVisualDraftChange,
+    onOperation,
+  },
+  ref,
+) {
   const [role, setRole] = useState<CustomVisualRoleV1>("top-background");
   const [viewports, setViewports] = useState<Partial<Record<CustomVisualRoleV1, DocumentViewport>>>({});
   const [autoFitRoles, setAutoFitRoles] = useState<Partial<Record<CustomVisualRoleV1, boolean>>>({});
@@ -2071,7 +2257,210 @@ export function CreatorWorkspace({
   const [activeTool, setActiveTool] = useState<EditingTool>("select");
   const [selections, setSelections] = useState<Partial<Record<CustomVisualRoleV1, LayerSelection>>>({});
   const [inspectorDrafts, setInspectorDrafts] = useState<InspectorDraftCache>(new Map());
+  const [fillOverrides, setFillOverrides] = useState(new Map<string, { revision: number; fill: string }>());
+  const [opacityOverrides, setOpacityOverrides] = useState(new Map<string, { revision: number; opacity: number }>());
   const [announcement, setAnnouncement] = useState("");
+  const workspaceResize = useRef<WorkspaceResize | undefined>(undefined);
+  useEffect(() => {
+    const stop = () => stopWorkspaceResize(workspaceResize);
+    globalThis.addEventListener("blur", stop);
+    return () => {
+      globalThis.removeEventListener("blur", stop);
+      stop();
+    };
+  }, []);
+  const startDockResize = (event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    const dock = event.currentTarget.closest<HTMLElement>(".workspace-dock");
+    if (!dock) return;
+    event.preventDefault();
+    stopWorkspaceResize(workspaceResize);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    workspaceResize.current = {
+      kind: "dock",
+      owner: event.currentTarget,
+      pointerId: event.pointerId,
+      right: dock.getBoundingClientRect().right,
+    };
+    globalThis.document.body.classList.add("workspace-resizing");
+  };
+  const startSplitResize = (event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    const stack = event.currentTarget.closest<HTMLElement>(".dock-edit-stack");
+    if (!stack) return;
+    event.preventDefault();
+    stopWorkspaceResize(workspaceResize);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const bounds = stack.getBoundingClientRect();
+    workspaceResize.current = {
+      kind: "split",
+      owner: event.currentTarget,
+      pointerId: event.pointerId,
+      top: bounds.top,
+      height: bounds.height,
+    };
+    globalThis.document.body.classList.add("workspace-resizing");
+  };
+  const resizeFromPointer = (event: React.PointerEvent<HTMLElement>) => {
+    const active = workspaceResize.current;
+    if (!active || active.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    if (active.kind === "dock") onDockWidth(clampWorkspaceDockWidth(active.right - event.clientX));
+    else if (active.height > 0)
+      onEditSplit(clampWorkspaceEditSplit(((event.clientY - active.top) / active.height) * 100));
+  };
+  const visualDraftsMounted = useRef(true);
+  const fillContext = useRef({
+    projectId: customProject?.projectId,
+    role,
+    layers: visualDocuments?.[role]?.layers ?? [],
+  });
+  fillContext.current = {
+    projectId: customProject?.projectId,
+    role,
+    layers: visualDocuments?.[role]?.layers ?? [],
+  };
+  const fillPreviewQueue = useRef<LatestFrameQueue<QueuedFillPreview> | null>(null);
+  if (!fillPreviewQueue.current)
+    fillPreviewQueue.current = createLatestFrameQueue((preview) => {
+      const layer = visualDraftsMounted.current ? findFillPreviewLayer(preview, fillContext.current) : undefined;
+      if (!isShapeLayerV3(layer) && !isTextLayerV3(layer)) return;
+      setInspectorDrafts((current) => {
+        const draft = readInspectorDraft(current, preview.field, layer);
+        return cacheInspectorDraft(
+          current,
+          preview.field,
+          layer,
+          isShapeLayerV3(layer)
+            ? { ...draft, fill: preview.fill }
+            : { ...draft, text: { ...draft.text, fill: preview.fill } },
+        );
+      });
+      setFillOverrides((current) =>
+        new Map(current).set(preview.field, { revision: preview.revision, fill: preview.fill }),
+      );
+    });
+  const opacityPreviewQueue = useRef<LatestFrameQueue<QueuedOpacityPreview> | null>(null);
+  if (!opacityPreviewQueue.current)
+    opacityPreviewQueue.current = createLatestFrameQueue((preview) => {
+      const context = fillContext.current,
+        layer =
+          visualDraftsMounted.current && context.projectId === preview.projectId && context.role === preview.role
+            ? context.layers.find(({ id }) => id === preview.layerId)
+            : undefined;
+      if (!layer) return;
+      setInspectorDrafts((current) => {
+        const draft = readInspectorDraft(current, preview.field, layer);
+        return cacheInspectorDraft(current, preview.field, layer, {
+          ...draft,
+          properties: {
+            ...draft.properties,
+            opacity: String(Math.round((preview.opacity * 100) / 65536)),
+          },
+        });
+      });
+      setOpacityOverrides((current) =>
+        new Map(current).set(preview.field, { revision: preview.revision, opacity: preview.opacity }),
+      );
+    });
+  const pendingVisualDraftChange = useRef(onPendingVisualDraftChange);
+  pendingVisualDraftChange.current = onPendingVisualDraftChange;
+  const draftState = useRef<ReturnType<typeof createDraftStateAggregator> | null>(null);
+  if (!draftState.current)
+    draftState.current = createDraftStateAggregator((dirty) => pendingVisualDraftChange.current(dirty));
+  const fillAuthority = useRef<DraftAuthority<VisualPersistence> | null>(null);
+  if (!fillAuthority.current)
+    fillAuthority.current = new DraftAuthority<VisualPersistence>({
+      persist: (_field, edit) => edit.operation.persist(),
+      onDraftChange: () => undefined,
+      onDraftStateChange: (dirty) => draftState.current!("fill", dirty),
+      onInvalid: () => undefined,
+      onSuccess: (field, edit, isLatest) => {
+        if (!visualDraftsMounted.current || !isLatest) return;
+        if (edit.operation.announcement) setAnnouncement(edit.operation.announcement);
+        setFillOverrides((current) => {
+          if (current.get(field)?.revision !== edit.revision) return current;
+          const next = new Map(current);
+          next.delete(field);
+          return next;
+        });
+      },
+      onFailure: (field, edit, _error, isLatest) => {
+        if (!visualDraftsMounted.current || !isLatest) return;
+        setFillOverrides((current) => {
+          if (current.get(field)?.revision !== edit.revision) return current;
+          const next = new Map(current);
+          next.delete(field);
+          return next;
+        });
+        setInspectorDrafts((current) => {
+          const next = new Map(current);
+          next.delete(field);
+          return next;
+        });
+        setAnnouncement("Fill was not saved; the authoritative color was restored.");
+      },
+    });
+  const opacityAuthority = useRef<DraftAuthority<VisualPersistence> | null>(null);
+  if (!opacityAuthority.current)
+    opacityAuthority.current = new DraftAuthority<VisualPersistence>(
+      {
+        persist: (_field, edit) => edit.operation.persist(),
+        onDraftChange: () => undefined,
+        onDraftStateChange: (dirty) => draftState.current!("opacity", dirty),
+        onInvalid: () => undefined,
+        onSuccess: (field, edit, isLatest) => {
+          if (!visualDraftsMounted.current || !isLatest) return;
+          setOpacityOverrides((current) => {
+            if (current.get(field)?.revision !== edit.revision) return current;
+            const next = new Map(current);
+            next.delete(field);
+            return next;
+          });
+        },
+        onFailure: (field, edit, _error, isLatest) => {
+          if (!visualDraftsMounted.current || !isLatest) return;
+          setOpacityOverrides((current) => {
+            if (current.get(field)?.revision !== edit.revision) return current;
+            const next = new Map(current);
+            next.delete(field);
+            return next;
+          });
+          setInspectorDrafts((current) => {
+            const next = new Map(current);
+            next.delete(field);
+            return next;
+          });
+          setAnnouncement("Opacity was not saved; the authoritative value was restored.");
+        },
+      },
+      null,
+    );
+  useImperativeHandle(
+    ref,
+    () => ({
+      flushPendingVisualDrafts: async () => {
+        fillPreviewQueue.current?.flush();
+        opacityPreviewQueue.current?.flush();
+        const outcomes = await Promise.all([
+          fillAuthority.current?.flush() ?? Promise.resolve(true),
+          opacityAuthority.current?.flush() ?? Promise.resolve(true),
+        ]);
+        return outcomes.every(Boolean);
+      },
+    }),
+    [],
+  );
+  useEffect(() => {
+    visualDraftsMounted.current = true;
+    return () => {
+      visualDraftsMounted.current = false;
+      fillPreviewQueue.current?.cancel();
+      opacityPreviewQueue.current?.cancel();
+      fillAuthority.current?.dispose();
+      opacityAuthority.current?.dispose();
+    };
+  }, []);
   const pendingSelection = useRef<{ role: CustomVisualRoleV1; ids: string[] } | undefined>(undefined);
   const pendingFocus = useRef<{ role: CustomVisualRoleV1; removed: string[]; target?: string } | undefined>(undefined);
   const deletionSelections = useRef<Partial<Record<CustomVisualRoleV1, EphemeralDeletionSelection[]>>>({});
@@ -2092,16 +2481,60 @@ export function CreatorWorkspace({
   const selectedLayer = layers.find(({ id }) => id === selection.active);
   const selectedDraftKey =
     customProject && selectedLayer ? inspectorDraftKey(customProject.projectId, role, selectedLayer.id) : undefined;
-  const selectedDraft =
+  const authoritativeSelectedDraft =
     selectedLayer && selectedDraftKey
       ? readInspectorDraft(inspectorDrafts, selectedDraftKey, selectedLayer)
       : undefined;
+  const selectedFillOverride = selectedDraftKey ? fillOverrides.get(selectedDraftKey)?.fill : undefined;
+  const selectedOpacityOverride = selectedDraftKey ? opacityOverrides.get(selectedDraftKey)?.opacity : undefined;
+  const selectedOpacityPercent = Math.round(
+    ((selectedOpacityOverride ?? selectedLayer?.opacity ?? 65536) * 100) / 65536,
+  );
+  const selectedDraft = (() => {
+    if (!authoritativeSelectedDraft || !selectedLayer) return authoritativeSelectedDraft;
+    let next =
+      selectedOpacityOverride === undefined
+        ? authoritativeSelectedDraft
+        : {
+            ...authoritativeSelectedDraft,
+            properties: {
+              ...authoritativeSelectedDraft.properties,
+              opacity: String(Math.round((selectedOpacityOverride * 100) / 65536)),
+            },
+          };
+    if (!selectedFillOverride) return next;
+    if (isShapeLayerV3(selectedLayer)) next = { ...next, fill: selectedFillOverride };
+    else if (isTextLayerV3(selectedLayer)) next = { ...next, text: { ...next.text, fill: selectedFillOverride } };
+    return next;
+  })();
   const selectionLocked = selectedLayers.some(layerLockedV3);
   const canCrop = selectedLayers.length === 1 && isImageLayerV3(selectedLayer) && !selectionLocked;
   const assigned = visualSources[role];
   const width = document?.width ?? CUSTOM_VISUAL_DOCUMENTS_V1[role].width;
   const height = document?.height ?? CUSTOM_VISUAL_DOCUMENTS_V1[role].height;
-  const renderSurface: WorkspaceSurface = visualDocumentSurface({ width, height, layers }, assigned);
+  const roleFillOverrides = new Map(
+    customProject
+      ? layers.flatMap((layer) => {
+          const fill = fillOverrides.get(inspectorDraftKey(customProject.projectId, role, layer.id))?.fill;
+          return fill ? [[layer.id, fill] as const] : [];
+        })
+      : [],
+  );
+  const roleOpacityOverrides = new Map(
+    customProject
+      ? layers.flatMap((layer) => {
+          const opacity = opacityOverrides.get(inspectorDraftKey(customProject.projectId, role, layer.id))?.opacity;
+          return opacity === undefined ? [] : [[layer.id, opacity] as const];
+        })
+      : [],
+  );
+  const renderSurface: WorkspaceSurface = visualDocumentSurface(
+    { width, height, layers },
+    assigned,
+    "top",
+    roleFillOverrides,
+    roleOpacityOverrides,
+  );
   const updateInspectorDraft = (next: InspectorDraft) => {
     if (!selectedLayer || !selectedDraftKey) return;
     setInspectorDrafts((current) => cacheInspectorDraft(current, selectedDraftKey, selectedLayer, next));
@@ -2122,6 +2555,123 @@ export function CreatorWorkspace({
     }
     setAnnouncement(message);
     return onOperation(role, operation);
+  };
+  const scheduleFill = (layer: VisualLayerV3, fill: string) => {
+    const normalized = normalizeHexColor(fill);
+    if (
+      !customProject ||
+      readOnly ||
+      layerLockedV3(layer) ||
+      (!isShapeLayerV3(layer) && !isTextLayerV3(layer)) ||
+      !normalized
+    )
+      return;
+    const field = inspectorDraftKey(customProject.projectId, role, layer.id);
+    const pendingPreview = fillPreviewQueue.current?.pending();
+    const displayedFill =
+      pendingPreview?.field === field ? pendingPreview.fill : (fillOverrides.get(field)?.fill ?? layer.fill);
+    if (normalized === displayedFill) return;
+    const operation: VisualDocumentOperationV3 = isShapeLayerV3(layer)
+        ? { version: 3, type: "set-shape-fill", layerId: layer.id, fill: normalized }
+        : { version: 3, type: "set-text-fill", layerId: layer.id, fill: normalized },
+      revision = fillAuthority.current!.schedule(
+        field,
+        {
+          persist: () => onOperation(role, operation, true),
+          announcement: `${layer.name} fill updated.`,
+        },
+        role,
+      );
+    fillPreviewQueue.current!.schedule({
+      projectId: customProject.projectId,
+      role,
+      field,
+      layerId: layer.id,
+      layerKind: layer.kind,
+      revision,
+      fill: normalized,
+    });
+  };
+  const flushSelectedFill = () => {
+    fillPreviewQueue.current?.flush();
+    return selectedDraftKey ? fillAuthority.current!.flushField(selectedDraftKey) : Promise.resolve(true);
+  };
+  const scheduleOpacity = (layer: VisualLayerV3, opacity: number) => {
+    if (
+      !customProject ||
+      readOnly ||
+      layerLockedV3(layer) ||
+      !Number.isSafeInteger(opacity) ||
+      opacity < 0 ||
+      opacity > 65536
+    ) {
+      setAnnouncement("Opacity must be an integer from 0 to 100.");
+      return;
+    }
+    const field = inspectorDraftKey(customProject.projectId, role, layer.id),
+      pendingPreview = opacityPreviewQueue.current?.pending(),
+      displayedOpacity =
+        pendingPreview?.field === field
+          ? pendingPreview.opacity
+          : (opacityOverrides.get(field)?.opacity ?? layer.opacity);
+    if (opacity === displayedOpacity) return;
+    const operation: VisualDocumentOperationV3 = {
+        version: 3,
+        type: "set-layer-opacity",
+        layerId: layer.id,
+        opacity,
+      },
+      revision = opacityAuthority.current!.schedule(field, { persist: () => onOperation(role, operation, true) }, role);
+    opacityPreviewQueue.current!.schedule({
+      projectId: customProject.projectId,
+      role,
+      layerId: layer.id,
+      field,
+      revision,
+      opacity,
+    });
+  };
+  const flushSelectedOpacity = () => {
+    opacityPreviewQueue.current?.flush();
+    return selectedDraftKey ? opacityAuthority.current!.flushField(selectedDraftKey) : Promise.resolve(true);
+  };
+  const flushVisualDrafts = async () => {
+    fillPreviewQueue.current?.flush();
+    opacityPreviewQueue.current?.flush();
+    const outcomes = await Promise.all([fillAuthority.current!.flush(), opacityAuthority.current!.flush()]);
+    return outcomes.every(Boolean);
+  };
+  const opacityInteraction = useRef<{ field: string; override?: { revision: number; opacity: number } } | undefined>(
+    undefined,
+  );
+  const beginOpacityInteraction = () => {
+    if (!selectedDraftKey || opacityInteraction.current?.field === selectedDraftKey) return;
+    const override = opacityOverrides.get(selectedDraftKey);
+    opacityInteraction.current = { field: selectedDraftKey, override };
+  };
+  const finishOpacityInteraction = () => {
+    opacityInteraction.current = undefined;
+    void flushSelectedOpacity();
+  };
+  const restoreOpacityInteraction = (layer: VisualLayerV3) => {
+    const baseline = opacityInteraction.current;
+    if (baseline && baseline.field === selectedDraftKey) {
+      opacityPreviewQueue.current?.cancel();
+      opacityAuthority.current!.discardField(baseline.field);
+      setOpacityOverrides((current) => {
+        const next = new Map(current);
+        if (baseline.override) next.set(baseline.field, baseline.override);
+        else next.delete(baseline.field);
+        return next;
+      });
+      setInspectorDrafts((current) => {
+        const next = new Map(current);
+        next.delete(baseline.field);
+        return next;
+      });
+      setAnnouncement(`${layer.name} opacity edit cancelled.`);
+    }
+    opacityInteraction.current = undefined;
   };
   useEffect(() => {
     const revisions = new Map<string, string>();
@@ -2181,6 +2731,8 @@ export function CreatorWorkspace({
     pendingFocus.current = undefined;
   }, [layers, role]);
   useEffect(() => {
+    fillPreviewQueue.current?.cancel();
+    opacityPreviewQueue.current?.cancel();
     pendingSelection.current = undefined;
     pendingFocus.current = undefined;
     deletionSelections.current = {};
@@ -2189,6 +2741,11 @@ export function CreatorWorkspace({
     selectionFocus.current = undefined;
     setSelections({});
     setInspectorDrafts(new Map());
+    setFillOverrides(new Map());
+    setOpacityOverrides(new Map());
+    fillAuthority.current?.reset();
+    opacityAuthority.current?.reset();
+    opacityInteraction.current = undefined;
     setViewports({});
     setAutoFitRoles({});
     setRole("top-background");
@@ -2328,6 +2885,7 @@ export function CreatorWorkspace({
     }));
   };
   const select = (id?: string, toggle = false) => {
+    void flushVisualDrafts();
     const next = updateGroupedLayerSelection(selection, layers, id, toggle, MAX_BATCH_LAYER_EDITS_V3);
     if (next === selection && id && !selection.ids.includes(id)) {
       setAnnouncement(`Selection is limited to ${MAX_BATCH_LAYER_EDITS_V3} layers.`);
@@ -2589,6 +3147,7 @@ export function CreatorWorkspace({
               className={role === item ? "active" : ""}
               aria-pressed={role === item}
               onClick={() => {
+                void flushVisualDrafts();
                 setRole(item);
                 setActiveTool("select");
               }}
@@ -2645,6 +3204,115 @@ export function CreatorWorkspace({
                 Lock guides
               </label>
             )}
+            {selectedLayers.length === 1 && selectedLayer && (
+              <div className="context-layer-properties" role="group" aria-label="Selected layer quick properties">
+                <span className="context-layer-identity" title={selectedLayer.name}>
+                  Layer <strong>{selectedLayer.name}</strong>
+                  {selectionLocked ? " · Locked" : ""}
+                </span>
+                <div className="context-opacity-fields" role="group" aria-label={`${selectedLayer.name} opacity`}>
+                  <span>Opacity</span>
+                  <input
+                    type="range"
+                    aria-label={`${selectedLayer.name} opacity slider`}
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={selectedOpacityPercent}
+                    data-managed-draft="true"
+                    disabled={selectionLocked || readOnly}
+                    onFocus={beginOpacityInteraction}
+                    onPointerDown={beginOpacityInteraction}
+                    onChange={(event) =>
+                      scheduleOpacity(selectedLayer, Math.round((Number(event.target.value) * 65536) / 100))
+                    }
+                    onPointerUp={finishOpacityInteraction}
+                    onPointerCancel={finishOpacityInteraction}
+                    onBlur={finishOpacityInteraction}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Escape") {
+                        beginOpacityInteraction();
+                        return;
+                      }
+                      event.preventDefault();
+                      event.stopPropagation();
+                      restoreOpacityInteraction(selectedLayer);
+                      event.currentTarget.blur();
+                    }}
+                    onKeyUp={(event) => {
+                      if (event.key !== "Escape") finishOpacityInteraction();
+                    }}
+                  />
+                  <input
+                    type="number"
+                    aria-label={`${selectedLayer.name} opacity percent`}
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={selectedOpacityPercent}
+                    data-managed-draft="true"
+                    disabled={selectionLocked || readOnly}
+                    onFocus={beginOpacityInteraction}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isInteger(value) && value >= 0 && value <= 100)
+                        scheduleOpacity(selectedLayer, Math.round((value * 65536) / 100));
+                    }}
+                    onBlur={(event) => {
+                      const value = Number(event.currentTarget.value);
+                      if (!Number.isInteger(value) || value < 0 || value > 100)
+                        setAnnouncement("Opacity must be an integer from 0 to 100.");
+                      event.currentTarget.value = String(selectedOpacityPercent);
+                      finishOpacityInteraction();
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Escape") beginOpacityInteraction();
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        event.currentTarget.blur();
+                      } else if (event.key === "Escape") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        restoreOpacityInteraction(selectedLayer);
+                        event.currentTarget.blur();
+                      }
+                    }}
+                    onKeyUp={(event) => {
+                      if (event.key !== "Escape" && event.key !== "Enter") finishOpacityInteraction();
+                    }}
+                  />
+                  %
+                </div>
+                {(isShapeLayerV3(selectedLayer) || isTextLayerV3(selectedLayer)) && (
+                  <div className="context-fill-fields" role="group" aria-label={`${selectedLayer.name} fill`}>
+                    <span>Fill</span>
+                    <input
+                      type="color"
+                      aria-label={`${selectedLayer.name} fill color`}
+                      value={selectedFillOverride ?? selectedLayer.fill}
+                      disabled={selectionLocked || readOnly}
+                      onChange={(event) => scheduleFill(selectedLayer, event.target.value)}
+                      onBlur={() => void flushSelectedFill()}
+                    />
+                    <HexColorInput
+                      className="context-fill-hex"
+                      ariaLabel={`${selectedLayer.name} fill hex`}
+                      value={selectedFillOverride ?? selectedLayer.fill}
+                      disabled={selectionLocked || readOnly}
+                      stopEscapePropagation
+                      onCommit={(fill) => {
+                        scheduleFill(selectedLayer, fill);
+                        void flushSelectedFill();
+                      }}
+                      onInvalid={() => setAnnouncement(INVALID_FILL_MESSAGE)}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+            {selectedLayers.length > 1 && (
+              <span className="context-selection-summary">{selectedLayers.length} layers selected</span>
+            )}
           </>
         )}
         {activeTool === "crop" && (
@@ -2654,7 +3322,15 @@ export function CreatorWorkspace({
         )}
         {activeTool === "hand" && <span>Drag the artboard to pan</span>}
       </div>
-      <div className={`creator-editor${toolbarVisible ? " toolbar-visible" : ""}${dockOpen ? " dock-visible" : ""}`}>
+      <div
+        className={`creator-editor${toolbarVisible ? " toolbar-visible" : ""}${dockOpen ? " dock-visible" : ""}`}
+        style={
+          {
+            "--workspace-dock-width": `${dockWidth}px`,
+            "--dock-edit-split": String(editSplit),
+          } as React.CSSProperties
+        }
+      >
         {!dockOpen && (
           <button
             type="button"
@@ -2780,7 +3456,33 @@ export function CreatorWorkspace({
         )}
         {dockOpen && (
           <aside id="workspace-dock" className="workspace-dock" aria-label="Workspace dock">
-            <div className="dock-tabs" role="tablist" aria-label="Workspace panels">
+            <div
+              className="dock-resize-handle"
+              role="separator"
+              tabIndex={0}
+              aria-label="Resize workspace dock"
+              aria-describedby="dock-width-resize-instructions"
+              aria-orientation="vertical"
+              aria-valuemin={MIN_WORKSPACE_DOCK_WIDTH}
+              aria-valuemax={MAX_WORKSPACE_DOCK_WIDTH}
+              aria-valuenow={dockWidth}
+              onKeyDown={(event) => {
+                const next = dockWidthAfterKey(dockWidth, event.key);
+                if (next === undefined) return;
+                event.preventDefault();
+                onDockWidth(next);
+              }}
+              onPointerDown={startDockResize}
+              onPointerMove={resizeFromPointer}
+              onPointerUp={(event) => stopWorkspaceResize(workspaceResize, event.pointerId)}
+              onPointerCancel={(event) => stopWorkspaceResize(workspaceResize, event.pointerId)}
+              onLostPointerCapture={() => stopWorkspaceResize(workspaceResize)}
+            />
+            <span id="dock-width-resize-instructions" className="sr-only">
+              Use Left and Right arrow keys to resize the right-side dock. Home uses the minimum width and End the
+              maximum.
+            </span>
+            <div className="dock-tabs" role="group" aria-label="Workspace panels">
               <button
                 type="button"
                 className="dock-close"
@@ -2794,249 +3496,278 @@ export function CreatorWorkspace({
                 <button
                   key={tab}
                   id={`dock-tab-${tab}`}
-                  role="tab"
-                  aria-selected={dockTab === tab}
+                  aria-pressed={dockTab === tab}
                   aria-controls={`dock-panel-${tab}`}
-                  tabIndex={dockTab === tab ? 0 : -1}
                   onClick={() => onDockTab(tab)}
                 >
                   {tab[0]!.toUpperCase() + tab.slice(1)}
                 </button>
               ))}
             </div>
-            {dockTab === "layers" && (
-              <section
-                id="dock-panel-layers"
-                className="layers-panel"
-                role="tabpanel"
-                aria-labelledby="dock-tab-layers"
-              >
-                <>
-                  <div className="editor-panel-heading">
-                    <span>Stack</span>
-                    <strong id="layers-title">Layers</strong>
-                    <span id="layer-selection-count">
-                      {selection.ids.length} selected{selectionLocked ? ", locked" : ""}
-                    </span>
-                  </div>
-                  <div
-                    className="creator-layer-list"
-                    role="listbox"
-                    aria-label={`${role} layers`}
-                    aria-describedby="layer-selection-count"
-                    aria-multiselectable="true"
-                  >
-                    {[...layers].reverse().map((layer) => {
-                      const index = layers.indexOf(layer),
-                        rowGroup = layer.groupId ? layers.filter(({ groupId }) => groupId === layer.groupId) : [layer],
-                        protectedByLock = rowGroup.some(layerLockedV3);
-                      return (
-                        <LayerRow
-                          key={layer.id}
-                          layer={layer}
-                          image={isImageLayerV3(layer) ? images[layer.asset.sha256] : undefined}
-                          index={index}
-                          count={layers.length}
-                          protectedByLock={protectedByLock}
-                          selected={selection.ids.includes(layer.id)}
-                          active={selection.active === layer.id}
-                          onSelect={(event) => {
-                            select(layer.id, event.shiftKey || event.ctrlKey || event.metaKey);
-                          }}
-                          onMove={(toIndex) => {
-                            const reorder = reorderLayerBlock(layers, layer.id, toIndex > index ? 1 : -1);
-                            if (!reorder) return;
-                            commit(
-                              { version: 3, type: "reorder-layers", ...reorder },
-                              `${reorder.layerIds.length} layer${reorder.layerIds.length === 1 ? "" : "s"} reordered.`,
-                            );
-                          }}
-                          onKeyMove={(event) => {
-                            if (event.repeat && event.key.startsWith("Arrow")) {
-                              event.preventDefault();
-                              return;
-                            }
-                            const delta = keyboardMoveDelta(event.key, event.shiftKey, event.repeat);
-                            if (!delta) return;
-                            event.preventDefault();
-                            const movingLayers = selection.ids.includes(layer.id)
-                                ? selectedLayers
-                                : layer.groupId
-                                  ? layers.filter(({ groupId }) => groupId === layer.groupId)
-                                  : [layer],
-                              positions = translateLayerPositionsQ16(movingLayers, {
-                                xQ16: delta[0] * 65536,
-                                yQ16: delta[1] * 65536,
-                              });
-                            if (movingLayers.some(layerLockedV3)) {
-                              setAnnouncement("Unlock the complete selection before moving it.");
-                              return;
-                            }
-                            commit(
-                              movingLayers.length === 1
-                                ? {
-                                    version: 2,
-                                    type: "move-layer",
-                                    screen: "top",
-                                    ...positions[0]!,
-                                  }
-                                : {
-                                    version: 3,
-                                    type: "set-layer-positions",
-                                    positions,
-                                  },
-                              `${movingLayers.length} layer${movingLayers.length === 1 ? "" : "s"} moved.`,
-                            );
-                          }}
-                          onToggle={() =>
-                            commit(
-                              {
-                                version: 2,
-                                type: "set-layer-visibility",
-                                screen: "top",
-                                layerId: layer.id,
-                                visible: !layer.visible,
-                              },
-                              `${layer.name} ${layer.visible ? "hidden" : "shown"}.`,
-                            )
-                          }
-                          onLock={() => setLocks(rowGroup, !rowGroup.every(layerLockedV3))}
-                          onRemove={() => remove(layer)}
-                          selectRef={(node) => {
-                            if (node) layerButtons.current.set(layer.id, node);
-                            else layerButtons.current.delete(layer.id);
-                          }}
-                        />
-                      );
-                    })}
-                    {!layers.length && (
-                      <p className="empty-layers">
-                        {assigned
-                          ? "Using the assigned role asset. Import or paste a PNG to author an override."
-                          : "Import, drop, or paste a PNG to start this document."}
-                      </p>
-                    )}
-                    {layers.length > 0 && assigned && (
-                      <p className="document-authority">
-                        Authored document active. Its layers override the assigned role asset.
-                      </p>
-                    )}
-                  </div>
-                  <div className="layer-command-tools" role="group" aria-label="Layer commands">
-                    <button
-                      type="button"
-                      aria-label="Group"
-                      disabled={selection.ids.length < 2 || selectionLocked}
-                      title={shortcutTitle("group")}
-                      onClick={group}
-                    >
-                      <ToolIcon name="group" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Ungroup"
-                      disabled={selectionLocked || !selectedLayers.some(({ groupId }) => Boolean(groupId))}
-                      title={shortcutTitle("ungroup")}
-                      onClick={ungroup}
-                    >
-                      <ToolIcon name="ungroup" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Duplicate selected layers"
-                      disabled={!selection.ids.length}
-                      title={shortcutTitle("duplicate")}
-                      onClick={duplicate}
-                    >
-                      <ToolIcon name="duplicate" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Copy selected layers"
-                      disabled={!selection.ids.length}
-                      title={shortcutTitle("copy")}
-                      onClick={copy}
-                    >
-                      <ToolIcon name="copy" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Lock selection"
-                      disabled={!selection.ids.length || selectedLayers.every(layerLockedV3)}
-                      title={shortcutTitle("lock")}
-                      onClick={() => setLocks(orderedSelection(), true)}
-                    >
-                      <ToolIcon name="lock" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Unlock selection"
-                      disabled={!selection.ids.length || selectedLayers.every((layer) => !layerLockedV3(layer))}
-                      title={shortcutTitle("unlock")}
-                      onClick={() => setLocks(orderedSelection(), false)}
-                    >
-                      <ToolIcon name="unlock" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Paste layers"
-                      disabled={
-                        !validClipboard() ||
-                        layers.length + (clipboard.current.snapshot?.layers.length ?? 0) > MAX_DOCUMENT_LAYERS_V3
-                      }
-                      title={shortcutTitle("paste")}
-                      onClick={paste}
-                    >
-                      <ToolIcon name="paste" />
-                    </button>
-                  </div>
-                </>
-              </section>
-            )}
-            {dockTab === "properties" && (
-              <section
-                id="dock-panel-properties"
-                className={`layer-inspector${selectedLayer ? "" : " empty"}`}
-                role="tabpanel"
-                aria-labelledby="dock-tab-properties"
-              >
-                {selectedLayer && selectedDraft ? (
-                  <LayerInspector
-                    layer={selectedLayer}
-                    selectedLayers={selectedLayers}
-                    screen="top"
-                    commit={commit}
-                    announce={setAnnouncement}
-                    documentSize={{ width, height }}
-                    onClose={onCloseDock}
-                    draft={selectedDraft}
-                    onDraft={updateInspectorDraft}
-                  />
-                ) : (
+            {dockTab !== "preview" && (
+              <div className={`dock-edit-stack compact-${dockTab}`}>
+                <section
+                  id="dock-panel-layers"
+                  className="layers-panel"
+                  tabIndex={-1}
+                  aria-labelledby="dock-tab-layers"
+                >
                   <>
                     <div className="editor-panel-heading">
-                      <span>Inspector</span>
-                      <strong id="empty-inspector-title">Nothing selected</strong>
+                      <span>Stack</span>
+                      <strong id="layers-title">Layers</strong>
+                      <span id="layer-selection-count">
+                        {selection.ids.length} selected{selectionLocked ? ", locked" : ""}
+                      </span>
+                    </div>
+                    <div
+                      className="creator-layer-list"
+                      role="listbox"
+                      aria-label={`${role} layers`}
+                      aria-describedby="layer-selection-count"
+                      aria-multiselectable="true"
+                    >
+                      {[...layers].reverse().map((layer) => {
+                        const index = layers.indexOf(layer),
+                          rowGroup = layer.groupId
+                            ? layers.filter(({ groupId }) => groupId === layer.groupId)
+                            : [layer],
+                          protectedByLock = rowGroup.some(layerLockedV3);
+                        return (
+                          <LayerRow
+                            key={layer.id}
+                            layer={layer}
+                            image={isImageLayerV3(layer) ? images[layer.asset.sha256] : undefined}
+                            index={index}
+                            count={layers.length}
+                            protectedByLock={protectedByLock}
+                            selected={selection.ids.includes(layer.id)}
+                            active={selection.active === layer.id}
+                            onSelect={(event) => {
+                              select(layer.id, event.shiftKey || event.ctrlKey || event.metaKey);
+                            }}
+                            onMove={(toIndex) => {
+                              const reorder = reorderLayerBlock(layers, layer.id, toIndex > index ? 1 : -1);
+                              if (!reorder) return;
+                              commit(
+                                { version: 3, type: "reorder-layers", ...reorder },
+                                `${reorder.layerIds.length} layer${reorder.layerIds.length === 1 ? "" : "s"} reordered.`,
+                              );
+                            }}
+                            onKeyMove={(event) => {
+                              if (event.repeat && event.key.startsWith("Arrow")) {
+                                event.preventDefault();
+                                return;
+                              }
+                              const delta = keyboardMoveDelta(event.key, event.shiftKey, event.repeat);
+                              if (!delta) return;
+                              event.preventDefault();
+                              const movingLayers = selection.ids.includes(layer.id)
+                                  ? selectedLayers
+                                  : layer.groupId
+                                    ? layers.filter(({ groupId }) => groupId === layer.groupId)
+                                    : [layer],
+                                positions = translateLayerPositionsQ16(movingLayers, {
+                                  xQ16: delta[0] * 65536,
+                                  yQ16: delta[1] * 65536,
+                                });
+                              if (movingLayers.some(layerLockedV3)) {
+                                setAnnouncement("Unlock the complete selection before moving it.");
+                                return;
+                              }
+                              commit(
+                                movingLayers.length === 1
+                                  ? {
+                                      version: 2,
+                                      type: "move-layer",
+                                      screen: "top",
+                                      ...positions[0]!,
+                                    }
+                                  : {
+                                      version: 3,
+                                      type: "set-layer-positions",
+                                      positions,
+                                    },
+                                `${movingLayers.length} layer${movingLayers.length === 1 ? "" : "s"} moved.`,
+                              );
+                            }}
+                            onToggle={() =>
+                              commit(
+                                {
+                                  version: 2,
+                                  type: "set-layer-visibility",
+                                  screen: "top",
+                                  layerId: layer.id,
+                                  visible: !layer.visible,
+                                },
+                                `${layer.name} ${layer.visible ? "hidden" : "shown"}.`,
+                              )
+                            }
+                            onLock={() => setLocks(rowGroup, !rowGroup.every(layerLockedV3))}
+                            onRemove={() => remove(layer)}
+                            selectRef={(node) => {
+                              if (node) layerButtons.current.set(layer.id, node);
+                              else layerButtons.current.delete(layer.id);
+                            }}
+                          />
+                        );
+                      })}
+                      {!layers.length && (
+                        <p className="empty-layers">
+                          {assigned
+                            ? "Using the assigned role asset. Import or paste a PNG to author an override."
+                            : "Import, drop, or paste a PNG to start this document."}
+                        </p>
+                      )}
+                      {layers.length > 0 && assigned && (
+                        <p className="document-authority">
+                          Authored document active. Its layers override the assigned role asset.
+                        </p>
+                      )}
+                    </div>
+                    <div className="layer-command-tools" role="group" aria-label="Layer commands">
                       <button
                         type="button"
-                        data-panel-close="inspector"
-                        aria-label="Close Inspector panel"
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={onCloseDock}
+                        aria-label="Group"
+                        disabled={selection.ids.length < 2 || selectionLocked}
+                        title={shortcutTitle("group")}
+                        onClick={group}
                       >
-                        Close
+                        <ToolIcon name="group" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Ungroup"
+                        disabled={selectionLocked || !selectedLayers.some(({ groupId }) => Boolean(groupId))}
+                        title={shortcutTitle("ungroup")}
+                        onClick={ungroup}
+                      >
+                        <ToolIcon name="ungroup" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Duplicate selected layers"
+                        disabled={!selection.ids.length}
+                        title={shortcutTitle("duplicate")}
+                        onClick={duplicate}
+                      >
+                        <ToolIcon name="duplicate" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Copy selected layers"
+                        disabled={!selection.ids.length}
+                        title={shortcutTitle("copy")}
+                        onClick={copy}
+                      >
+                        <ToolIcon name="copy" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Lock selection"
+                        disabled={!selection.ids.length || selectedLayers.every(layerLockedV3)}
+                        title={shortcutTitle("lock")}
+                        onClick={() => setLocks(orderedSelection(), true)}
+                      >
+                        <ToolIcon name="lock" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Unlock selection"
+                        disabled={!selection.ids.length || selectedLayers.every((layer) => !layerLockedV3(layer))}
+                        title={shortcutTitle("unlock")}
+                        onClick={() => setLocks(orderedSelection(), false)}
+                      >
+                        <ToolIcon name="unlock" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Paste layers"
+                        disabled={
+                          !validClipboard() ||
+                          layers.length + (clipboard.current.snapshot?.layers.length ?? 0) > MAX_DOCUMENT_LAYERS_V3
+                        }
+                        title={shortcutTitle("paste")}
+                        onClick={paste}
+                      >
+                        <ToolIcon name="paste" />
                       </button>
                     </div>
-                    <p>Select a layer on the canvas or in the stack.</p>
                   </>
-                )}
-              </section>
+                </section>
+                <div
+                  className="dock-stack-separator"
+                  role="separator"
+                  tabIndex={0}
+                  aria-label="Resize Layers and Properties"
+                  aria-describedby="dock-split-resize-instructions"
+                  aria-orientation="horizontal"
+                  aria-valuemin={MIN_WORKSPACE_EDIT_SPLIT}
+                  aria-valuemax={MAX_WORKSPACE_EDIT_SPLIT}
+                  aria-valuenow={editSplit}
+                  onKeyDown={(event) => {
+                    const next = editSplitAfterKey(editSplit, event.key);
+                    if (next === undefined) return;
+                    event.preventDefault();
+                    onEditSplit(next);
+                  }}
+                  onPointerDown={startSplitResize}
+                  onPointerMove={resizeFromPointer}
+                  onPointerUp={(event) => stopWorkspaceResize(workspaceResize, event.pointerId)}
+                  onPointerCancel={(event) => stopWorkspaceResize(workspaceResize, event.pointerId)}
+                  onLostPointerCapture={() => stopWorkspaceResize(workspaceResize)}
+                />
+                <span id="dock-split-resize-instructions" className="sr-only">
+                  Use Up and Down arrow keys to resize Layers and Properties. Home gives Layers the minimum space and
+                  End the maximum.
+                </span>
+                <section
+                  id="dock-panel-properties"
+                  className={`layer-inspector${selectedLayer ? "" : " empty"}`}
+                  tabIndex={-1}
+                  aria-labelledby="dock-tab-properties"
+                >
+                  {selectedLayer && selectedDraft ? (
+                    <LayerInspector
+                      key={selectedDraftKey}
+                      layer={selectedLayer}
+                      selectedLayers={selectedLayers}
+                      screen="top"
+                      commit={commit}
+                      announce={setAnnouncement}
+                      documentSize={{ width, height }}
+                      onClose={onCloseDock}
+                      draft={selectedDraft}
+                      onDraft={updateInspectorDraft}
+                      onFillChange={(fill) => scheduleFill(selectedLayer, fill)}
+                      onFillCommit={flushSelectedFill}
+                    />
+                  ) : (
+                    <>
+                      <div className="editor-panel-heading">
+                        <span>Inspector</span>
+                        <strong id="empty-inspector-title">Nothing selected</strong>
+                        <button
+                          type="button"
+                          data-panel-close="inspector"
+                          aria-label="Close Inspector panel"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={onCloseDock}
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <p>Select a layer on the canvas or in the stack.</p>
+                    </>
+                  )}
+                </section>
+              </div>
             )}
             {dockTab === "preview" && (
               <section
                 id="dock-panel-preview"
                 className="dock-preview"
-                role="tabpanel"
+                tabIndex={-1}
                 aria-labelledby="dock-tab-preview"
               >
                 {preview}
@@ -3106,6 +3837,6 @@ export function CreatorWorkspace({
       </footer>
     </section>
   );
-}
+});
 
 export const importedLayerSize = fitImageToArtboard;
