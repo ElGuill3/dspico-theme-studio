@@ -35,6 +35,11 @@ describe("Inspector draft cache", () => {
     expect(readInspectorDraft(cache, key, source).properties.x).toBe("123");
   });
 
+  it("exposes a rectangle corner radius in document pixels", () => {
+    expect(createInspectorDraft({ ...layer(), cornerRadiusQ16: 5 * 65536 }).properties.cornerRadius).toBe("5");
+    expect(createInspectorDraft(layer()).properties.cornerRadius).toBe("0");
+  });
+
   it("invalidates a draft after commit, undo, or another authoritative layer change", () => {
     const source = layer(),
       changed = layer(96),

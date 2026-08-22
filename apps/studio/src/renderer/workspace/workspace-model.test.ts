@@ -716,6 +716,25 @@ describe("read-only workspace model", () => {
     expect(layerAtPoint([ellipse], { x: 20, y: 20 })).toBe(ellipse);
   });
 
+  it("hit-tests rounded rectangles through the shared pixel-center containment", () => {
+    const rounded = {
+      kind: "shape" as const,
+      shape: "rectangle" as const,
+      cornerRadiusQ16: 4 * 65536,
+      fill: "#00ff00",
+      id: "rounded",
+      name: "Rounded rectangle",
+      visible: true,
+      opacity: 65536,
+      xQ16: 10 * 65536,
+      yQ16: 10 * 65536,
+      widthQ16: 8 * 65536,
+      heightQ16: 8 * 65536,
+    };
+    expect(layerAtPoint([rounded], { x: 10, y: 10 })).toBeUndefined();
+    expect(layerAtPoint([rounded], { x: 14, y: 14 })).toBe(rounded);
+  });
+
   it("uses rotated visual bounds for hit testing and resize handles", () => {
     const rotated = {
       ...layer("rotated", 10, 20, 12, 4),
@@ -1380,6 +1399,48 @@ describe("read-only workspace model", () => {
     expect(previewPixels).toEqual(exportedPixels);
   });
 
+  it("uses identical rounded rectangle edges in preview and export", () => {
+    const context = {
+        clearRect: vi.fn(),
+        fillRect: vi.fn(),
+        fillStyle: "",
+        globalAlpha: 1,
+        imageSmoothingEnabled: true,
+        strokeStyle: "",
+        lineWidth: 0,
+        drawImage: vi.fn(),
+        beginPath: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        stroke: vi.fn(),
+        strokeRect: vi.fn(),
+      },
+      layer = {
+        kind: "shape" as const,
+        id: "rounded",
+        order: 0,
+        shape: "rectangle" as const,
+        cornerRadiusQ16: 2 * 65536,
+        fill: "#00ff00",
+        opacity: 65536,
+        destinationQ16: { x: 0, y: 0, width: 4 * 65536, height: 4 * 65536 },
+      };
+    paintWorkspaceSurface(
+      context,
+      undefined,
+      false,
+      { screen: "top", width: 4, height: 4, layers: [layer] },
+      undefined,
+      new Map(),
+      undefined,
+      { width: 4, height: 4 },
+    );
+    const previewPixels = context.fillRect.mock.calls.map(([x, y]) => y * 4 + x),
+      exported = compositeCustomLayersV1(4, 4, [layer], []),
+      exportedPixels = Array.from({ length: 16 }, (_, pixel) => pixel).filter((pixel) => exported[pixel * 4 + 3]);
+    expect(previewPixels).toEqual(exportedPixels);
+  });
+
   it("uses identical glyph pixels in preview and export", () => {
     const context = {
         clearRect: vi.fn(),
@@ -1434,6 +1495,39 @@ describe("read-only workspace model", () => {
 
     expect(fallback.layers).toMatchObject([{ id: "assigned-role-fallback", asset: { sha256: "assigned" } }]);
     expect(authored.layers).toMatchObject([{ id: "authored", asset: { sha256: "authored" } }]);
+  });
+
+  it("applies a local fill override without mutating the authoritative layer", () => {
+    const shape = {
+        kind: "shape" as const,
+        shape: "rectangle" as const,
+        cornerRadiusQ16: 2 * 65536,
+        fill: "#111111",
+        id: "shape",
+        name: "Shape",
+        visible: true,
+        opacity: 65536,
+        xQ16: 0,
+        yQ16: 0,
+        widthQ16: 4 * 65536,
+        heightQ16: 4 * 65536,
+      },
+      preview = visualDocumentSurface(
+        { width: 4, height: 4, layers: [shape] },
+        undefined,
+        "top",
+        new Map([[shape.id, "#abcdef"]]),
+        new Map([[shape.id, 32768]]),
+      );
+
+    expect(preview.layers[0]).toMatchObject({
+      id: shape.id,
+      fill: "#abcdef",
+      cornerRadiusQ16: 2 * 65536,
+      opacity: 32768,
+    });
+    expect(shape.fill).toBe("#111111");
+    expect(shape.opacity).toBe(65536);
   });
 
   it("keeps group-only and lock-only metadata out of the render surface", () => {

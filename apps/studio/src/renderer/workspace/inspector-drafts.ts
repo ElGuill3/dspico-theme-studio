@@ -6,7 +6,7 @@ import type {
 } from "../../../../../packages/theme-core/src/index.js";
 
 export type InspectorPropertyKey =
-  "x" | "y" | "width" | "height" | "cropX" | "cropY" | "cropWidth" | "cropHeight" | "opacity";
+  "x" | "y" | "width" | "height" | "cropX" | "cropY" | "cropWidth" | "cropHeight" | "opacity" | "cornerRadius";
 
 export type InspectorDraft = {
   name: string;
@@ -44,6 +44,7 @@ export const createInspectorDraft = (layer: VisualLayerV3): InspectorDraft => ({
     cropWidth: String(isImage(layer) ? layer.crop.width : 1),
     cropHeight: String(isImage(layer) ? layer.crop.height : 1),
     opacity: String(Math.round((layer.opacity * 100) / 65536)),
+    cornerRadius: String(isShape(layer) && layer.shape === "rectangle" ? (layer.cornerRadiusQ16 ?? 0) / 65536 : 0),
   },
   fill: isShape(layer) ? layer.fill : "#000000",
   text: isText(layer)
