@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CrashFrequency,
   DraftCloseHandshake,
+  flushDraftsForClose,
   isCancellation,
   safeErrorMessage,
   settleNativeAction,
@@ -61,6 +62,32 @@ describe("app resilience", () => {
     expect(close.noResponse()).toBe("ignore");
     expect(close.begin()).toBe("wait");
     expect(close.acknowledge("clean")).toBe("close");
+  });
+
+  it("awaits every draft source and keeps close blocked when workspace persistence fails", async () => {
+    let resolveWorkspace!: (saved: boolean) => void;
+    const close = new DraftCloseHandshake(),
+      existing = vi.fn(async () => true),
+      workspace = vi.fn(() => new Promise<boolean>((resolve) => (resolveWorkspace = resolve)));
+    close.update(true);
+    expect(close.begin()).toBe("prepare");
+    expect(close.acknowledge("committing")).toBe("wait");
+
+    let settled = false;
+    const preparation = flushDraftsForClose([existing, workspace], () => false).then((status) => {
+      settled = true;
+      return status;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    resolveWorkspace(false);
+
+    const status = await preparation;
+    expect(existing).toHaveBeenCalledOnce();
+    expect(workspace).toHaveBeenCalledOnce();
+    expect(status).toBe("invalid");
+    expect(close.acknowledge(status)).toBe("confirm");
+    expect(close.dirty).toBe(true);
   });
 
   it("reports a renderer that never acknowledges close", () => {

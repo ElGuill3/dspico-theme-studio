@@ -120,6 +120,14 @@ export class DraftCloseHandshake {
   }
 }
 
+export const flushDraftsForClose = async (
+  flushes: readonly (() => Promise<boolean>)[],
+  isDirty: () => boolean,
+): Promise<"clean" | "invalid"> => {
+  const saved = (await Promise.all(flushes.map((flush) => flush()))).every(Boolean);
+  return saved && !isDirty() ? "clean" : "invalid";
+};
+
 export async function settleNativeAction<T>(
   action: Promise<T>,
   onSuccess: (value: T) => void | Promise<void>,
