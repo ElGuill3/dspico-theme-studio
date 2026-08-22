@@ -56,6 +56,7 @@ import {
   resolveGuideDrop,
   RESIZE_HANDLES,
   rulerTicks,
+  selectionVisualBoundsQ16,
   snapLayerTransformQ16,
   snapSelectionTranslationQ16,
   distributeLayerSelectionQ16,
@@ -823,8 +824,10 @@ function Artboard({
   const cropMode = activeTool === "crop";
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [panning, setPanning] = useState(false);
+  const [hoveredLayerId, setHoveredLayerId] = useState<string>();
   const selectedLayers = selection.ids.flatMap((id) => layers.find((layer) => layer.id === id) ?? []),
     selectedLayer = layers.find(({ id }) => id === selection.active),
+    hoveredLayer = layers.find(({ id }) => id === hoveredLayerId),
     selectionLocked = selectedLayers.some(layerLockedV3),
     displayScale = viewport.zoom / 100,
     displaySize = {
@@ -838,6 +841,19 @@ function Artboard({
   const [guidePosition, setGuidePosition] = useState("0");
   const [rulerPosition, setRulerPosition] = useState({ x: 0, y: 0 });
   const addVerticalGuide = useRef<HTMLButtonElement>(null);
+  const displaySelectedLayers = selectedLayers.map((layer) => {
+      const pending = transient?.find(({ id }) => id === layer.id);
+      return pending
+        ? {
+            ...layer,
+            xQ16: pending.xQ16,
+            yQ16: pending.yQ16,
+            widthQ16: pending.widthQ16 ?? layer.widthQ16,
+            heightQ16: pending.heightQ16 ?? layer.heightQ16,
+          }
+        : layer;
+    }),
+    selectionBounds = selectionVisualBoundsQ16(displaySelectedLayers);
   useEffect(() => {
     commitSerial.current += 1;
     pendingTransform.current = undefined;
@@ -848,6 +864,7 @@ function Artboard({
     setGuides([]);
     setPanning(false);
     setGuideDraft(undefined);
+    setHoveredLayerId(undefined);
   }, [documentKey]);
   useEffect(() => {
     commitSerial.current += 1;
@@ -859,6 +876,7 @@ function Artboard({
     setGuides([]);
     setPanning(false);
     setGuideDraft(undefined);
+    setHoveredLayerId(undefined);
   }, [authorityVersion]);
   useEffect(() => {
     if (!selectionLocked) return;
@@ -867,8 +885,12 @@ function Artboard({
     drag.current = undefined;
     setTransient(undefined);
     setGuides([]);
+    setHoveredLayerId(undefined);
     onTool("select");
   }, [onTool, selectionLocked]);
+  useEffect(() => {
+    if (activeTool !== "select") setHoveredLayerId(undefined);
+  }, [activeTool]);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
         if (event.code === "Space" && !editingTarget(event.target)) setSpaceHeld(true);
@@ -883,6 +905,7 @@ function Artboard({
         setSpaceHeld(false);
         setPanning(false);
         setGuideDraft(undefined);
+        setHoveredLayerId(undefined);
         if (pendingTransform.current === undefined) setTransient(undefined);
         setGuides([]);
       };
@@ -979,8 +1002,10 @@ function Artboard({
     setGuides([]);
     setPanning(false);
     setGuideDraft(undefined);
+    setHoveredLayerId(undefined);
   };
   const pointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    setHoveredLayerId(undefined);
     if (event.button === 1 || (event.button === 0 && (spaceHeld || activeTool === "hand"))) {
       event.preventDefault();
       pan.current = {
@@ -1120,12 +1145,23 @@ function Artboard({
   };
   const pointerMove = (event: React.PointerEvent<HTMLElement>) => {
     if (pan.current?.pointerId === event.pointerId) {
+      setHoveredLayerId(undefined);
       if (event.buttons === 0) return cancelGesture();
       const next = panViewport(pan.current.viewport, event.clientX - pan.current.x, event.clientY - pan.current.y);
       manualViewport(next, `Viewport panned to ${Math.round(next.panX)}, ${Math.round(next.panY)}.`);
       return;
     }
-    updateGesture(point(event));
+    if (drag.current) {
+      setHoveredLayerId(undefined);
+      updateGesture(point(event));
+      return;
+    }
+    if (activeTool !== "select" || event.buttons !== 0 || guideDrag.current || pendingTransform.current !== undefined) {
+      setHoveredLayerId(undefined);
+      return;
+    }
+    const layer = layerAtPoint(layers, point(event), new Map(Object.entries(images)));
+    setHoveredLayerId((current) => (current === layer?.id ? current : layer?.id));
   };
   const persistTransform = (
     finalTransient: TransientLayerTransform[],
@@ -1337,6 +1373,7 @@ function Artboard({
     return axis === "x" ? (clientX - bounds.left) / displayScale : (clientY - bounds.top) / displayScale;
   };
   const startGuideDrag = (event: React.PointerEvent<HTMLElement>, guide: DocumentGuideV3) => {
+    setHoveredLayerId(undefined);
     if (viewport.lockGuides) return announce("Unlock guides before dragging or deleting them.");
     event.preventDefault();
     event.currentTarget.focus();
@@ -1416,6 +1453,7 @@ function Artboard({
     commitGuideDrag();
   };
   const startRulerGuide = (event: React.PointerEvent<HTMLElement>, axis: "x" | "y") => {
+    setHoveredLayerId(undefined);
     if (documentGuides.length >= MAX_DOCUMENT_GUIDES_V3)
       return announce(`A document is limited to ${MAX_DOCUMENT_GUIDES_V3} guides.`);
     const id = freshGuideId();
@@ -1572,6 +1610,7 @@ function Artboard({
               aria-label={`${label} visual editor artboard, ${width} by ${height} pixels`}
               onPointerDown={pointerDown}
               onPointerMove={pointerMove}
+              onPointerLeave={() => setHoveredLayerId(undefined)}
               onPointerUp={finishPointer}
               onPointerCancel={cancelGesture}
               onLostPointerCapture={() => {
@@ -1638,12 +1677,42 @@ function Artboard({
                 );
               }}
             />
+            {selectionBounds && (
+              <span
+                className={`canvas-selection-outline${selectionLocked ? " locked" : ""}`}
+                aria-hidden="true"
+                style={{
+                  left: (selectionBounds.x / 65536) * displayScale,
+                  top: (selectionBounds.y / 65536) * displayScale,
+                  width: (selectionBounds.width / 65536) * displayScale,
+                  height: (selectionBounds.height / 65536) * displayScale,
+                }}
+              />
+            )}
+            {hoveredLayer &&
+              (() => {
+                const bounds = layerVisualBoundsQ16(hoveredLayer);
+                return (
+                  <span
+                    className="canvas-hover-outline"
+                    aria-hidden="true"
+                    style={{
+                      left: (bounds.x / 65536) * displayScale,
+                      top: (bounds.y / 65536) * displayScale,
+                      width: (bounds.width / 65536) * displayScale,
+                      height: (bounds.height / 65536) * displayScale,
+                    }}
+                  >
+                    <span>{hoveredLayer.name}</span>
+                  </span>
+                );
+              })()}
             {selectedLayers.length === 1 &&
               selectedLayer &&
               !selectionLocked &&
               !cropMode &&
               RESIZE_HANDLES.map((handle) => {
-                const bounds = layerVisualBoundsQ16(selectedLayer),
+                const bounds = selectionBounds!,
                   left = (bounds.x / 65536) * displayScale,
                   top = (bounds.y / 65536) * displayScale,
                   right = ((bounds.x + bounds.width) / 65536) * displayScale,
@@ -1660,6 +1729,7 @@ function Artboard({
                     style={{ left: x, top: y }}
                     onPointerDown={(event) => {
                       event.stopPropagation();
+                      setHoveredLayerId(undefined);
                       const start = point(event);
                       drag.current = {
                         key: authorityKey,
@@ -1692,6 +1762,22 @@ function Artboard({
                       resizeWithKeyboard(selectedLayer, handle, delta);
                     }}
                   />
+                );
+              })}
+            {selectedLayers.length === 1 &&
+              selectedLayer &&
+              !selectionLocked &&
+              cropMode &&
+              RESIZE_HANDLES.map((handle) => {
+                const bounds = selectionBounds!,
+                  left = (bounds.x / 65536) * displayScale,
+                  top = (bounds.y / 65536) * displayScale,
+                  right = ((bounds.x + bounds.width) / 65536) * displayScale,
+                  bottom = ((bounds.y + bounds.height) / 65536) * displayScale,
+                  x = handle.includes("w") ? left : handle.includes("e") ? right : (left + right) / 2,
+                  y = handle.includes("n") ? top : handle.includes("s") ? bottom : (top + bottom) / 2;
+                return (
+                  <span key={handle} className="canvas-crop-handle" aria-hidden="true" style={{ left: x, top: y }} />
                 );
               })}
           </div>
