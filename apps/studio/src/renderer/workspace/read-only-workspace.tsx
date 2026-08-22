@@ -2194,7 +2194,7 @@ type CreatorWorkspaceProps = {
     skipPendingVisualDrafts?: boolean,
   ): Promise<boolean>;
 };
-type VisualPersistence = { persist(): Promise<boolean> };
+type VisualPersistence = { persist(): Promise<boolean>; announcement?: string };
 type WorkspaceResize =
   | { kind: "dock"; owner: HTMLElement; pointerId: number; right: number }
   | { kind: "split"; owner: HTMLElement; pointerId: number; top: number; height: number };
@@ -2377,6 +2377,7 @@ export const CreatorWorkspace = forwardRef<CreatorWorkspaceHandle, CreatorWorksp
       onInvalid: () => undefined,
       onSuccess: (field, edit, isLatest) => {
         if (!visualDraftsMounted.current || !isLatest) return;
+        if (edit.operation.announcement) setAnnouncement(edit.operation.announcement);
         setFillOverrides((current) => {
           if (current.get(field)?.revision !== edit.revision) return current;
           const next = new Map(current);
@@ -2577,6 +2578,7 @@ export const CreatorWorkspace = forwardRef<CreatorWorkspaceHandle, CreatorWorksp
         field,
         {
           persist: () => onOperation(role, operation, true),
+          announcement: `${layer.name} fill updated.`,
         },
         role,
       );
