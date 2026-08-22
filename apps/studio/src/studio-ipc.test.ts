@@ -295,6 +295,13 @@ describe("secure studio IPC sequences", () => {
           operation: { version: 3, type: "add-text-layer", layer },
         }),
       ).rejects.toThrow("Invalid IPC payload");
+    await expect(
+      handler(event, {
+        kind: "edit-visual-document",
+        role: "banner-cell",
+        operation: { version: 3, type: "set-text-fill", layerId: "text", fill: "#FFFFFF" },
+      }),
+    ).rejects.toThrow("Invalid IPC payload");
   });
 
   it.each([45, -90, 360, null])("rejects invalid rotation %s in raw IPC", async (rotation) => {
@@ -543,6 +550,24 @@ describe("secure studio IPC sequences", () => {
       scale: 2,
       alignment: "right",
     });
+    await api.editVisualDocument("banner-cell", {
+      version: 3,
+      type: "set-text-fill",
+      layerId: "text",
+      fill: "#abcdef",
+    });
+    expect(saved?.operations.at(-1)).toEqual({
+      version: 3,
+      type: "edit-visual-document",
+      role: "banner-cell",
+      operation: { version: 3, type: "set-text-fill", layerId: "text", fill: "#abcdef" },
+    });
+    expect((await api.undo()).customAuthoring?.visualDocuments["banner-cell"].layers[0]).toMatchObject({
+      content: "Edited\n😀",
+      fill: "#123456",
+      scale: 2,
+      alignment: "right",
+    });
     expect((await api.undo()).customAuthoring?.visualDocuments["banner-cell"].layers[0]).toMatchObject({
       content: "Caption",
       alignment: "left",
@@ -553,8 +578,15 @@ describe("secure studio IPC sequences", () => {
       scale: 2,
       alignment: "right",
     });
+    expect((await api.redo()).customAuthoring?.visualDocuments["banner-cell"].layers[0]).toMatchObject({
+      content: "Edited\n😀",
+      fill: "#abcdef",
+      scale: 2,
+      alignment: "right",
+    });
     expect((await api.openCustom()).customAuthoring?.visualDocuments["banner-cell"].layers[0]).toMatchObject({
       content: "Edited\n😀",
+      fill: "#abcdef",
     });
   });
 

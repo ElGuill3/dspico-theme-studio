@@ -53,6 +53,7 @@ type RotationV3 = { rotation?: QuarterTurnV1; groupId?: string; locked?: boolean
 export type ShapeLayerV3 = {
   kind: "shape";
   shape: "rectangle" | "ellipse";
+  cornerRadiusQ16?: number;
   fill: string;
   id: string;
   name: string;
@@ -163,11 +164,17 @@ export const isVisualLayerV3 = (value: unknown): value is VisualLayerV3 => {
   if (isShapeLayerV3(layer))
     return (
       (layer.shape === "rectangle" || layer.shape === "ellipse") &&
+      (layer.cornerRadiusQ16 === undefined ||
+        (layer.shape === "rectangle" &&
+          Number.isSafeInteger(layer.cornerRadiusQ16) &&
+          layer.cornerRadiusQ16 >= 0 &&
+          layer.cornerRadiusQ16 <= Math.floor(Math.min(layer.widthQ16!, layer.heightQ16!) / 2))) &&
       canonicalHexColorV3(layer.fill) &&
       Object.keys(layer).every((key) =>
         [
           "kind",
           "shape",
+          "cornerRadiusQ16",
           "fill",
           "id",
           "name",

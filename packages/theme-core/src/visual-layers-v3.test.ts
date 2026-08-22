@@ -213,6 +213,9 @@ describe("V3 visual layers", () => {
       { fill: "#ABCDEF" },
       { fill: "red" },
       { shape: "path" },
+      { cornerRadiusQ16: -1 },
+      { cornerRadiusQ16: 6 * 65536 },
+      { shape: "ellipse", cornerRadiusQ16: 65536 },
       { opacity: 65537 },
       { widthQ16: 0 },
       { xQ16: Number.NaN },
@@ -261,6 +264,93 @@ describe("V3 visual layers", () => {
       widthQ16: 7 * 65536,
       fill: "#12abef",
     });
+  });
+
+  it("persists bounded rectangle corners and opacity as narrow undoable operations", () => {
+    let state = createProjectV3({
+      projectId: "rounded-opacity",
+      metadata,
+      themeKind: "custom",
+    });
+    state = applyOperationV3(state, {
+      version: 3,
+      type: "edit-visual-document",
+      role: "scrim",
+      operation: { version: 3, type: "add-shape-layer", layer: shape() },
+    });
+    state = applyOperationV3(state, {
+      version: 3,
+      type: "edit-visual-document",
+      role: "scrim",
+      operation: {
+        version: 3,
+        type: "set-shape-corner-radius",
+        layerId: "shape",
+        cornerRadiusQ16: 100 * 65536,
+      },
+    });
+    expect(state.project.visualDocuments?.scrim?.layers[0]).toMatchObject({ cornerRadiusQ16: 5 * 65536 });
+    state = applyOperationV3(state, {
+      version: 3,
+      type: "edit-visual-document",
+      role: "scrim",
+      operation: { version: 3, type: "set-layer-opacity", layerId: "shape", opacity: 16384 },
+    });
+
+    const reopened = openProjectV3(saveProjectV3(state));
+    expect(reopened.operations).toHaveLength(3);
+    expect(reopened.project.visualDocuments?.scrim?.layers[0]).toMatchObject({
+      cornerRadiusQ16: 5 * 65536,
+      opacity: 16384,
+    });
+    expect(currentProjectV3({ ...reopened, cursor: 2 }).visualDocuments?.scrim?.layers[0]).toMatchObject({
+      cornerRadiusQ16: 5 * 65536,
+      opacity: 32768,
+    });
+
+    state = applyOperationV3(reopened, {
+      version: 3,
+      type: "edit-visual-document",
+      role: "scrim",
+      operation: {
+        version: 2,
+        type: "set-layer-properties",
+        screen: "top",
+        layerId: "shape",
+        xQ16: 0,
+        yQ16: 0,
+        widthQ16: 4 * 65536,
+        heightQ16: 4 * 65536,
+        opacity: 16384,
+        crop: { x: 0, y: 0, width: 1, height: 1 },
+      },
+    });
+    expect(state.project.visualDocuments?.scrim?.layers[0]).toMatchObject({ cornerRadiusQ16: 2 * 65536 });
+  });
+
+  it("strictly rejects malformed narrow visual operations and corners on ellipses", () => {
+    const initial = createProjectV3({ projectId: "strict-rounded-opacity", metadata, themeKind: "custom" }),
+      ellipse = createShapeLayerV3({ ...shape(), shape: "ellipse" } as never),
+      added = applyOperationV3(initial, {
+        version: 3,
+        type: "edit-visual-document",
+        role: "scrim",
+        operation: { version: 3, type: "add-shape-layer", layer: ellipse },
+      });
+    for (const operation of [
+      { version: 3, type: "set-layer-opacity", layerId: "shape", opacity: 65537 },
+      { version: 3, type: "set-layer-opacity", layerId: "shape", opacity: 1, extra: true },
+      { version: 3, type: "set-shape-corner-radius", layerId: "shape", cornerRadiusQ16: -1 },
+      { version: 3, type: "set-shape-corner-radius", layerId: "shape", cornerRadiusQ16: 65536 },
+    ])
+      expect(() =>
+        applyOperationV3(added, {
+          version: 3,
+          type: "edit-visual-document",
+          role: "scrim",
+          operation,
+        } as never),
+      ).toThrow();
   });
 
   it("moves and removes multiple layers in one strictly validated history operation", () => {
@@ -843,6 +933,58 @@ describe("V3 visual layers", () => {
     );
   });
 
+  it("changes only text fill as one undoable operation", () => {
+    const initial = createProjectV3({
+        projectId: "text-fill-history",
+        metadata,
+        themeKind: "custom",
+      }),
+      added = applyOperationV3(initial, {
+        version: 3,
+        type: "edit-visual-document",
+        role: "banner-cell",
+        operation: { version: 3, type: "add-text-layer", layer: text() },
+      }),
+      properties = applyOperationV3(added, {
+        version: 3,
+        type: "edit-visual-document",
+        role: "banner-cell",
+        operation: {
+          version: 3,
+          type: "set-text-properties",
+          layerId: "text",
+          content: "Current content",
+          fill: "#123456",
+          scale: 1,
+          alignment: "right",
+        },
+      }),
+      before = currentProjectV3(properties).visualDocuments?.["banner-cell"]?.layers[0],
+      filled = applyOperationV3(properties, {
+        version: 3,
+        type: "edit-visual-document",
+        role: "banner-cell",
+        operation: { version: 3, type: "set-text-fill", layerId: "text", fill: "#654321" },
+      }),
+      after = currentProjectV3(filled).visualDocuments?.["banner-cell"]?.layers[0],
+      undone = { ...filled, cursor: filled.cursor - 1 };
+    expect(filled.operations).toHaveLength(properties.operations.length + 1);
+    expect(after).toEqual({ ...before, fill: "#654321" });
+    expect(currentProjectV3(undone).visualDocuments?.["banner-cell"]?.layers[0]).toEqual(before);
+    expect(
+      currentProjectV3({ ...undone, cursor: undone.cursor + 1 }).visualDocuments?.["banner-cell"]?.layers[0],
+    ).toEqual(after);
+    expect(openProjectV3(saveProjectV3(filled)).project.visualDocuments?.["banner-cell"]?.layers[0]).toEqual(after);
+    expect(() =>
+      applyOperationV3(properties, {
+        version: 3,
+        type: "edit-visual-document",
+        role: "banner-cell",
+        operation: { version: 3, type: "set-text-fill", layerId: "text", fill: "#ABCDEF" },
+      }),
+    ).toThrow("Invalid V3 operation");
+  });
+
   it("authors independent text documents for all seven visual roles", () => {
     const initial = createProjectV3({
         projectId: "seven-text-documents",
@@ -1170,6 +1312,7 @@ describe("V3 visual layers", () => {
         scale: 1,
         alignment: "left",
       },
+      { version: 3, type: "set-text-fill", layerId: "text", fill: "#000000" },
     ] as const)
       expect(() =>
         applyOperationV3(locked, {

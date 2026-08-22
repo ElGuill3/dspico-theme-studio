@@ -580,18 +580,40 @@ export const shapeContainsPixelCenterV1 = (
   relativeYQ16: number,
   widthQ16: number,
   heightQ16: number,
+  cornerRadiusQ16 = 0,
 ): boolean => {
   if (
-    ![relativeXQ16, relativeYQ16, widthQ16, heightQ16].every(Number.isSafeInteger) ||
+    ![relativeXQ16, relativeYQ16, widthQ16, heightQ16, cornerRadiusQ16].every(Number.isSafeInteger) ||
     widthQ16 < 1 ||
     heightQ16 < 1 ||
+    cornerRadiusQ16 < 0 ||
     relativeXQ16 < 0 ||
     relativeYQ16 < 0 ||
     relativeXQ16 >= widthQ16 ||
     relativeYQ16 >= heightQ16
   )
     return false;
-  if (shape === "rectangle") return true;
+  if (shape === "rectangle") {
+    const radiusQ16 = Math.min(cornerRadiusQ16, Math.floor(Math.min(widthQ16, heightQ16) / 2));
+    if (radiusQ16 === 0) return true;
+    const radius = BigInt(radiusQ16),
+      x = BigInt(
+        relativeXQ16 < radiusQ16
+          ? radiusQ16 - relativeXQ16
+          : relativeXQ16 >= widthQ16 - radiusQ16
+            ? relativeXQ16 - (widthQ16 - radiusQ16)
+            : 0,
+      ),
+      y = BigInt(
+        relativeYQ16 < radiusQ16
+          ? radiusQ16 - relativeYQ16
+          : relativeYQ16 >= heightQ16 - radiusQ16
+            ? relativeYQ16 - (heightQ16 - radiusQ16)
+            : 0,
+      );
+    return x === 0n || y === 0n || x * x + y * y <= radius * radius;
+  }
+  if (cornerRadiusQ16 !== 0) return false;
   if (shape !== "ellipse") return false;
   const width = BigInt(widthQ16),
     height = BigInt(heightQ16),
@@ -655,6 +677,7 @@ type CustomShapeLayerPlanV1 = {
   id: string;
   order: number;
   shape: "rectangle" | "ellipse";
+  cornerRadiusQ16?: number;
   fill: string;
   opacity: number;
   rotation?: QuarterTurnV1;
@@ -757,7 +780,31 @@ export function compositeCustomLayersV1(
     if (image && !asset) throw new Error(`Missing normalized RGBA8 source: ${image.asset.sha256}`);
     if (asset && asset.pixels.length !== asset.width * asset.height * 4)
       throw new Error(`Mismatched normalized RGBA8 source: ${image!.asset.sha256}`);
-    if (shape && (!/^#[0-9a-f]{6}$/.test(shape.fill) || !["rectangle", "ellipse"].includes(shape.shape)))
+    if (
+      shape &&
+      (!/^#[0-9a-f]{6}$/.test(shape.fill) ||
+        !["rectangle", "ellipse"].includes(shape.shape) ||
+        (shape.cornerRadiusQ16 !== undefined &&
+          (shape.shape !== "rectangle" ||
+            !Number.isSafeInteger(shape.cornerRadiusQ16) ||
+            shape.cornerRadiusQ16 < 0 ||
+            shape.cornerRadiusQ16 >
+              Math.floor(Math.min(shape.destinationQ16.width, shape.destinationQ16.height) / 2))) ||
+        Object.keys(shape).some(
+          (key) =>
+            ![
+              "kind",
+              "id",
+              "order",
+              "shape",
+              "cornerRadiusQ16",
+              "fill",
+              "opacity",
+              "rotation",
+              "destinationQ16",
+            ].includes(key),
+        ))
+    )
       throw new Error(`Invalid shape layer: ${shape.id}`);
     if (!isQuarterTurnV1(layer.rotation === undefined ? 0 : layer.rotation))
       throw new Error(`Invalid layer rotation: ${layer.id}`);
@@ -865,7 +912,14 @@ export function compositeCustomLayersV1(
           continue;
         if (
           shape
-            ? !shapeContainsPixelCenterV1(shape.shape, relativeX, relativeY, destination.width, destination.height)
+            ? !shapeContainsPixelCenterV1(
+                shape.shape,
+                relativeX,
+                relativeY,
+                destination.width,
+                destination.height,
+                shape.cornerRadiusQ16,
+              )
             : !textLayerContainsPixelCenterV1(
                 text!.content,
                 text!.scale,
