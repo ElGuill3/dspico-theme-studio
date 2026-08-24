@@ -103,6 +103,7 @@ describe("renderer shell", () => {
     expect(css).toMatch(/\.studio-shell \{[\s\S]*?height: 100dvh;/);
     expect(css).toMatch(/\.creator-workspace \{[\s\S]*?grid-template-rows:/);
     expect(css).toContain(".project-drawer-content");
+    expect(css).toMatch(/\.launcher-layout-target\[data-unavailable="true"\] \{[\s\S]*?background: var\(--panel\);/);
     expect(css).not.toMatch(/gradient\(/);
   });
 

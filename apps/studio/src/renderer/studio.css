@@ -2859,3 +2859,42 @@ body.workspace-resizing * {
     display: none;
   }
 }
+
+.custom-launcher-layout-editor {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+}
+.launcher-layout-target {
+  position: absolute;
+  min-width: 8px;
+  min-height: 8px;
+  margin: 0;
+  border: 1px solid rgb(207 221 244 / 0.55);
+  border-radius: 1px;
+  padding: 0;
+  background: rgb(7 24 32 / 0.1);
+  box-shadow: none;
+  cursor: move;
+  outline-offset: 1px;
+  pointer-events: auto;
+}
+.launcher-layout-target[aria-pressed="true"],
+.launcher-layout-target:focus-visible {
+  border-color: var(--cyan);
+  background: rgb(78 216 232 / 0.12);
+  box-shadow: 0 0 0 1px rgb(78 216 232 / 0.45);
+}
+.launcher-layout-target[data-layout-draft="true"] {
+  border-style: dashed;
+}
+.launcher-layout-target[data-unavailable="true"] {
+  border-color: rgb(146 163 195 / 0.55);
+  background: var(--panel);
+  cursor: not-allowed;
+}
+.logical-pixels .launcher-layout-target {
+  min-width: 10px;
+  min-height: 10px;
+}
