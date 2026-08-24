@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 // prettier-ignore
-import { createProject, createProjectV2, createProjectV3, createVisualDocumentV3, currentProject, currentProjectV3, type ProjectStateV1, type ProjectStateV3 } from "../../../packages/theme-core/src/index.js";
+import { applyOperationV3, createProject, createProjectV2, createProjectV3, createVisualDocumentV3, currentProject, currentProjectV3, customLauncherLayoutAuthoritySha256V3, saveProjectV3, type ProjectStateV1, type ProjectStateV3 } from "../../../packages/theme-core/src/index.js";
 import { CUSTOM_VISUAL_ROLES_V1, customDiagnosticV1 } from "../../../packages/dspico-contract/src/index.js";
 // prettier-ignore
 import {
@@ -67,6 +67,25 @@ const customState = () =>
     themeKind: "custom",
     legacyComposition: createProjectV2({ projectId: "custom", metadata, themeKind: "custom" }),
   });
+const layoutOperation = () => ({
+  version: 3,
+  type: "set-custom-launcher-layout",
+  element: "topIcon",
+  value: { position: { x: 24, y: 132 }, blendColor: { r: 200, g: 200, b: 200 } },
+});
+const layoutState = () =>
+  applyOperationV3(customState(), {
+    version: 3,
+    type: "set-component-evidence",
+    component: "visual",
+    receipt: { id: "published" },
+  });
+const layoutSnapshot = (state: ProjectStateV3, published: Uint8Array) => ({
+  authority: saveProjectV3(state),
+  history: JSON.stringify({ operations: state.operations, cursor: state.cursor }),
+  evidence: JSON.stringify(currentProjectV3(state).componentEvidence),
+  publication: published.slice(),
+});
 const dependencies = (calls: string[]): StudioDependencies => ({
   importPng: async () => importedPng,
   open: async () => ({
@@ -92,6 +111,31 @@ const dependencies = (calls: string[]): StudioDependencies => ({
   export: async () => exportResult("theme.json", ["theme.json"]),
   exportCustom: async () => exportResult("custom", ["topbg.bin"]),
 });
+const layoutFixture = () => {
+  let saved = layoutState(),
+    published = new Uint8Array(),
+    rejectNextSave = false;
+  const handler = createStudioHandler(trusted, {
+    ...dependencies([]),
+    openCustom: async () => ({ state: saved, orphans: [] }),
+    saveCustom: async (state) => {
+      if (rejectNextSave) throw new Error("simulated save failure");
+      saved = state;
+    },
+    validateCustom: () => ({ diagnostics: [], canExport: true }),
+    exportCustom: async (project) => {
+      published = new TextEncoder().encode(JSON.stringify(project.customLauncherLayout ?? {}));
+      return exportResult("custom", ["theme/theme.json"]);
+    },
+  });
+  return {
+    api: createStudioApi((_channel, request) => handler(event, request)),
+    handler,
+    state: () => saved,
+    publication: () => published.slice(),
+    rejectNextSave: () => (rejectNextSave = true),
+  };
+};
 
 describe("secure studio IPC sequences", () => {
   it("opens either validated project type through one command and reports only the folder label", async () => {
@@ -874,6 +918,66 @@ describe("secure studio IPC sequences", () => {
     ).rejects.toThrow("simulated save failure");
 
     expect((await api.validate()).project?.metadata.name).toBe(metadata.name);
+  });
+
+  it("rejects extra, partial, and out-of-range launcher layout payloads without changing authority", async () => {
+    const fixture = layoutFixture();
+    await fixture.api.openCustom();
+    await fixture.api.export("custom");
+    const before = layoutSnapshot(fixture.state(), fixture.publication()),
+      request = {
+        kind: "set-custom-launcher-layout",
+        expectedAuthoritySha256: customLauncherLayoutAuthoritySha256V3(fixture.state()),
+        operation: layoutOperation(),
+      };
+
+    for (const invalid of [
+      { ...request, extra: true },
+      { ...request, operation: { ...layoutOperation(), value: { position: { x: 24, y: 132 } } } },
+      {
+        ...request,
+        operation: { ...layoutOperation(), value: { position: { x: 256, y: 132 }, blendColor: { r: 1, g: 2, b: 3 } } },
+      },
+    ]) {
+      await expect(fixture.handler(event, invalid as never)).rejects.toThrow("Invalid IPC payload");
+      expect(layoutSnapshot(fixture.state(), fixture.publication())).toEqual(before);
+    }
+  });
+
+  it("returns the latest launcher layout DTO for a stale authority hash without mutation", async () => {
+    const fixture = layoutFixture();
+    await fixture.api.openCustom();
+    await fixture.api.export("custom");
+    const before = layoutSnapshot(fixture.state(), fixture.publication());
+
+    await expect(
+      fixture.handler(event, {
+        kind: "set-custom-launcher-layout",
+        expectedAuthoritySha256: "0".repeat(64),
+        operation: layoutOperation(),
+      } as never),
+    ).resolves.toMatchObject({
+      customLauncherLayoutStatus: "conflict",
+      customLauncherLayout: { authoritySha256: customLauncherLayoutAuthoritySha256V3(fixture.state()), overrides: {} },
+    });
+    expect(layoutSnapshot(fixture.state(), fixture.publication())).toEqual(before);
+  });
+
+  it("keeps launcher layout authority unchanged when its save fails", async () => {
+    const fixture = layoutFixture();
+    await fixture.api.openCustom();
+    await fixture.api.export("custom");
+    const before = layoutSnapshot(fixture.state(), fixture.publication());
+    fixture.rejectNextSave();
+
+    await expect(
+      fixture.handler(event, {
+        kind: "set-custom-launcher-layout",
+        expectedAuthoritySha256: customLauncherLayoutAuthoritySha256V3(fixture.state()),
+        operation: layoutOperation(),
+      } as never),
+    ).rejects.toThrow("simulated save failure");
+    expect(layoutSnapshot(fixture.state(), fixture.publication())).toEqual(before);
   });
 
   it("persists a deterministic screen override for a project with no scenes", async () => {

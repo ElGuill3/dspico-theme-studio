@@ -1,11 +1,15 @@
 import Ajv from "ajv";
 // prettier-ignore
-import { OperationV1Schema, OperationV2Schema, applyOperation, applyOperationV2, applyOperationV3, confirmRolesV3, createMediaRefV3, createProject, createProjectV2, createProjectV3, currentProject, currentProjectV3, isMetadataFieldV3, isVisualDocumentOperationV3, metadataErrorV3, redo, undo, type MaterialProjectV1, type MetadataFieldV3, type OperationV1, type OperationV2, type ProjectStateV1, type ProjectStateV3, type ThemeProjectV2, type ThemeProjectV3, type VisualDocumentOperationV3 } from "../../../packages/theme-core/src/index.js";
+import { OperationV1Schema, OperationV2Schema, applyOperation, applyOperationV2, applyOperationV3, confirmRolesV3, createMediaRefV3, createProject, createProjectV2, createProjectV3, currentProject, currentProjectV3, customLauncherLayoutAuthoritySha256V3, isMetadataFieldV3, isVisualDocumentOperationV3, metadataErrorV3, redo, undo, type MaterialProjectV1, type MetadataFieldV3, type OperationV1, type OperationV2, type ProjectStateV1, type ProjectStateV3, type SetCustomLauncherLayoutV3, type ThemeProjectV2, type ThemeProjectV3, type VisualDocumentOperationV3 } from "../../../packages/theme-core/src/index.js";
 import {
   customExportBlockedDiagnostic,
+  CUSTOM_LAUNCHER_LAYOUT_KEYS_V1,
   CUSTOM_VISUAL_ROLES_V1,
   prepareThemeSoundV1,
   THEME_SOUND_ROLES_V1,
+  validateCustomLauncherLayoutOverridesV1,
+  type CustomLauncherLayoutKeyV1,
+  type CustomLauncherLayoutOverridesV1,
   type DiagnosticV1,
   type PreparedThemeSoundV1,
   type ThemeSoundPrepareInputV1,
@@ -29,6 +33,15 @@ type Metadata = MaterialProjectV1["metadata"];
 type CreateInput = { projectId: string; metadata: Metadata };
 export type PngImportInput = Omit<AssetProvenanceV1, "originalName">;
 export type PngBytesImportInput = PngImportInput & { originalName: string; sourceBytes: Uint8Array };
+export type CustomLauncherLayoutDtoV1 = {
+  authoritySha256: string;
+  overrides: CustomLauncherLayoutOverridesV1;
+};
+export type SetCustomLauncherLayoutRequestV1 = {
+  kind: "set-custom-launcher-layout";
+  expectedAuthoritySha256: string;
+  operation: SetCustomLauncherLayoutV3;
+};
 export type StudioRequest =
   | ({ kind: "create" } & CreateInput)
   | ({ kind: "create-custom" } & CreateInput)
@@ -44,6 +57,7 @@ export type StudioRequest =
   | { kind: "edit"; operation: OperationV1 }
   | { kind: "edit-custom"; operation: OperationV2 }
   | { kind: "set-custom-metadata"; field: MetadataFieldV3; value: string }
+  | SetCustomLauncherLayoutRequestV1
   | { kind: "edit-visual-document"; role: CustomVisualRoleV1; operation: VisualDocumentOperationV3 };
 export type StudioResult = {
   project?: MaterialProjectV1;
@@ -67,6 +81,8 @@ export type StudioResult = {
   };
   sound?: PreparedThemeSoundV1;
   soundRoles?: ThemeSoundPrepareInputV1["role"][];
+  customLauncherLayout?: CustomLauncherLayoutDtoV1;
+  customLauncherLayoutStatus?: "committed" | "conflict";
   handoff?: { destination: string; files: string[]; label: "NOT READY — CARTRIDGE TEST ONLY"; zip: false };
   revealed?: true;
   restored?: true;
@@ -88,7 +104,7 @@ type OpenedCustom = {
   customAuthoring?: CustomAuthoringSnapshotV3;
 } & CandidateAuthority;
 // prettier-ignore
-export interface StudioApi { create(input: CreateInput): Promise<StudioResult>; createCustom(input: CreateInput): Promise<StudioResult>; importPng(input: PngImportInput): Promise<StudioResult>; importPngBytes(input: PngBytesImportInput): Promise<StudioResult>; prepareWav(input: ThemeSoundPrepareInputV1): Promise<StudioResult>; removeWav(role: ThemeSoundPrepareInputV1["role"]): Promise<StudioResult>; openProject(): Promise<StudioResult>; restoreProject(): Promise<StudioResult>; restorePreMigrationV3(): Promise<StudioResult>; open(): Promise<StudioResult>; openCustom(): Promise<StudioResult>; save(): Promise<StudioResult>; edit(operation: OperationV1): Promise<StudioResult>; editCustom(operation: OperationV2): Promise<StudioResult>; setCustomMetadata(field: MetadataFieldV3, value: string): Promise<StudioResult>; editVisualDocument(role: CustomVisualRoleV1, operation: VisualDocumentOperationV3): Promise<StudioResult>; undo(): Promise<StudioResult>; redo(): Promise<StudioResult>; validate(): Promise<StudioResult>; export(target?: "material" | "custom"): Promise<StudioResult>; revealExport(revealId: string, target: "folder" | "zip"): Promise<StudioResult>; handoff(): Promise<StudioResult>; setDraftDirty(dirty: boolean): void; closeDraftDecision(acknowledgement: CloseDraftAcknowledgement): void; requestClose(draftDirty?: boolean): void; reloadEditor(reopenProject?: boolean): void; onPrepareClose(listener: () => void): () => void; }
+export interface StudioApi { create(input: CreateInput): Promise<StudioResult>; createCustom(input: CreateInput): Promise<StudioResult>; importPng(input: PngImportInput): Promise<StudioResult>; importPngBytes(input: PngBytesImportInput): Promise<StudioResult>; prepareWav(input: ThemeSoundPrepareInputV1): Promise<StudioResult>; removeWav(role: ThemeSoundPrepareInputV1["role"]): Promise<StudioResult>; openProject(): Promise<StudioResult>; restoreProject(): Promise<StudioResult>; restorePreMigrationV3(): Promise<StudioResult>; open(): Promise<StudioResult>; openCustom(): Promise<StudioResult>; save(): Promise<StudioResult>; edit(operation: OperationV1): Promise<StudioResult>; editCustom(operation: OperationV2): Promise<StudioResult>; setCustomMetadata(field: MetadataFieldV3, value: string): Promise<StudioResult>; setCustomLauncherLayout(expectedAuthoritySha256: string, operation: SetCustomLauncherLayoutV3): Promise<StudioResult>; editVisualDocument(role: CustomVisualRoleV1, operation: VisualDocumentOperationV3): Promise<StudioResult>; undo(): Promise<StudioResult>; redo(): Promise<StudioResult>; validate(): Promise<StudioResult>; export(target?: "material" | "custom"): Promise<StudioResult>; revealExport(revealId: string, target: "folder" | "zip"): Promise<StudioResult>; handoff(): Promise<StudioResult>; setDraftDirty(dirty: boolean): void; closeDraftDecision(acknowledgement: CloseDraftAcknowledgement): void; requestClose(draftDirty?: boolean): void; reloadEditor(reopenProject?: boolean): void; onPrepareClose(listener: () => void): () => void; }
 // prettier-ignore
 export interface StudioDependencies { importPng(input: PngImportInput, direct?: Pick<PngBytesImportInput, "originalName" | "sourceBytes">): Promise<ImportedPngV1>; openProject?(): Promise<(OpenedMaterial & { type: "material" }) | (OpenedCustom & { type: "custom" }) | undefined>; consumeRecoveryRestore?(): boolean; restorePreMigrationV3?(): Promise<void>; open(): Promise<OpenedMaterial>; openCustom(): Promise<OpenedCustom>; save(state: ProjectStateV1, options?: { newProject?: boolean }): Promise<void | { location: string }>; saveCustom(state: ProjectStateV3, options?: { newProject?: boolean }, media?: readonly { sha256: string; bytes: Uint8Array }[]): Promise<void | { location: string }>; hydrateCustom(project: ThemeProjectV3): Promise<CustomAuthoringSnapshotV3>; validate(project: MaterialProjectV1): { diagnostics: DiagnosticV1[]; canExport: boolean }; validateCustom(project: ThemeProjectV3): { diagnostics: DiagnosticV1[]; canExport: boolean } | Promise<{ diagnostics: DiagnosticV1[]; canExport: boolean }>; export(project: MaterialProjectV1): Promise<{ destination: string; files: string[]; reportSha256: string; zipSha256: string; revealId: string; folderName: string; zipName: string }>; exportCustom(project: ThemeProjectV3): Promise<{ destination: string; files: string[]; reportSha256: string; zipSha256: string; revealId: string; folderName: string; zipName: string }>; revealExport?(revealId: string, target: "folder" | "zip"): Promise<void>; handoffCustom?(project: ThemeProjectV3): Promise<{ destination: string; files: string[]; label: "NOT READY — CARTRIDGE TEST ONLY"; zip: false }>; }
 
@@ -97,7 +113,7 @@ export const createStudioApi = (invoke: Invoke): StudioApi => {
   const call = (request: StudioRequest) => invoke(STUDIO_CHANNEL, request);
   // prettier-ignore
   // prettier-ignore
-  const api: StudioApi = { create: (input) => call({ kind: "create", ...input }), createCustom: (input) => call({ kind: "create-custom", ...input }), importPng: (provenance) => call({ kind: "import-png", provenance }), importPngBytes: ({ originalName, sourceBytes, ...provenance }) => call({ kind: "import-png-bytes", provenance, originalName, sourceBytes }), prepareWav: (input) => call({ kind: "prepare-wav", ...input }), removeWav: (role) => call({ kind: "remove-wav", role }), openProject: () => call({ kind: "open-project" }), restoreProject: () => call({ kind: "restore-project" }), restorePreMigrationV3: () => call({ kind: "restore-pre-migration-v3" }), open: () => call({ kind: "open" }), openCustom: () => call({ kind: "open-custom" }), save: () => call({ kind: "save" }), edit: (operation) => call({ kind: "edit", operation }), editCustom: (operation) => call({ kind: "edit-custom", operation }), setCustomMetadata: (field, value) => call({ kind: "set-custom-metadata", field, value }), editVisualDocument: (role, operation) => call({ kind: "edit-visual-document", role, operation }), undo: () => call({ kind: "undo" }), redo: () => call({ kind: "redo" }), validate: () => call({ kind: "validate" }), export: (target) => call(target ? { kind: "export", target } : { kind: "export" }), revealExport: (revealId, target) => call({ kind: "reveal-export", revealId, target }), handoff: () => call({ kind: "handoff" }), setDraftDirty: () => undefined, closeDraftDecision: () => undefined, requestClose: () => undefined, reloadEditor: () => undefined, onPrepareClose: () => () => undefined };
+  const api: StudioApi = { create: (input) => call({ kind: "create", ...input }), createCustom: (input) => call({ kind: "create-custom", ...input }), importPng: (provenance) => call({ kind: "import-png", provenance }), importPngBytes: ({ originalName, sourceBytes, ...provenance }) => call({ kind: "import-png-bytes", provenance, originalName, sourceBytes }), prepareWav: (input) => call({ kind: "prepare-wav", ...input }), removeWav: (role) => call({ kind: "remove-wav", role }), openProject: () => call({ kind: "open-project" }), restoreProject: () => call({ kind: "restore-project" }), restorePreMigrationV3: () => call({ kind: "restore-pre-migration-v3" }), open: () => call({ kind: "open" }), openCustom: () => call({ kind: "open-custom" }), save: () => call({ kind: "save" }), edit: (operation) => call({ kind: "edit", operation }), editCustom: (operation) => call({ kind: "edit-custom", operation }), setCustomMetadata: (field, value) => call({ kind: "set-custom-metadata", field, value }), setCustomLauncherLayout: (expectedAuthoritySha256, operation) => call({ kind: "set-custom-launcher-layout", expectedAuthoritySha256, operation }), editVisualDocument: (role, operation) => call({ kind: "edit-visual-document", role, operation }), undo: () => call({ kind: "undo" }), redo: () => call({ kind: "redo" }), validate: () => call({ kind: "validate" }), export: (target) => call(target ? { kind: "export", target } : { kind: "export" }), revealExport: (revealId, target) => call({ kind: "reveal-export", revealId, target }), handoff: () => call({ kind: "handoff" }), setDraftDirty: () => undefined, closeDraftDecision: () => undefined, requestClose: () => undefined, reloadEditor: () => undefined, onPrepareClose: () => () => undefined };
   return Object.freeze(api);
 };
 
@@ -105,6 +121,23 @@ const validateOperation = new Ajv({ strict: true }).compile(OperationV1Schema);
 const validateOperationV2 = new Ajv({ strict: true }).compile(OperationV2Schema);
 const exactKeys = (value: Record<string, unknown>, keys: readonly string[]): boolean =>
   Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+const validCustomLauncherLayoutOperation = (input: unknown): input is SetCustomLauncherLayoutV3 => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  const value = input as Record<string, unknown>,
+    element = value.element;
+  if (
+    value.version !== 3 ||
+    value.type !== "set-custom-launcher-layout" ||
+    typeof element !== "string" ||
+    !CUSTOM_LAUNCHER_LAYOUT_KEYS_V1.includes(element as CustomLauncherLayoutKeyV1)
+  )
+    return false;
+  if (exactKeys(value, ["version", "type", "element"])) return true;
+  return (
+    exactKeys(value, ["version", "type", "element", "value"]) &&
+    validateCustomLauncherLayoutOverridesV1({ [element]: value.value }).valid
+  );
+};
 const parseRequest = (input: unknown): StudioRequest => {
   if (!input || typeof input !== "object") throw new TypeError("Invalid IPC payload");
   const value = input as Record<string, unknown>;
@@ -144,6 +177,14 @@ const parseRequest = (input: unknown): StudioRequest => {
       !exactKeys(value, ["kind", "field", "value"]) ||
       !isMetadataFieldV3(value.field) ||
       metadataErrorV3(value.field, value.value)
+    )
+      throw new TypeError("Invalid IPC payload");
+  } else if (value.kind === "set-custom-launcher-layout") {
+    if (
+      !exactKeys(value, ["kind", "expectedAuthoritySha256", "operation"]) ||
+      typeof value.expectedAuthoritySha256 !== "string" ||
+      !/^[0-9a-f]{64}$/.test(value.expectedAuthoritySha256) ||
+      !validCustomLauncherLayoutOperation(value.operation)
     )
       throw new TypeError("Invalid IPC payload");
   } else if (value.kind === "edit" || value.kind === "edit-custom" || value.kind === "edit-visual-document") {
@@ -216,6 +257,10 @@ export const createStudioHandler = (
   let customCanEdit = true;
   let projectLocation: string | undefined;
   const approvedAssets = new Map<string, ImportedPngV1>();
+  const customLauncherLayout = (candidate: ProjectStateV3): CustomLauncherLayoutDtoV1 => ({
+    authoritySha256: customLauncherLayoutAuthoritySha256V3(candidate),
+    overrides: structuredClone(currentProjectV3(candidate).customLauncherLayout ?? {}),
+  });
   let queue: Promise<void> = Promise.resolve();
   const enqueue = <T>(work: () => Promise<T>): Promise<T> => {
     const result = queue.then(work);
@@ -245,6 +290,7 @@ export const createStudioHandler = (
         }
         return {
           customProject: legacyCustomProjectV3(project),
+          customLauncherLayout: customLauncherLayout(candidate),
           soundRoles: THEME_SOUND_ROLES_V1.filter((role) => Boolean(project.roleAssignments[`${role}-sound`])),
           ...(customAuthoring ? { customAuthoring } : {}),
           canEdit: customCanEdit,
@@ -529,6 +575,15 @@ export const createStudioHandler = (
         return customResult(candidate);
       }
       if (!state) throw new Error("Open or create a project first");
+      if (request.kind === "set-custom-launcher-layout") {
+        if (state.formatVersion !== 3) throw new Error("Open or create a Custom project first.");
+        if (request.expectedAuthoritySha256 !== customLauncherLayout(state).authoritySha256)
+          return customResult(state, { customLauncherLayoutStatus: "conflict" });
+        const candidate = applyOperationV3(state, request.operation);
+        await dependencies.saveCustom(candidate);
+        state = candidate;
+        return customResult(candidate, { customLauncherLayoutStatus: "committed" });
+      }
       if (
         request.kind === "export" &&
         request.target &&
