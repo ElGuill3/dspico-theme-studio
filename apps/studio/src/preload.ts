@@ -23,6 +23,8 @@ const api: StudioApi = {
   edit: (operation) => call({ kind: "edit", operation }),
   editCustom: (operation) => call({ kind: "edit-custom", operation }),
   setCustomMetadata: (field, value) => call({ kind: "set-custom-metadata", field, value }),
+  setCustomLauncherLayout: (expectedAuthoritySha256, operation) =>
+    call({ kind: "set-custom-launcher-layout", expectedAuthoritySha256, operation }),
   editVisualDocument: (role, operation) => call({ kind: "edit-visual-document", role, operation }),
   undo: () => call({ kind: "undo" }),
   redo: () => call({ kind: "redo" }),

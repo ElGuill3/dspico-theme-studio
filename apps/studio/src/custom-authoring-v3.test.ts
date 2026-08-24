@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   CUSTOM_VISUAL_ROLES_V1,
-  CUSTOM_VISUAL_SLOTS_V1,
   codecPolicySha256V1,
   compositeProfileSha256V1,
   prepareThemeSoundV1,
@@ -22,7 +21,6 @@ import {
   compileEffectiveCustomVisualsV3,
   customAuthoringSnapshotV3,
   diagnoseCustomPublicationV3,
-  legacyCustomProjectV3,
 } from "./custom-authoring-v3.js";
 import { importPng } from "./png-import.js";
 import { neutralPreviewPngV1 } from "../../../packages/test-fixtures/src/neutral-preview-png.js";
@@ -49,11 +47,7 @@ const wav = () =>
     ),
   );
 const visualReceipt = (project: ReturnType<typeof currentProjectV3>, media: ReadonlyMap<string, Uint8Array>) => {
-  const visual = compileEffectiveCustomVisualsV3(customAuthoringSnapshotV3(project, media));
-  const legacy = legacyCustomProjectV3(project);
-  const themeBytes = new TextEncoder().encode(
-    `${JSON.stringify({ author: project.metadata.author, darkTheme: legacy.tokens.darkTheme, description: project.metadata.description, name: project.metadata.name, primaryColor: legacy.tokens.primaryColor, type: "custom" })}\n`,
-  );
+  const publication = compileCustomPublicationV3(project, media, { requireVisualReceipt: false });
   return {
     version: 1,
     schema: "dspico-visual-receipt-v1" as const,
@@ -69,11 +63,8 @@ const visualReceipt = (project: ReturnType<typeof currentProjectV3>, media: Read
       sha256: compositeProfileSha256V1(),
     },
     codecPolicy: { id: "le-xbgr555-a3i5-a5i3-round-half-up-median-cut-v1", sha256: codecPolicySha256V1() },
-    themeJsonSha256: sha256(themeBytes),
-    manifest: CUSTOM_VISUAL_SLOTS_V1.map(({ path }) => ({
-      path,
-      sha256: sha256(visual.files[path as keyof typeof visual.files]),
-    })),
+    themeJsonSha256: publication.expectation.themeJsonSha256,
+    manifest: publication.expectation.manifest,
     observations: ["Fixture visual package inspected."],
     pass: true,
   };
@@ -293,6 +284,43 @@ describe("active V3 Custom package", () => {
     expect(() => compileCustomPublicationV3(currentProjectV3(withoutReceipt), completed.media)).toThrow();
     expect(diagnoseCustomPublicationV3(currentProjectV3(completed.state), completed.media)).toEqual([]);
     expect(() => compileCustomPublicationV3(currentProjectV3(completed.state), completed.media)).not.toThrow();
+  });
+
+  it("publishes only explicit complete launcher overrides and derives every identity from theme.json bytes", () => {
+    const completed = complete(),
+      before = compileVerified(completed.state, completed.media),
+      authored = applyOperationV3(completed.state, {
+        version: 3,
+        type: "set-custom-launcher-layout",
+        element: "topIcon",
+        value: { position: { x: 24, y: 132 }, blendColor: { r: 200, g: 200, b: 200 } },
+      }),
+      after = compileVerified(authored, completed.media),
+      theme = JSON.parse(new TextDecoder().decode(publicationBytes(after, "theme.json"))),
+      report = JSON.parse(new TextDecoder().decode(publicationBytes(after, "report.json"))),
+      themeSha256 = sha256(publicationBytes(after, "theme.json"));
+
+    expect(theme).toMatchObject({
+      topIcon: { position: { x: 24, y: 132 }, blendColor: { r: 200, g: 200, b: 200 } },
+    });
+    expect(Object.keys(theme)).not.toEqual(
+      expect.arrayContaining(["topCover", "topBannerTextLine0", "topFileNameText"]),
+    );
+    expect(after.expectation.themeJsonSha256).toBe(themeSha256);
+    expect(report.files.find((file: { path: string }) => file.path === "theme.json").sha256).toBe(themeSha256);
+    expect(after.reportSha256).toBe(sha256(publicationBytes(after, "report.json")));
+    expect(sha256(after.zipBytes)).not.toBe(sha256(before.zipBytes));
+  });
+
+  it("blocks publication when persisted launcher layout overrides are invalid", () => {
+    const completed = complete(),
+      project = currentProjectV3(completed.state);
+    project.customLauncherLayout = { topIcon: { position: { x: 24, y: 132 } } } as never;
+
+    expect(diagnoseCustomPublicationV3(project, completed.media)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ ruleId: "custom.launcher-layout-invalid" })]),
+    );
+    expect(() => compileCustomPublicationV3(project, completed.media)).toThrow();
   });
 
   it("diagnoses missing media, optional WAV failure, malformed documents, and stale BGM evidence", () => {

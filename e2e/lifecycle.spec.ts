@@ -233,6 +233,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
           "restoreProject",
           "revealExport",
           "save",
+          "setCustomLauncherLayout",
           "setCustomMetadata",
           "setDraftDirty",
           "undo",

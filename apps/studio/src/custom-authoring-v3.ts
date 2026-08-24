@@ -2,6 +2,7 @@ import {
   CUSTOM_VISUAL_ROLES_V1,
   CUSTOM_VISUAL_SLOTS_V1,
   CUSTOM_VISUAL_DOCUMENTS_V1,
+  CUSTOM_LAUNCHER_LAYOUT_KEYS_V1,
   THEME_SOUND_ROLES_V1,
   DSPICO_LAUNCHER_V1,
   compositeProfileSha256V1,
@@ -10,6 +11,7 @@ import {
   sha256,
   storedZip,
   validateBcstmReceiptV13,
+  validateCustomLauncherLayoutOverridesV1,
   type CustomVisualRoleV1,
   type CustomVisualSourceV1,
   type PreparedThemeSoundV1,
@@ -61,8 +63,12 @@ const bytesFor = (media: ReadonlyMap<string, Uint8Array>, sha: string): Uint8Arr
 };
 const customThemeBytesV3 = (project: ThemeProjectV3): Uint8Array => {
   const legacy = legacyCustomProjectV3(project);
+  const overrides = project.customLauncherLayout ?? {};
+  const explicitOverrides = Object.fromEntries(
+    CUSTOM_LAUNCHER_LAYOUT_KEYS_V1.flatMap((key) => (overrides[key] === undefined ? [] : [[key, overrides[key]]])),
+  );
   return new TextEncoder().encode(
-    `${JSON.stringify({ author: project.metadata.author, darkTheme: legacy.tokens.darkTheme, description: project.metadata.description, name: project.metadata.name, primaryColor: legacy.tokens.primaryColor, type: "custom" })}\n`,
+    `${JSON.stringify({ author: project.metadata.author, darkTheme: legacy.tokens.darkTheme, description: project.metadata.description, name: project.metadata.name, primaryColor: legacy.tokens.primaryColor, type: "custom", ...explicitOverrides })}\n`,
   );
 };
 const visualReceiptExpectationV3 = (
@@ -99,6 +105,15 @@ export function diagnoseCustomPublicationV3(
     const error = metadataErrorV3(field, project.metadata?.[field]);
     if (error) add(`custom.metadata.${field}`, `/metadata/${field}`, `${error} Update ${field} in Project settings.`);
   }
+  if (
+    project.customLauncherLayout !== undefined &&
+    !validateCustomLauncherLayoutOverridesV1(project.customLauncherLayout).valid
+  )
+    add(
+      "custom.launcher-layout-invalid",
+      "/customLauncherLayout",
+      "Custom launcher layout overrides are incomplete or out of range. Correct the layout before publication.",
+    );
   let documents: Record<CustomVisualRoleV1, VisualDocumentV3> | undefined;
   try {
     documents = visualDocuments(project);
