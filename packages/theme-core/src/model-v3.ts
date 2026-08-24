@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { Value } from "@sinclair/typebox/value";
-import { CUSTOM_VISUAL_DOCUMENTS_V1, type CustomVisualRoleV1 } from "../../dspico-contract/src/custom-v1-3.js";
+import {
+  CUSTOM_VISUAL_DOCUMENTS_V1,
+  type CustomLauncherLayoutOverridesV1,
+  type CustomVisualRoleV1,
+} from "../../dspico-contract/src/custom-v1-3.js";
 import { isQuarterTurnV1, type QuarterTurnV1 } from "../../dspico-contract/src/index.js";
 import { validTextContentV1 } from "../../dspico-contract/src/pixel-font-v1.js";
 import { LAUNCHER_V1_PROFILE } from "../../dspico-contract/src/profile-v1-3.js";
@@ -264,6 +268,7 @@ export type ThemeProjectV3 = {
   quarantine: QuarantineV3[];
   acknowledgments: string[];
   componentEvidence: { visual?: unknown; bcstm?: unknown };
+  customLauncherLayout?: CustomLauncherLayoutOverridesV1;
   legacyEvidence?: LegacyEvidenceV3;
   legacyComposition?: unknown;
   visualDocuments?: Partial<Record<CustomVisualRoleV1, VisualDocumentV3>>;

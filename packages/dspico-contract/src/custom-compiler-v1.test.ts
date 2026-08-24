@@ -13,9 +13,11 @@ import {
   validateThemeProjectV2,
 } from "./index.js";
 import {
+  CUSTOM_LAUNCHER_LAYOUT_KEYS_V1,
   CUSTOM_VISUAL_ROLES_V1,
   CUSTOM_VISUAL_SLOTS_V1,
   CUSTOM_VISUAL_TOTAL_BYTES_V1,
+  validateCustomLauncherLayoutOverridesV1,
   validateCustomModelV1,
   validateCustomThemeV13,
   validateCustomVisualPackageV1,
@@ -339,5 +341,53 @@ describe("v1.3 Custom model and completeness gate", () => {
       severity: "error",
       location: { document: "project.json", pointer: "/export" },
     });
+  });
+});
+
+describe("Custom launcher layout overrides", () => {
+  const layout = () => {
+    const theme = v13Theme();
+    return {
+      topIcon: theme.topIcon,
+      topBannerTextLine0: theme.topBannerTextLine0,
+      topBannerTextLine1: theme.topBannerTextLine1,
+      topBannerTextLine2: theme.topBannerTextLine2,
+      topFileNameText: theme.topFileNameText,
+      topCover: theme.topCover,
+    };
+  };
+
+  it("accepts only the six complete supported layout overrides", () => {
+    const overrides = layout();
+
+    expect(CUSTOM_LAUNCHER_LAYOUT_KEYS_V1).toEqual([
+      "topIcon",
+      "topBannerTextLine0",
+      "topBannerTextLine1",
+      "topBannerTextLine2",
+      "topFileNameText",
+      "topCover",
+    ]);
+    expect(validateCustomLauncherLayoutOverridesV1(overrides)).toMatchObject({ valid: true, diagnostics: [] });
+  });
+
+  it("rejects unknown, partial, and out-of-range overrides", () => {
+    const unknown = validateCustomLauncherLayoutOverridesV1({ ...layout(), bottomText: {} });
+    const partial = validateCustomLauncherLayoutOverridesV1({
+      ...layout(),
+      topIcon: { position: { x: 24, y: 132 } },
+    });
+    const range = validateCustomLauncherLayoutOverridesV1({
+      ...layout(),
+      topFileNameText: {
+        ...layout().topFileNameText,
+        position: { x: 250, y: 170 },
+        width: 7,
+      },
+    });
+
+    expect(unknown.diagnostics.map(({ code }) => code)).toContain("custom.unsupported-field");
+    expect(partial.diagnostics.map(({ code }) => code)).toContain("custom.layout-object");
+    expect(range.diagnostics.map(({ code }) => code)).toContain("custom.range");
   });
 });

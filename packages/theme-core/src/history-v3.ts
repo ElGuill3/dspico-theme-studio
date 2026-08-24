@@ -10,10 +10,15 @@ import {
   MAX_DOCUMENT_LAYERS_V3,
 } from "./limits-v3.js";
 import {
+  CUSTOM_LAUNCHER_LAYOUT_KEYS_V1,
   CUSTOM_VISUAL_DOCUMENTS_V1,
   CUSTOM_VISUAL_ROLES_V1,
+  isCustomLauncherLayoutOverridesV1,
+  type CustomLauncherLayoutKeyV1,
+  type CustomThemeV13,
   type CustomVisualRoleV1,
 } from "../../dspico-contract/src/custom-v1-3.js";
+import { sha256 } from "../../dspico-contract/src/index.js";
 // prettier-ignore
 import { canonicalHexColorV3, createVisualDocumentV3, isAssetRoleV3, isCanonicalLayerIdV3, isDocumentGuideV3, isMediaRefV3, isShapeLayerV3, isTextLayerV3, isVisualLayerV3, validDocumentGuidesV3, V3_FORMAT_VERSION, V3_SCHEMA, V3_PROFILE, type AssetRoleV3, type DocumentGuideV3, type MediaAssetV3, type MediaRefV1, type ShapeLayerV3, type TextLayerV3, type ThemeProjectV3, type VisualDocumentV3, type VisualLayerV3 } from "./model-v3.js";
 
@@ -112,7 +117,13 @@ export type OperationV3 =
       operation: OperationV2;
       asset: MediaAssetV3;
     }
+  | SetCustomLauncherLayoutV3
   | { version: 3; type: "acknowledge"; fingerprint: string };
+export type SetCustomLauncherLayoutV3 = {
+  [K in CustomLauncherLayoutKeyV1]:
+    | { version: 3; type: "set-custom-launcher-layout"; element: K }
+    | { version: 3; type: "set-custom-launcher-layout"; element: K; value: NonNullable<CustomThemeV13[K]> };
+}[CustomLauncherLayoutKeyV1];
 export type ProjectStateV3 = {
   formatVersion: typeof V3_FORMAT_VERSION;
   initial: ThemeProjectV3;
@@ -413,6 +424,16 @@ const validOperation = (operation: unknown): operation is OperationV3 => {
         Value.Check(OperationV2Schema, value.operation) &&
         validAsset(value.asset as MediaAssetV3)
       );
+    case "set-custom-launcher-layout":
+      return (
+        (exact(["version", "type", "element"]) || exact(["version", "type", "element", "value"])) &&
+        typeof value.element === "string" &&
+        CUSTOM_LAUNCHER_LAYOUT_KEYS_V1.includes(value.element as CustomLauncherLayoutKeyV1) &&
+        (!Object.hasOwn(value, "value") ||
+          isCustomLauncherLayoutOverridesV1({
+            [value.element]: (value as Record<string, unknown>).value,
+          }))
+      );
     case "acknowledge":
       return exact(["version", "type", "fingerprint"]) && typeof value.fingerprint === "string";
     default:
@@ -422,7 +443,7 @@ const validOperation = (operation: unknown): operation is OperationV3 => {
 export const validateProjectV3 = (value: unknown): value is ThemeProjectV3 => {
   const project = value as Partial<ThemeProjectV3> | null;
   // prettier-ignore
-  return Boolean(project && project.schema === V3_SCHEMA && project.formatVersion === V3_FORMAT_VERSION && typeof project.projectId === "string" && project.targetProfileId === "dspico-launcher-v1" && project.profile?.profileId === V3_PROFILE.profileId && project.profile.manifestSha256 === V3_PROFILE.manifestSha256 && isMetadataV3(project.metadata) && Array.isArray(project.assets) && project.assets.every(validAsset) && Array.isArray(project.assetManifest) && project.assetManifest.every(isMediaRefV3) && project.roleAssignments && typeof project.roleAssignments === "object" && Object.entries(project.roleAssignments).every(([role, sha256]) => isAssetRoleV3(role) && typeof sha256 === "string") && Array.isArray(project.requiredRoles) && project.requiredRoles.every(isAssetRoleV3) && Array.isArray(project.confirmedRoles) && project.confirmedRoles.every((role) => isAssetRoleV3(role) && Boolean(project.roleAssignments![role])) && Array.isArray(project.quarantine) && project.quarantine.every(({ blocking }) => blocking === true) && Array.isArray(project.acknowledgments) && project.componentEvidence && typeof project.componentEvidence === "object" && (!project.visualDocuments || (Object.keys(project.visualDocuments).every((role) => CUSTOM_VISUAL_ROLES_V1.includes(role as CustomVisualRoleV1)) && CUSTOM_VISUAL_ROLES_V1.every((role) => !project.visualDocuments![role] || validDocument(project.visualDocuments![role]!, role)))));
+  return Boolean(project && project.schema === V3_SCHEMA && project.formatVersion === V3_FORMAT_VERSION && typeof project.projectId === "string" && project.targetProfileId === "dspico-launcher-v1" && project.profile?.profileId === V3_PROFILE.profileId && project.profile.manifestSha256 === V3_PROFILE.manifestSha256 && isMetadataV3(project.metadata) && Array.isArray(project.assets) && project.assets.every(validAsset) && Array.isArray(project.assetManifest) && project.assetManifest.every(isMediaRefV3) && project.roleAssignments && typeof project.roleAssignments === "object" && Object.entries(project.roleAssignments).every(([role, sha256]) => isAssetRoleV3(role) && typeof sha256 === "string") && Array.isArray(project.requiredRoles) && project.requiredRoles.every(isAssetRoleV3) && Array.isArray(project.confirmedRoles) && project.confirmedRoles.every((role) => isAssetRoleV3(role) && Boolean(project.roleAssignments![role])) && Array.isArray(project.quarantine) && project.quarantine.every(({ blocking }) => blocking === true) && Array.isArray(project.acknowledgments) && project.componentEvidence && typeof project.componentEvidence === "object" && (project.customLauncherLayout === undefined || (project.themeKind === "custom" && isCustomLauncherLayoutOverridesV1(project.customLauncherLayout))) && (!project.visualDocuments || (Object.keys(project.visualDocuments).every((role) => CUSTOM_VISUAL_ROLES_V1.includes(role as CustomVisualRoleV1)) && CUSTOM_VISUAL_ROLES_V1.every((role) => !project.visualDocuments![role] || validDocument(project.visualDocuments![role]!, role)))));
 };
 const validSnapshots = (value: unknown): value is ProjectStateV3["snapshots"] =>
   Array.isArray(value) &&
@@ -748,6 +769,21 @@ const applyOne = (project: ThemeProjectV3, operation: OperationV3): ThemeProject
   if (operation.type === "set-component-evidence") { if (operation.receipt === undefined) delete next.componentEvidence[operation.component]; else next.componentEvidence[operation.component] = clone(operation.receipt); }
   if (operation.type === "set-legacy-composition" || operation.type === "import-layer") next.legacyComposition = clone(operation.composition);
   if (operation.type === "edit-visual-document" || operation.type === "import-visual-layer") editVisualDocument(next, operation.role, operation.operation);
+  if (operation.type === "set-custom-launcher-layout") {
+    if (next.themeKind !== "custom") fail("Custom launcher layout requires a Custom project.");
+    if ("value" in operation)
+      next.customLauncherLayout = {
+        ...next.customLauncherLayout,
+        [operation.element]: clone(operation.value),
+      } as ThemeProjectV3["customLauncherLayout"];
+    else {
+      const overrides = { ...next.customLauncherLayout };
+      delete overrides[operation.element];
+      if (Object.keys(overrides).length) next.customLauncherLayout = overrides;
+      else delete next.customLauncherLayout;
+    }
+    delete next.componentEvidence.visual;
+  }
   if (operation.type === "acknowledge") next.acknowledgments = [...new Set([...next.acknowledgments, operation.fingerprint])].sort();
   return next;
 };
@@ -763,6 +799,10 @@ export function createProjectV3(input: { projectId: string; metadata: ThemeProje
 }
 // prettier-ignore
 export function applyOperationV3(state: ProjectStateV3, operation: OperationV3): ProjectStateV3 { if (!validOperation(operation)) fail("Invalid V3 operation."); const operations = [...state.operations.slice(0, state.cursor), clone(operation)]; return commit({ formatVersion: 3, initial: state.initial, operations, cursor: operations.length, baseRevision: state.baseRevision, snapshots: state.snapshots }); }
+export const undoV3 = (state: ProjectStateV3): ProjectStateV3 =>
+  commit({ ...state, cursor: Math.max(0, state.cursor - 1) });
+export const redoV3 = (state: ProjectStateV3): ProjectStateV3 =>
+  commit({ ...state, cursor: Math.min(state.operations.length, state.cursor + 1) });
 // prettier-ignore
 export const confirmRolesV3 = (state: ProjectStateV3, assignments: Partial<Record<AssetRoleV3, string>>): ProjectStateV3 => Object.entries(assignments).reduce((next, [role, mediaSha256]) => applyOperationV3(applyOperationV3(next, { version: 3, type: "assign-role", role: role as AssetRoleV3, mediaSha256: mediaSha256! }), { version: 3, type: "confirm-role", role: role as AssetRoleV3 }), state);
 // prettier-ignore
@@ -811,3 +851,4 @@ export function openProjectV3(bytes: string): ProjectStateV3 {
   if (!validateProjectV3(project)) fail("Project format failed strict V3 validation.");
   return { ...value, project };
 }
+export const customLauncherLayoutAuthoritySha256V3 = (state: ProjectStateV3): string => sha256(saveProjectV3(state));

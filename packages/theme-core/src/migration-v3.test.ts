@@ -33,6 +33,15 @@ describe("V3 legacy migration", () => {
     expect(result.requiresConfirmation).toEqual([]);
   });
 
+  it("keeps existing projects sparse without eager launcher-layout defaults", () => {
+    // prettier-ignore
+    const source = saveProject(createProject({ projectId: "sparse", metadata, targetProfileId: "dspico-launcher-v1" }));
+    const result = migrateProjectToV3(source);
+
+    expect(result.candidate.project.customLauncherLayout).toBeUndefined();
+    expect(saveProjectV3(result.candidate)).not.toContain("customLauncherLayout");
+  });
+
   it("preserves V2 compositions and requires role confirmation instead of flattening", () => {
     const state = createProjectV2({ projectId: "v2", metadata, themeKind: "custom" });
     const source = saveProjectV2(state);

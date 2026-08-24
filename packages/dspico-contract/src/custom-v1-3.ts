@@ -31,6 +31,16 @@ export type CustomThemeV13 = {
   bannerListTextLine1?: CustomBottomTextV1;
   bannerListTextLine2?: CustomBottomTextV1;
 };
+export const CUSTOM_LAUNCHER_LAYOUT_KEYS_V1 = [
+  "topIcon",
+  "topBannerTextLine0",
+  "topBannerTextLine1",
+  "topBannerTextLine2",
+  "topFileNameText",
+  "topCover",
+] as const;
+export type CustomLauncherLayoutKeyV1 = (typeof CUSTOM_LAUNCHER_LAYOUT_KEYS_V1)[number];
+export type CustomLauncherLayoutOverridesV1 = Partial<Pick<CustomThemeV13, CustomLauncherLayoutKeyV1>>;
 export type CustomVisualCodecV1 = "xbgr555-le-v1" | "a3i5-v1" | "a5i3-v1";
 export const CUSTOM_VISUAL_ROLES_V1 = [
   "top-background",
@@ -214,6 +224,48 @@ const checkLayout = (name: LayoutName, value: unknown, out: CustomModelDiagnosti
       );
   }
 };
+
+export function validateCustomLauncherLayoutOverridesV1(input: unknown): CustomValidationResultV1 {
+  const out: CustomModelDiagnosticV1[] = [];
+  if (!isRecord(input))
+    return finish([
+      {
+        code: "custom.layout-object",
+        path: "",
+        expected: "non-empty launcher layout override map",
+        observed: input,
+        message: "Launcher layout overrides must be a non-empty object.",
+      },
+    ]);
+  const keys = Object.keys(input);
+  if (!keys.length)
+    add(
+      out,
+      "custom.layout-object",
+      "",
+      "non-empty launcher layout override map",
+      input,
+      "Launcher layout overrides must be non-empty.",
+    );
+  for (const key of keys) {
+    if (!CUSTOM_LAUNCHER_LAYOUT_KEYS_V1.includes(key as CustomLauncherLayoutKeyV1)) {
+      add(
+        out,
+        "custom.unsupported-field",
+        `/${key}`,
+        CUSTOM_LAUNCHER_LAYOUT_KEYS_V1,
+        input[key],
+        `${key} is unsupported.`,
+      );
+      continue;
+    }
+    checkLayout(key as LayoutName, input[key], out);
+  }
+  return finish(out);
+}
+
+export const isCustomLauncherLayoutOverridesV1 = (input: unknown): input is CustomLauncherLayoutOverridesV1 =>
+  validateCustomLauncherLayoutOverridesV1(input).valid;
 
 // prettier-ignore
 export function validateCustomThemeV13(input: unknown): CustomValidationResultV1 { const out: CustomModelDiagnosticV1[] = [], theme = isRecord(input) ? input : undefined, allowed = ["type", "name", "description", "author", "primaryColor", "darkTheme", ...Object.keys(LAYOUT)]; if (!theme) return finish([{ code: "custom.document", path: "", expected: "object", observed: input, message: "Custom theme must be an object." }]); for (const key of Object.keys(theme)) if (!allowed.includes(key)) add(out, "custom.unsupported-field", `/${key}`, allowed, theme[key], `${key} is unsupported.`); if (theme.type !== "custom") add(out, "custom.type", "/type", "custom", theme.type, "Custom themes require type custom."); for (const field of ["name", "description", "author"]) if (typeof theme[field] !== "string" || !theme[field] || theme[field] !== theme[field].trim()) add(out, "custom.metadata", `/${field}`, "trimmed non-empty string", theme[field], `${field} must be non-empty and trimmed.`); checkColor(theme.primaryColor, "/primaryColor", out); if (typeof theme.darkTheme !== "boolean") add(out, "custom.dark-theme", "/darkTheme", "boolean", theme.darkTheme, "darkTheme must be boolean."); for (const name of Object.keys(LAYOUT) as LayoutName[]) if (theme[name] !== undefined) checkLayout(name, theme[name], out); return finish(out); }
