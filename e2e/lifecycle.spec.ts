@@ -96,6 +96,28 @@ const customState = async (root: string) => {
     cursor: state.operations.slice(0, state.cursor).filter(documentOperation).length,
   };
 };
+const customLauncherLayoutState = async (root: string) => {
+  const selected = await readFile(path.join(root, "project-selection.txt"), "utf8").catch(() => root);
+  const state = JSON.parse(await readFile(path.join(selected.trim(), "project.json"), "utf8")) as {
+    cursor: number;
+    operations: Array<{
+      type?: string;
+      element?: string;
+      value?: { position?: { x?: number; y?: number }; width?: number };
+    }>;
+  };
+  const layoutOperation = ({ type }: { type?: string }) => type === "set-custom-launcher-layout";
+  return {
+    operations: state.operations.filter(layoutOperation),
+    cursor: state.operations.slice(0, state.cursor).filter(layoutOperation).length,
+  };
+};
+const layoutPosition = (operation: { value?: { position?: { x?: number; y?: number } } }): { x: number; y: number } => {
+  const position = operation.value?.position;
+  if (!position || typeof position.x !== "number" || typeof position.y !== "number")
+    throw new Error("Expected a complete custom launcher layout position.");
+  return { x: position.x, y: position.y };
+};
 const exportFolderSnapshot = async (root: string): Promise<Map<string, Buffer>> => {
   const base = path.join(root, "export/theme"),
     files = new Map<string, Buffer>();
@@ -809,6 +831,107 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         { width: 256, height: 192 },
         { width: 256, height: 192 },
       ]);
+      const layoutEditor = page.getByRole("group", { name: "Custom launcher layout" });
+      const topIcon = layoutEditor.getByRole("button", { name: "Select top icon" });
+      await expect(layoutEditor).toBeVisible();
+      await expect(layoutEditor.locator("[data-layout-target]")).toHaveCount(6);
+      await expect(page.locator("[data-preview-chrome][data-layout-target]")).toHaveCount(0);
+      await topIcon.click();
+      await expect(topIcon).toHaveAttribute("aria-pressed", "true");
+      const rastersBeforeDraft = await page
+        .locator("[data-launcher-screen]")
+        .evaluateAll((canvases) => canvases.map((canvas) => (canvas as HTMLCanvasElement).toDataURL()));
+      const layoutBeforeDraft = await customLauncherLayoutState(root);
+      const iconBox = (await topIcon.boundingBox())!;
+      await topIcon.dispatchEvent("pointerdown", {
+        pointerId: 41,
+        button: 0,
+        buttons: 1,
+        clientX: iconBox.x + iconBox.width / 2,
+        clientY: iconBox.y + iconBox.height / 2,
+      });
+      await topIcon.dispatchEvent("pointermove", {
+        pointerId: 41,
+        button: 0,
+        buttons: 1,
+        clientX: iconBox.x + iconBox.width / 2 + 12,
+        clientY: iconBox.y + iconBox.height / 2 + 8,
+      });
+      await expect(topIcon).toHaveAttribute("data-layout-draft", "true");
+      expect(await customLauncherLayoutState(root)).toEqual(layoutBeforeDraft);
+      expect(
+        await page
+          .locator("[data-launcher-screen]")
+          .evaluateAll((canvases) => canvases.map((canvas) => (canvas as HTMLCanvasElement).toDataURL())),
+      ).toEqual(rastersBeforeDraft);
+      await topIcon.dispatchEvent("pointerup", {
+        pointerId: 41,
+        button: 0,
+        clientX: iconBox.x + iconBox.width / 2 + 12,
+        clientY: iconBox.y + iconBox.height / 2 + 8,
+      });
+      await expect.poll(async () => (await customLauncherLayoutState(root)).operations).toHaveLength(1);
+      const pointerMove = (await customLauncherLayoutState(root)).operations.at(-1)!;
+      const pointerPosition = layoutPosition(pointerMove);
+      expect(pointerMove).toMatchObject({ type: "set-custom-launcher-layout", element: "topIcon" });
+      await expect(topIcon).not.toHaveAttribute("data-layout-draft", "true");
+      await expect(topIcon).toBeEnabled();
+
+      await topIcon.press("ArrowRight");
+      await expect.poll(async () => (await customLauncherLayoutState(root)).operations).toHaveLength(2);
+      const arrowMove = (await customLauncherLayoutState(root)).operations.at(-1)!;
+      const arrowPosition = layoutPosition(arrowMove);
+      expect(arrowMove.value?.position).toEqual({
+        x: pointerPosition.x + 1,
+        y: pointerPosition.y,
+      });
+      await expect(topIcon).toBeEnabled();
+      await topIcon.press("Shift+ArrowDown");
+      await expect.poll(async () => (await customLauncherLayoutState(root)).operations).toHaveLength(3);
+      const shiftArrowMove = (await customLauncherLayoutState(root)).operations.at(-1)!;
+      expect(shiftArrowMove.value?.position).toEqual({
+        x: arrowPosition.x,
+        y: arrowPosition.y + 10,
+      });
+
+      const fileName = layoutEditor.getByRole("button", { name: "Select file name" });
+      await expect(fileName).toBeEnabled();
+      await fileName.click();
+      const fileNameBox = (await fileName.boundingBox())!;
+      await fileName.dispatchEvent("pointerdown", {
+        pointerId: 42,
+        button: 0,
+        buttons: 1,
+        clientX: fileNameBox.x + fileNameBox.width / 2,
+        clientY: fileNameBox.y + fileNameBox.height / 2,
+      });
+      await fileName.dispatchEvent("pointermove", {
+        pointerId: 42,
+        button: 0,
+        buttons: 1,
+        clientX: fileNameBox.x + fileNameBox.width * 20,
+        clientY: fileNameBox.y + fileNameBox.height / 2,
+      });
+      await fileName.dispatchEvent("pointerup", {
+        pointerId: 42,
+        button: 0,
+        buttons: 1,
+        clientX: fileNameBox.x + fileNameBox.width * 20,
+        clientY: fileNameBox.y + fileNameBox.height / 2,
+      });
+      await expect.poll(async () => (await customLauncherLayoutState(root)).operations).toHaveLength(4);
+      expect((await customLauncherLayoutState(root)).operations.at(-1)?.value).toMatchObject({
+        position: { x: 36 },
+        width: 220,
+      });
+
+      await coverflow.click();
+      const topCover = layoutEditor.getByRole("button", { name: "Top cover is unavailable in Coverflow" });
+      await expect(topCover).toHaveAttribute("aria-disabled", "true");
+      const operationsBeforeUnavailable = (await customLauncherLayoutState(root)).operations.length;
+      await topCover.dispatchEvent("click");
+      await topCover.dispatchEvent("keydown", { key: "ArrowRight" });
+      expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeUnavailable);
       drawer = await openProjectDrawer(page, "Export");
       await drawer.getByRole("button", { name: "Run diagnostics" }).click();
       await expect(drawer.getByText("1 diagnostics", { exact: true })).toBeVisible();
@@ -2357,6 +2480,20 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
       type: "set-layer-positions",
       positions: [{ xQ16: expect.any(Number) }, { xQ16: expect.any(Number) }, { xQ16: expect.any(Number) }],
     });
+    const beforeGroupedPointerRelease = (await customState(root)).operations.length,
+      groupedPointerBounds = (await groupedCanvas.boundingBox())!;
+    await page.mouse.move(
+      groupedPointerBounds.x + groupedPointerBounds.width / 2,
+      groupedPointerBounds.y + groupedPointerBounds.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      groupedPointerBounds.x + groupedPointerBounds.width / 2 + 12,
+      groupedPointerBounds.y + groupedPointerBounds.height / 2 + 8,
+    );
+    await page.mouse.up();
+    await expect.poll(async () => (await customState(root)).operations.length).toBe(beforeGroupedPointerRelease + 1);
+    await expect(workspace.getByRole("status")).toHaveText("3 layers moved.");
     await certifyCurrentVisual(page, projectRoot);
     await workspace.getByRole("button", { name: "banner-cell-selected", exact: true }).click();
     await showDockTab(page, "Layers");
@@ -2383,7 +2520,6 @@ test("publishes creator output as an equivalent folder and ZIP package", async (
     await page.keyboard.press("Control+Alt+l");
     await expect.poll(async () => (await customState(root)).operations.length).toBe(beforeLock + 1);
     await page.mouse.up();
-    await page.waitForTimeout(100);
     expect((await customState(root)).operations.length).toBe(beforeLock + 1);
     await expect(workspace.getByLabel("X", { exact: true })).toHaveValue(beforeLockX);
     await expect(

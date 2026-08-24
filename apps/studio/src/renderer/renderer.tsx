@@ -1,14 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import {
   compileCustomVisualPackageV1,
   CUSTOM_VISUAL_ROLES_V1,
   type CustomVisualRoleV1,
 } from "../../../../packages/dspico-contract/src/index.js";
-import type { MaterialProjectV1, VisualDocumentOperationV3 } from "../../../../packages/theme-core/src/index.js";
+import type {
+  MaterialProjectV1,
+  SetCustomLauncherLayoutV3,
+  VisualDocumentOperationV3,
+} from "../../../../packages/theme-core/src/index.js";
 import { metadataErrorV3, type MetadataFieldV3 } from "../../../../packages/theme-core/src/limits-v3.js";
 import { createPreviewModel, type PreviewModel } from "../../../../packages/theme-core/src/preview.js";
-import type { StudioApi, StudioResult } from "../studio-ipc.js";
+import type { CustomLauncherLayoutDtoV1, StudioApi, StudioResult } from "../studio-ipc.js";
 import type { ThemeSoundRoleV1, WavRecipeV1 } from "../../../../packages/dspico-contract/src/theme-sounds-v1.js";
 import { CustomAssetBench } from "./custom-asset-bench.js";
 import { CustomOutputRail } from "./custom-output-rail.js";
@@ -44,6 +48,7 @@ import {
   renderPartialCustomLauncherPreview,
   type LauncherPreviewFrameV1,
 } from "./launcher-preview/render-launcher-preview.js";
+import { CustomLauncherLayoutEditor } from "./custom-launcher-layout-editor.js";
 
 declare global {
   interface Window {
@@ -160,7 +165,15 @@ function previewProject(project: MaterialProjectV1, draft: Draft, mode: string):
   };
 }
 
-function PhysicalPreview({ frame, screen }: { frame: LauncherPreviewFrameV1; screen: Screen }) {
+function PhysicalPreview({
+  frame,
+  screen,
+  editor,
+}: {
+  frame: LauncherPreviewFrameV1;
+  screen: Screen;
+  editor?: ReactNode;
+}) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const bytes = frame[screen];
   const evidence = bytes.reduce((hash, byte) => Math.imul(hash ^ byte, 16_777_619) >>> 0, 2_166_136_261).toString(16);
@@ -186,6 +199,7 @@ function PhysicalPreview({ frame, screen }: { frame: LauncherPreviewFrameV1; scr
           role="img"
           aria-label={`${screen} launcher screen`}
         />
+        {editor}
       </div>
     </section>
   );
@@ -195,12 +209,16 @@ function DevicePreview({
   launcherView,
   onLauncherView,
   customPreview,
+  customLauncherLayout,
+  onCustomLauncherLayoutCommit,
   preview,
   busy,
 }: {
   launcherView: LauncherView;
   onLauncherView(view: LauncherView): void;
   customPreview: CustomLauncherPreviewState;
+  customLauncherLayout?: CustomLauncherLayoutDtoV1;
+  onCustomLauncherLayoutCommit(expectedAuthoritySha256: string, operation: SetCustomLauncherLayoutV3): Promise<boolean>;
   preview?: PreviewModel;
   busy: boolean;
 }) {
@@ -215,6 +233,7 @@ function DevicePreview({
             sources: customPreview.sources,
             mode: launcherView,
             fixture: neutralLauncherFixtureV1(),
+            committedLayout: customLauncherLayout,
           }),
           startedRoles: customPreview.startedRoles,
           placeholderRoles: customPreview.placeholderRoles,
@@ -232,12 +251,17 @@ function DevicePreview({
               }
             : undefined;
       if (!theme) return { kind: "invalid" };
-      const frame = renderLauncherPreview({ theme, mode: launcherView, fixture: neutralLauncherFixtureV1() });
+      const frame = renderLauncherPreview({
+        theme,
+        mode: launcherView,
+        fixture: neutralLauncherFixtureV1(),
+        committedLayout: customLauncherLayout,
+      });
       return { kind: "ready", frame };
     } catch {
       return { kind: "invalid" };
     }
-  }, [customPreview, launcherView, preview]);
+  }, [customLauncherLayout, customPreview, launcherView, preview]);
   return (
     <>
       <div className="preview-toolbar">
@@ -285,7 +309,20 @@ function DevicePreview({
               }
             >
               <span className="device-chrome" data-preview-chrome="device-frame" aria-hidden="true" />
-              <PhysicalPreview frame={launcherPreview.frame} screen="top" />
+              <PhysicalPreview
+                frame={launcherPreview.frame}
+                screen="top"
+                editor={
+                  customLauncherLayout && customPreview.kind !== "not-custom" ? (
+                    <CustomLauncherLayoutEditor
+                      committedLayout={customLauncherLayout}
+                      disabled={busy}
+                      mode={launcherPreview.frame.mode}
+                      onCommit={onCustomLauncherLayoutCommit}
+                    />
+                  ) : undefined
+                }
+              />
               <PhysicalPreview frame={launcherPreview.frame} screen="bottom" />
             </div>
           </div>
@@ -599,6 +636,15 @@ function Studio() {
       if (mounted.current) setBusy(false);
     }
   };
+  const commitCustomLauncherLayout = (expectedAuthoritySha256: string, operation: SetCustomLauncherLayoutV3) =>
+    run(
+      "Launcher layout saved.",
+      () => window.studio.setCustomLauncherLayout(expectedAuthoritySha256, operation),
+      false,
+      false,
+      false,
+      false,
+    );
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       const editing = suppressGlobalShortcut(event.target) || suppressGlobalShortcut(document.activeElement);
@@ -869,7 +915,7 @@ function Studio() {
       () => window.studio.editVisualDocument(role, operation),
       false,
       false,
-      false,
+      operation.type === "set-layer-locks",
       !skipPendingVisualDrafts,
     );
 
@@ -1137,6 +1183,8 @@ function Studio() {
                     launcherView={launcherView}
                     onLauncherView={setLauncherView}
                     customPreview={customPreview}
+                    customLauncherLayout={result?.customLauncherLayout}
+                    onCustomLauncherLayoutCommit={commitCustomLauncherLayout}
                     preview={preview}
                     busy={busy}
                   />
