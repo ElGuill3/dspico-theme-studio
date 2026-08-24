@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CUSTOM_VISUAL_DOCUMENTS_V1,
   sha256,
+  type CustomLauncherLayoutOverridesV1,
   type CustomVisualRoleV1,
   type CustomVisualSourceV1,
 } from "../../../../../packages/dspico-contract/src/index.js";
@@ -16,8 +17,21 @@ const source = (role: CustomVisualRoleV1, rgba: readonly number[]): CustomVisual
   return { role, sourceSha256: sha256(pixels), width, height, pixels, provenance: { rightsToExport: true } };
 };
 const fixture = { ...neutralLauncherFixtureV1(), selectedIndex: 1 };
-const render = (mode: string, sources: readonly CustomVisualSourceV1[] = []) =>
-  renderPartialCustomLauncherPreview({ mode, sources, fixture });
+const committed = (overrides: CustomLauncherLayoutOverridesV1) => ({
+  authoritySha256: "b".repeat(64),
+  overrides,
+});
+const render = (
+  mode: string,
+  sources: readonly CustomVisualSourceV1[] = [],
+  committedLayout?: CustomLauncherLayoutOverridesV1,
+) =>
+  renderPartialCustomLauncherPreview({
+    mode,
+    sources,
+    fixture,
+    ...(committedLayout ? { committedLayout: committed(committedLayout) } : {}),
+  });
 
 describe("partial Custom launcher preview", () => {
   it.each(["horizontal-grid", "vertical-grid", "banner-list", "coverflow"])(
@@ -60,5 +74,23 @@ describe("partial Custom launcher preview", () => {
       offset = (y * 256 + x) * 4;
     expect(rendered.slice(offset, offset + 4)).not.toEqual(baseline.slice(offset, offset + 4));
     expect(() => render(mode, [{ ...real, width: real.width - 1 }])).toThrow(LauncherPreviewError);
+  });
+
+  it("uses only the replaced committed DTO, never a draft-only layout", () => {
+    const committedLayout = {
+        topIcon: { position: { x: 4, y: 100 }, blendColor: { r: 220, g: 30, b: 40 } },
+      } satisfies CustomLauncherLayoutOverridesV1,
+      replacement = {
+        topIcon: { position: { x: 40, y: 100 }, blendColor: { r: 30, g: 220, b: 40 } },
+      } satisfies CustomLauncherLayoutOverridesV1,
+      draftOnly = {
+        topIcon: { position: { x: 80, y: 100 }, blendColor: { r: 40, g: 30, b: 220 } },
+      } satisfies CustomLauncherLayoutOverridesV1,
+      before = render("horizontal-grid", [], committedLayout),
+      replaced = render("horizontal-grid", [], replacement);
+
+    expect(render("horizontal-grid", [], committedLayout)).toEqual(before);
+    expect(replaced).not.toEqual(before);
+    expect(render("horizontal-grid", [], committedLayout)).not.toEqual(render("horizontal-grid", [], draftOnly));
   });
 });

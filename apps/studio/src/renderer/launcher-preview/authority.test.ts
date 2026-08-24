@@ -3,7 +3,12 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { captureLauncherFixtures } from "../../../../../packages/test-fixtures/src/capture.js";
-import { LAUNCHER_PREVIEW_AUTHORITY_V1, LauncherPreviewError, createLauncherPreviewFrameModelV1 } from "./authority.js";
+import {
+  LAUNCHER_PREVIEW_AUTHORITY_V1,
+  LauncherPreviewError,
+  createLauncherPreviewFrameModelV1,
+  resolveCustomLauncherLayoutV1,
+} from "./authority.js";
 import { importLauncherPaletteFixtureV1 } from "./fixture.js";
 
 describe("launcher preview authority", () => {
@@ -41,6 +46,45 @@ describe("launcher preview authority", () => {
       customCoverflow: { reflectionRows: 20 },
       materialCoverflow: { selected: [46, 106], next: [156, 54], radius: 18, clip: [6, 250] },
     });
+  });
+
+  it("resolves only the six editable Custom objects from pinned defaults and sparse committed overrides", () => {
+    const resolved = resolveCustomLauncherLayoutV1({
+      topIcon: { position: { x: 12, y: 34 }, blendColor: { r: 1, g: 2, b: 3 } },
+      topFileNameText: {
+        position: { x: 9, y: 171 },
+        width: 200,
+        textColor: { r: 4, g: 5, b: 6 },
+        blendColor: { r: 7, g: 8, b: 9 },
+      },
+    });
+
+    expect(Object.keys(resolved)).toEqual([
+      "topIcon",
+      "topBannerTextLine0",
+      "topBannerTextLine1",
+      "topBannerTextLine2",
+      "topFileNameText",
+      "topCover",
+    ]);
+    expect(resolved).toMatchObject({
+      topIcon: { position: { x: 12, y: 34 }, blendColor: { r: 1, g: 2, b: 3 } },
+      topBannerTextLine0: {
+        position: { x: 70, y: 126 },
+        width: 176,
+        textColor: { r: 30, g: 30, b: 30 },
+        blendColor: { r: 200, g: 200, b: 200 },
+      },
+      topFileNameText: {
+        position: { x: 9, y: 171 },
+        width: 200,
+        textColor: { r: 4, g: 5, b: 6 },
+        blendColor: { r: 7, g: 8, b: 9 },
+      },
+      topCover: { position: { x: 75, y: 18 } },
+    });
+    expect(resolved).not.toHaveProperty("statusHeight");
+    expect(resolved).not.toHaveProperty("appBar");
   });
 
   const root = process.env.DSPICO_LAUNCHER_RUNTIME_ROOT;

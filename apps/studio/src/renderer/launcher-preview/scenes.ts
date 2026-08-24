@@ -1,5 +1,10 @@
 import type { RgbaImageV1 } from "../../../../../packages/dspico-contract/src/codecs-v1-3.js";
-import { LAUNCHER_PREVIEW_AUTHORITY_V1, LauncherPreviewError, type LauncherPreviewModeV1 } from "./authority.js";
+import {
+  LAUNCHER_PREVIEW_AUTHORITY_V1,
+  LauncherPreviewError,
+  type EffectiveCustomLauncherLayoutV1,
+  type LauncherPreviewModeV1,
+} from "./authority.js";
 import type { LauncherFixtureV1 } from "./fixture.js";
 import type { MaterialRolesV1 } from "./material.js";
 import { stage } from "./raster.js";
@@ -35,6 +40,11 @@ export type LauncherPreviewMetadataV1 = {
   selectedIndex: number;
   inactiveOpacity: number;
   coverflow?: Coverflow;
+  customLayout?: {
+    effective: EffectiveCustomLauncherLayoutV1;
+    topCover:
+      { state: "available" } | { state: "focusable-unavailable"; message: "Cover art is unavailable in Coverflow." };
+  };
   fidelity: {
     geometry: "launcher-vector-backed";
     materialFields?: "launcher-vector-backed";
@@ -218,14 +228,27 @@ const drawText = (
   top: number,
   color: Rgb,
   maximumWidth = targetWidth - left,
+  blendColor?: Rgb,
 ) => {
   for (const [index, character] of [...text.toUpperCase()].entries()) {
     if (index * 4 + 3 > maximumWidth) break;
     const rows = FONT[character] ?? FONT["?"]!;
     for (let y = 0; y < 5; y += 1)
       for (let x = 0; x < 3; x += 1)
-        if (rows[y]! & (1 << (2 - x)))
+        if (rows[y]! & (1 << (2 - x))) {
           blendPixel(target, targetWidth, left + index * 4 + x, top + y, color[0], color[1], color[2], 255);
+          if (blendColor && (x === 2 || !(rows[y]! & (1 << (1 - x)))))
+            blendPixel(
+              target,
+              targetWidth,
+              left + index * 4 + x + 1,
+              top + y,
+              blendColor[0],
+              blendColor[1],
+              blendColor[2],
+              96,
+            );
+        }
   }
 };
 const gameIcon = (target: Uint8Array, left: number, top: number, index: number, color: Rgb, size = 32) => {
@@ -278,6 +301,7 @@ const topContent = (
   fixture: LauncherFixtureV1,
   mode: LauncherPreviewModeV1,
   material?: MaterialRolesV1,
+  customLayout?: EffectiveCustomLauncherLayoutV1,
 ) => {
   const index = fixture.selectedIndex,
     lines = fileLines(fixture, index),
@@ -285,8 +309,9 @@ const topContent = (
     geometry = LAUNCHER_PREVIEW_AUTHORITY_V1.composition.top,
     textColor: Rgb = material ? material.onSecondaryContainer : [30, 30, 30],
     secondaryColor: Rgb = material ? material.onSurfaceVariant : textColor;
-  if (mode !== "coverflow") imageRegion(top, SCREEN_WIDTH, cover, 0, 0, 106, 96, geometry.cover[0], geometry.cover[1]);
   if (material) {
+    if (mode !== "coverflow")
+      imageRegion(top, SCREEN_WIDTH, cover, 0, 0, 106, 96, geometry.cover[0], geometry.cover[1]);
     roundedFill(top, SCREEN_WIDTH, 18, 122, 64, 64, 12, material.secondaryContainer);
     gameIcon(top, ...geometry.materialIcon, index, material.mainIconBg);
     geometry.materialLines.forEach(([x, y], line) =>
@@ -301,15 +326,36 @@ const topContent = (
       220,
     );
   } else {
-    gameIcon(top, ...geometry.customIcon, index, [200, 200, 200]);
-    geometry.customLines.forEach(([x, y], line) => drawText(top, SCREEN_WIDTH, lines[line]!, x, y, textColor, 176));
+    const layout = customLayout!;
+    if (mode !== "coverflow")
+      imageRegion(top, SCREEN_WIDTH, cover, 0, 0, 106, 96, layout.topCover.position.x, layout.topCover.position.y);
+    gameIcon(top, layout.topIcon.position.x, layout.topIcon.position.y, index, [
+      layout.topIcon.blendColor.r,
+      layout.topIcon.blendColor.g,
+      layout.topIcon.blendColor.b,
+    ]);
+    const textLayouts = [layout.topBannerTextLine0, layout.topBannerTextLine1, layout.topBannerTextLine2];
+    textLayouts.forEach((textLayout, line) =>
+      drawText(
+        top,
+        SCREEN_WIDTH,
+        lines[line]!,
+        textLayout.position.x,
+        textLayout.position.y,
+        [textLayout.textColor.r, textLayout.textColor.g, textLayout.textColor.b],
+        textLayout.width,
+        [textLayout.blendColor.r, textLayout.blendColor.g, textLayout.blendColor.b],
+      ),
+    );
     drawText(
       top,
       SCREEN_WIDTH,
       `${fixture.names[index]!.replaceAll(" ", "-")}.NDS`,
-      ...geometry.customFilename,
-      textColor,
-      220,
+      layout.topFileNameText.position.x,
+      layout.topFileNameText.position.y,
+      [layout.topFileNameText.textColor.r, layout.topFileNameText.textColor.g, layout.topFileNameText.textColor.b],
+      layout.topFileNameText.width,
+      [layout.topFileNameText.blendColor.r, layout.topFileNameText.blendColor.g, layout.topFileNameText.blendColor.b],
     );
   }
   paintStatus(top, fixture);
@@ -718,11 +764,12 @@ export function renderCustomScenesV1(
   mode: LauncherPreviewModeV1,
   fixture: LauncherFixtureV1,
   assets: CustomPreviewAssetsV1,
+  layout: EffectiveCustomLauncherLayoutV1,
 ) {
   assertFixture(fixture);
   const top = stage(assets.top),
     bottom = stage(assets.bottom);
-  topContent(top, fixture, mode);
+  topContent(top, fixture, mode, undefined, layout);
   customChrome(bottom, mode, assets.scrim);
   appBarButtons(bottom, mode);
   if (mode === "horizontal-grid" || mode === "vertical-grid") paintGrid(bottom, fixture, mode, assets);
@@ -734,6 +781,13 @@ export function renderCustomScenesV1(
     metadata: {
       selectedIndex: fixture.selectedIndex,
       inactiveOpacity: 255,
+      customLayout: {
+        effective: layout,
+        topCover:
+          mode === "coverflow"
+            ? { state: "focusable-unavailable", message: "Cover art is unavailable in Coverflow." }
+            : { state: "available" },
+      },
       fidelity: {
         geometry: "launcher-vector-backed",
         compiledPixels: "exact compiled output",

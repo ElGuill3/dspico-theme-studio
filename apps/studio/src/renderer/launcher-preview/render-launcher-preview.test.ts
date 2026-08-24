@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { encodeV13VisualFiles, sha256, type RgbaImageV1 } from "../../../../../packages/dspico-contract/src/index.js";
+import {
+  encodeV13VisualFiles,
+  sha256,
+  type CustomLauncherLayoutOverridesV1,
+  type RgbaImageV1,
+} from "../../../../../packages/dspico-contract/src/index.js";
 import { LAUNCHER_PREVIEW_AUTHORITY_V1, LauncherPreviewError } from "./authority.js";
 import { neutralLauncherFixtureV1 } from "./fixture.js";
 import { renderLauncherPreview } from "./render-launcher-preview.js";
@@ -24,8 +29,22 @@ const files = encodeV13VisualFiles({
   bannerListCellSelected: image(256, 49, [220, 200, 40, 255]),
   scrim: image(8, 42, [0, 0, 0, 160]),
 });
-const render = (mode: string, selectedIndex = fixture.selectedIndex, names = fixture.names) =>
-  renderLauncherPreview({ theme: { kind: "custom", files }, mode, fixture: { ...fixture, selectedIndex, names } });
+const committed = (overrides: CustomLauncherLayoutOverridesV1) => ({
+  authoritySha256: "a".repeat(64),
+  overrides,
+});
+const render = (
+  mode: string,
+  selectedIndex = fixture.selectedIndex,
+  names = fixture.names,
+  committedLayout?: CustomLauncherLayoutOverridesV1,
+) =>
+  renderLauncherPreview({
+    theme: { kind: "custom", files },
+    mode,
+    fixture: { ...fixture, selectedIndex, names },
+    ...(committedLayout ? { committedLayout: committed(committedLayout) } : {}),
+  });
 const renderMaterial = (mode: string, primaryColor = { r: 138, g: 217, b: 255 }, darkTheme = false) =>
   renderLauncherPreview({
     theme: { kind: "material", primaryColor, darkTheme } as never,
@@ -34,19 +53,19 @@ const renderMaterial = (mode: string, primaryColor = { r: 138, g: 217, b: 255 },
   });
 const goldens = {
   "horizontal-grid": {
-    top: "43a9ac5980f8943d8b3b6a63a88aed561420dd9bbe8f7b44c6e6b132137dafe2",
+    top: "e3cedf463e8f278e1290aff53600803df83af8cec50ffda8509fb0eef9a02858",
     bottom: "c65fc232d19a4497134b336e8f809be2ff247852aad1e19f9bde3bb31bd8fd71",
   },
   "vertical-grid": {
-    top: "43a9ac5980f8943d8b3b6a63a88aed561420dd9bbe8f7b44c6e6b132137dafe2",
+    top: "e3cedf463e8f278e1290aff53600803df83af8cec50ffda8509fb0eef9a02858",
     bottom: "be6cdb7890d7176ac51fa105ad0d240e01623b682e9696264d404048e620bd85",
   },
   "banner-list": {
-    top: "43a9ac5980f8943d8b3b6a63a88aed561420dd9bbe8f7b44c6e6b132137dafe2",
+    top: "e3cedf463e8f278e1290aff53600803df83af8cec50ffda8509fb0eef9a02858",
     bottom: "057f81224c735bdeddef035a70b97cb84639ae8ef40443dc645addf042d76b97",
   },
   coverflow: {
-    top: "2e20e3fba25ea4fd45aa170e9b3eb04e5564047923c441aadc44eb44f0c83c3e",
+    top: "b996874c291fb6fa44ff449c187a103dd09b8418fd8783426302e983ca461990",
     bottom: "64f85e14bad7ecdd998e494d7f6a37880f081d189278341db808817516f8d935",
   },
 } as const;
@@ -71,6 +90,90 @@ describe("Custom launcher preview compositor", () => {
   it("centers Coverflow focus with two dimmed geometric neighbors on each side when available", () => {
     const frame = render("coverflow", 2, ["One", "Two", "Three", "Four", "Five"]);
     expect(frame.metadata.coverflow).toMatchObject({ centeredIndex: 2, dimmedLeft: 2, dimmedRight: 2 });
+  });
+
+  it.each(["horizontal-grid", "vertical-grid", "banner-list", "coverflow"])(
+    "applies the committed icon and text layout in %s without changing CPU-approximation honesty",
+    (mode) => {
+      const layout = {
+        topIcon: { position: { x: 4, y: 100 }, blendColor: { r: 210, g: 20, b: 30 } },
+        topBannerTextLine0: {
+          position: { x: 4, y: 110 },
+          width: 80,
+          textColor: { r: 220, g: 30, b: 40 },
+          blendColor: { r: 30, g: 40, b: 220 },
+        },
+        topBannerTextLine1: {
+          position: { x: 4, y: 120 },
+          width: 80,
+          textColor: { r: 50, g: 210, b: 60 },
+          blendColor: { r: 210, g: 60, b: 50 },
+        },
+        topBannerTextLine2: {
+          position: { x: 4, y: 130 },
+          width: 80,
+          textColor: { r: 60, g: 70, b: 200 },
+          blendColor: { r: 200, g: 70, b: 60 },
+        },
+        topFileNameText: {
+          position: { x: 4, y: 140 },
+          width: 100,
+          textColor: { r: 230, g: 220, b: 30 },
+          blendColor: { r: 30, g: 220, b: 230 },
+        },
+        topCover: { position: { x: 140, y: 30 } },
+      } satisfies CustomLauncherLayoutOverridesV1;
+      const frame = render(mode, fixture.selectedIndex, fixture.names, layout);
+
+      expect(frame.top).not.toEqual(render(mode).top);
+      expect(frame.metadata.customLayout?.effective).toEqual(layout);
+      expect(frame.metadata.fidelity.raster).toBe("deterministic CPU approximation");
+    },
+  );
+
+  it("uses textColor for glyphs and blendColor for the deterministic antialias endpoint", () => {
+    const text = {
+        topBannerTextLine0: {
+          position: { x: 4, y: 90 },
+          width: 80,
+          textColor: { r: 220, g: 30, b: 40 },
+          blendColor: { r: 30, g: 40, b: 220 },
+        },
+      } satisfies CustomLauncherLayoutOverridesV1,
+      recolored = {
+        ...text,
+        topBannerTextLine0: { ...text.topBannerTextLine0, textColor: { r: 40, g: 220, b: 30 } },
+      } satisfies CustomLauncherLayoutOverridesV1,
+      reblended = {
+        ...text,
+        topBannerTextLine0: { ...text.topBannerTextLine0, blendColor: { r: 220, g: 40, b: 30 } },
+      } satisfies CustomLauncherLayoutOverridesV1,
+      base = render("horizontal-grid", fixture.selectedIndex, fixture.names, text),
+      changedForeground = render("horizontal-grid", fixture.selectedIndex, fixture.names, recolored),
+      changedEndpoint = render("horizontal-grid", fixture.selectedIndex, fixture.names, reblended);
+
+    expect(changedForeground.top).not.toEqual(base.top);
+    expect(changedEndpoint.top).not.toEqual(base.top);
+  });
+
+  it.each(["horizontal-grid", "vertical-grid", "banner-list"])(
+    "renders topCover and exposes it as available in %s",
+    (mode) => {
+      const frame = render(mode, fixture.selectedIndex, fixture.names, { topCover: { position: { x: 8, y: 80 } } });
+      expect(frame.top).not.toEqual(render(mode).top);
+      expect(frame.metadata.customLayout?.topCover).toEqual({ state: "available" });
+    },
+  );
+
+  it("keeps topCover out of Coverflow while exposing focusable unavailability", () => {
+    const cover = { topCover: { position: { x: 8, y: 80 } } } satisfies CustomLauncherLayoutOverridesV1,
+      frame = render("coverflow", fixture.selectedIndex, fixture.names, cover);
+
+    expect(frame.top).toEqual(render("coverflow").top);
+    expect(frame.metadata.customLayout?.topCover).toEqual({
+      state: "focusable-unavailable",
+      message: "Cover art is unavailable in Coverflow.",
+    });
   });
 
   it("consumes app-bar, grid-cell, and banner-cell geometry from the admitted composition authority", () => {

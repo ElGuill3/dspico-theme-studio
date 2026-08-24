@@ -1,4 +1,9 @@
 import { sha256 } from "../../../../../packages/dspico-contract/src/index.js";
+import type {
+  CustomLauncherLayoutKeyV1,
+  CustomLauncherLayoutOverridesV1,
+  CustomThemeV13,
+} from "../../../../../packages/dspico-contract/src/custom-v1-3.js";
 import { LAUNCHER_V1_PROFILE } from "../../../../../packages/dspico-contract/src/profile-v1-3.js";
 
 const commit = "c648ce888f9b24a1a269795dd0391528e5d12251" as const;
@@ -105,6 +110,49 @@ if (LAUNCHER_V1_PROFILE.launcherCommit !== commit || !fixtureCandidate)
 const fixture = fixtureCandidate;
 
 export type LauncherPreviewModeV1 = "horizontal-grid" | "vertical-grid" | "banner-list" | "coverflow";
+export type EffectiveCustomLauncherLayoutV1 = Required<Pick<CustomThemeV13, CustomLauncherLayoutKeyV1>>;
+const customLauncherLayoutDefaultsV1 = {
+  topIcon: { position: { x: 24, y: 132 }, blendColor: { r: 200, g: 200, b: 200 } },
+  topBannerTextLine0: {
+    position: { x: 70, y: 126 },
+    width: 176,
+    textColor: { r: 30, g: 30, b: 30 },
+    blendColor: { r: 200, g: 200, b: 200 },
+  },
+  topBannerTextLine1: {
+    position: { x: 70, y: 141 },
+    width: 176,
+    textColor: { r: 30, g: 30, b: 30 },
+    blendColor: { r: 200, g: 200, b: 200 },
+  },
+  topBannerTextLine2: {
+    position: { x: 70, y: 155 },
+    width: 176,
+    textColor: { r: 30, g: 30, b: 30 },
+    blendColor: { r: 200, g: 200, b: 200 },
+  },
+  topFileNameText: {
+    position: { x: 18, y: 170 },
+    width: 220,
+    textColor: { r: 30, g: 30, b: 30 },
+    blendColor: { r: 200, g: 200, b: 200 },
+  },
+  topCover: { position: { x: 75, y: 18 } },
+} satisfies EffectiveCustomLauncherLayoutV1;
+
+export function resolveCustomLauncherLayoutV1(
+  overrides: CustomLauncherLayoutOverridesV1 = {},
+): EffectiveCustomLauncherLayoutV1 {
+  return {
+    topIcon: overrides.topIcon ?? customLauncherLayoutDefaultsV1.topIcon,
+    topBannerTextLine0: overrides.topBannerTextLine0 ?? customLauncherLayoutDefaultsV1.topBannerTextLine0,
+    topBannerTextLine1: overrides.topBannerTextLine1 ?? customLauncherLayoutDefaultsV1.topBannerTextLine1,
+    topBannerTextLine2: overrides.topBannerTextLine2 ?? customLauncherLayoutDefaultsV1.topBannerTextLine2,
+    topFileNameText: overrides.topFileNameText ?? customLauncherLayoutDefaultsV1.topFileNameText,
+    topCover: overrides.topCover ?? customLauncherLayoutDefaultsV1.topCover,
+  };
+}
+
 export class LauncherPreviewError extends Error {
   constructor(
     readonly code: "unsupported-layout" | "unadmitted-fixture" | "invalid-custom-files" | "invalid-fixture",
