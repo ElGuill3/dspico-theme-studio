@@ -12,7 +12,8 @@ import {
   type RgbaImageV1,
 } from "../../../../../packages/dspico-contract/src/index.js";
 import { LAUNCHER_V1_VISUAL_FILES } from "../../../../../packages/dspico-contract/src/profile-v1-3.js";
-import { createLauncherPreviewFrameModelV1, LauncherPreviewError } from "./authority.js";
+import type { CustomLauncherLayoutDtoV1 } from "../../studio-ipc.js";
+import { createLauncherPreviewFrameModelV1, LauncherPreviewError, resolveCustomLauncherLayoutV1 } from "./authority.js";
 import type { LauncherFixtureV1 } from "./fixture.js";
 import { materialPreviewV1 } from "./material.js";
 import {
@@ -102,10 +103,16 @@ export function renderPartialCustomLauncherPreview(input: {
   sources: readonly CustomVisualSourceV1[];
   mode: string;
   fixture: LauncherFixtureV1;
+  committedLayout?: CustomLauncherLayoutDtoV1;
 }): LauncherPreviewFrameV1 {
   const model = createLauncherPreviewFrameModelV1(input.mode);
   try {
-    const frame = renderCustomScenesV1(model.mode, input.fixture, partialAssets(input.sources));
+    const frame = renderCustomScenesV1(
+      model.mode,
+      input.fixture,
+      partialAssets(input.sources),
+      resolveCustomLauncherLayoutV1(input.committedLayout?.overrides),
+    );
     return {
       mode: model.mode,
       top: frame.top,
@@ -128,12 +135,18 @@ export function renderLauncherPreview(input: {
     | { kind: "material"; primaryColor: { r: number; g: number; b: number }; darkTheme: boolean };
   mode: string;
   fixture: LauncherFixtureV1;
+  committedLayout?: CustomLauncherLayoutDtoV1;
 }): LauncherPreviewFrameV1 {
   const model = createLauncherPreviewFrameModelV1(input.mode);
   try {
     const frame =
       input.theme.kind === "custom"
-        ? renderCustomScenesV1(model.mode, input.fixture, decode(input.theme.files))
+        ? renderCustomScenesV1(
+            model.mode,
+            input.fixture,
+            decode(input.theme.files),
+            resolveCustomLauncherLayoutV1(input.committedLayout?.overrides),
+          )
         : renderMaterialScenesV1(model.mode, input.fixture, materialPreviewV1(input.theme).roles);
     return {
       mode: model.mode,
