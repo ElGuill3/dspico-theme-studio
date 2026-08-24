@@ -2891,7 +2891,7 @@ body.workspace-resizing * {
 }
 .launcher-layout-target[data-unavailable="true"] {
   border-color: rgb(146 163 195 / 0.55);
-  background: repeating-linear-gradient(135deg, transparent 0 3px, rgb(146 163 195 / 0.14) 3px 6px);
+  background: var(--panel);
   cursor: not-allowed;
 }
 .logical-pixels .launcher-layout-target {
