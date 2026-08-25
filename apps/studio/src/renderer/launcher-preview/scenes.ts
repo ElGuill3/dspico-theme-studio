@@ -1,6 +1,7 @@
 import type { RgbaImageV1 } from "../../../../../packages/dspico-contract/src/codecs-v1-3.js";
 import {
   LAUNCHER_PREVIEW_AUTHORITY_V1,
+  LAUNCHER_TOP_COVER_SIZE_V1,
   LauncherPreviewError,
   type EffectiveCustomLauncherLayoutV1,
   type LauncherPreviewModeV1,
@@ -260,17 +261,18 @@ const gameIcon = (target: Uint8Array, left: number, top: number, index: number, 
   fill(target, SCREEN_WIDTH, left + scaled(13), top + scaled(11), scaled(6), scaled(16), [30, 38, 58]);
 };
 const gameCover = (name: string, index: number): RgbaImageV1 => {
-  const pixels = new Uint8Array(106 * 96 * 4),
+  const { width, height } = LAUNCHER_TOP_COVER_SIZE_V1,
+    pixels = new Uint8Array(width * height * 4),
     color = ART_COLORS[index % ART_COLORS.length]!,
     dark: Rgb = color.map((channel) => Math.round(channel * 0.42)) as unknown as Rgb,
     light: Rgb = color.map((channel) => Math.min(255, channel + 42)) as unknown as Rgb;
-  fill(pixels, 106, 0, 0, 106, 96, dark);
+  fill(pixels, width, 0, 0, width, height, dark);
   for (let y = 3; y < 76; y += 6)
-    fill(pixels, 106, 4 + ((y / 6 + index) % 3) * 6, y, 94 - ((y / 6 + index) % 3) * 6, 3, y % 12 ? color : light);
-  roundedFill(pixels, 106, 35, 19, 36, 36, 10, light);
-  fill(pixels, 106, 0, 76, 106, 20, [17, 22, 34], 238);
-  drawText(pixels, 106, name, 7, 83, [248, 249, 252], 92);
-  return { width: 106, height: 96, pixels };
+    fill(pixels, width, 4 + ((y / 6 + index) % 3) * 6, y, 94 - ((y / 6 + index) % 3) * 6, 3, y % 12 ? color : light);
+  roundedFill(pixels, width, 35, 19, 36, 36, 10, light);
+  fill(pixels, width, 0, 76, width, 20, [17, 22, 34], 238);
+  drawText(pixels, width, name, 7, 83, [248, 249, 252], 92);
+  return { width, height, pixels };
 };
 const fileLines = (fixture: LauncherFixtureV1, index: number) => [
   fixture.names[index]!,
@@ -307,11 +309,22 @@ const topContent = (
     lines = fileLines(fixture, index),
     cover = gameCover(fixture.names[index]!, index),
     geometry = LAUNCHER_PREVIEW_AUTHORITY_V1.composition.top,
+    coverSize = LAUNCHER_TOP_COVER_SIZE_V1,
     textColor: Rgb = material ? material.onSecondaryContainer : [30, 30, 30],
     secondaryColor: Rgb = material ? material.onSurfaceVariant : textColor;
   if (material) {
     if (mode !== "coverflow")
-      imageRegion(top, SCREEN_WIDTH, cover, 0, 0, 106, 96, geometry.cover[0], geometry.cover[1]);
+      imageRegion(
+        top,
+        SCREEN_WIDTH,
+        cover,
+        0,
+        0,
+        coverSize.width,
+        coverSize.height,
+        geometry.cover[0],
+        geometry.cover[1],
+      );
     roundedFill(top, SCREEN_WIDTH, 18, 122, 64, 64, 12, material.secondaryContainer);
     gameIcon(top, ...geometry.materialIcon, index, material.mainIconBg);
     geometry.materialLines.forEach(([x, y], line) =>
@@ -328,7 +341,17 @@ const topContent = (
   } else {
     const layout = customLayout!;
     if (mode !== "coverflow")
-      imageRegion(top, SCREEN_WIDTH, cover, 0, 0, 106, 96, layout.topCover.position.x, layout.topCover.position.y);
+      imageRegion(
+        top,
+        SCREEN_WIDTH,
+        cover,
+        0,
+        0,
+        coverSize.width,
+        coverSize.height,
+        layout.topCover.position.x,
+        layout.topCover.position.y,
+      );
     gameIcon(top, layout.topIcon.position.x, layout.topIcon.position.y, index, [
       layout.topIcon.blendColor.r,
       layout.topIcon.blendColor.g,
@@ -677,7 +700,7 @@ const customCoverflow = (bottom: Uint8Array, fixture: LauncherFixtureV1): Coverf
     transforms.push({
       offset,
       x,
-      width: 106,
+      width: LAUNCHER_TOP_COVER_SIZE_V1.width,
       renderedWidth: projected.width,
       top: projected.top,
       depth,
@@ -744,7 +767,7 @@ const materialCoverflow = (bottom: Uint8Array, fixture: LauncherFixtureV1): Cove
     transforms.push({
       offset,
       x,
-      width: 106,
+      width: LAUNCHER_TOP_COVER_SIZE_V1.width,
       renderedWidth: width,
       top: authority.y,
       depth,

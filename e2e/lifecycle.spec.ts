@@ -1646,6 +1646,8 @@ test("authors Custom launcher layout values through the accessible inspector", a
   try {
     const page = await electronApp.firstWindow();
     page.setDefaultTimeout(5_000);
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1200, 800));
+    await page.waitForFunction(() => window.innerWidth >= 1100 && window.innerHeight >= 700);
     await closeOnboarding(page);
     await createCustomFromChrome(page);
     await expect(page.getByRole("region", { name: "Theme canvas" })).toBeVisible();
@@ -1734,11 +1736,51 @@ test("authors Custom launcher layout values through the accessible inspector", a
     });
     expect((await customLauncherLayoutState(root)).operations.at(-1)).not.toHaveProperty("value");
 
+    const bannerList = page.getByRole("button", { name: "Banner List", exact: true });
+    await bannerList.click();
+    const topCover = editor.getByRole("button", { name: "Select top cover" });
+    await topCover.click();
+    const pixelScale = page.getByRole("button", { name: "1:1 pixels" });
+    await pixelScale.click();
+    expect(await topCover.boundingBox()).toMatchObject({ width: 106, height: 96 });
+    await pixelScale.click();
+
+    const topCanvas = page.locator('[data-launcher-screen="top"]');
+    const normalCanvasWidth = (await topCanvas.boundingBox())!.width;
+    const operationsBeforeExpanded = (await customLauncherLayoutState(root)).operations.length;
+    const authorityBeforeExpanded = await editor.getAttribute("data-layout-authority");
+    const preferencesBeforeExpanded = await page.evaluate(() => localStorage.getItem("dspico:workspace-layout:v3"));
+    const expandPreview = page.getByRole("button", { name: "Expand preview" });
+    await expandPreview.click();
+    const exitExpandedPreview = page.getByRole("button", { name: "Exit expanded preview" });
+    await expect(exitExpandedPreview).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(async () => (await topCanvas.boundingBox())!.width).toBeGreaterThan(normalCanvasWidth * 2);
+    await expect(inspector).toBeVisible();
+
+    await exitExpandedPreview.click();
+    await expect(expandPreview).toHaveAttribute("aria-pressed", "false");
+    await expect(expandPreview).toBeFocused();
+    await expandPreview.click();
+    const coverY = inspector.getByRole("spinbutton", { name: "Top cover Y" });
+    await coverY.fill("90");
+    await coverY.press("Escape");
+    await expect(coverY).toHaveValue("18");
+    await expect(page.getByRole("button", { name: "Exit expanded preview" })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Exit expanded preview" }).focus();
+    await page.keyboard.press("Escape");
+    await expect(expandPreview).toHaveAttribute("aria-pressed", "false");
+    await expect(expandPreview).toBeFocused();
+    expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeExpanded);
+    await expect(editor).toHaveAttribute("data-layout-authority", authorityBeforeExpanded!);
+    expect(await page.evaluate(() => localStorage.getItem("dspico:workspace-layout:v3"))).toBe(
+      preferencesBeforeExpanded,
+    );
+
     const coverflow = page.getByRole("button", { name: "Coverflow", exact: true });
     await coverflow.click();
-    const topCover = editor.getByRole("button", { name: "Top cover is unavailable in Coverflow" });
-    await topCover.focus();
-    await expect(topCover).toBeFocused();
+    const unavailableTopCover = editor.getByRole("button", { name: "Top cover is unavailable in Coverflow" });
+    await unavailableTopCover.focus();
+    await expect(unavailableTopCover).toBeFocused();
     await expect(inspector).toContainText("Cover art is unavailable in Coverflow.");
   } finally {
     await closeElectronApp(electronApp);

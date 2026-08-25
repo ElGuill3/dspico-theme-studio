@@ -111,6 +111,7 @@ const fixture = fixtureCandidate;
 
 export type LauncherPreviewModeV1 = "horizontal-grid" | "vertical-grid" | "banner-list" | "coverflow";
 export type EffectiveCustomLauncherLayoutV1 = Required<Pick<CustomThemeV13, CustomLauncherLayoutKeyV1>>;
+export const LAUNCHER_TOP_COVER_SIZE_V1 = { width: 106, height: 96 } as const;
 const customLauncherLayoutDefaultsV1 = {
   topIcon: { position: { x: 24, y: 132 }, blendColor: { r: 200, g: 200, b: 200 } },
   topBannerTextLine0: {
@@ -192,7 +193,7 @@ export const LAUNCHER_PREVIEW_AUTHORITY_V1 = {
     },
     top: {
       statusHeight: 16,
-      cover: [75, 18, 106, 96],
+      cover: [75, 18, LAUNCHER_TOP_COVER_SIZE_V1.width, LAUNCHER_TOP_COVER_SIZE_V1.height],
       customIcon: [24, 132],
       customLines: [
         [70, 126],

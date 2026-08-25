@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { captureLauncherFixtures } from "../../../../../packages/test-fixtures/src/capture.js";
 import {
   LAUNCHER_PREVIEW_AUTHORITY_V1,
+  LAUNCHER_TOP_COVER_SIZE_V1,
   LauncherPreviewError,
   createLauncherPreviewFrameModelV1,
   resolveCustomLauncherLayoutV1,
@@ -46,6 +47,8 @@ describe("launcher preview authority", () => {
       customCoverflow: { reflectionRows: 20 },
       materialCoverflow: { selected: [46, 106], next: [156, 54], radius: 18, clip: [6, 250] },
     });
+    expect(LAUNCHER_TOP_COVER_SIZE_V1).toEqual({ width: 106, height: 96 });
+    expect(LAUNCHER_PREVIEW_AUTHORITY_V1.composition.top.cover.slice(2)).toEqual([106, 96]);
   });
 
   it("resolves only the six editable Custom objects from pinned defaults and sparse committed overrides", () => {

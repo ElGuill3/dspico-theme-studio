@@ -65,6 +65,23 @@ describe("renderer shell", () => {
     expect(readFileSync(path.join(root, "vite.e2e.config.mts"), "utf8")).toContain("assetsInlineLimit: 0");
   });
 
+  it("keeps expanded preview transient, keyboard-dismissable, and focused on its toggle", () => {
+    const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
+    const css = readFileSync(path.join(rendererRoot, "studio.css"), "utf8");
+
+    expect(renderer).toContain('aria-label={expanded ? "Exit expanded preview" : "Expand preview"}');
+    expect(renderer).toContain("aria-pressed={expanded}");
+    expect(renderer).toContain('event.key !== "Escape" || event.defaultPrevented');
+    expect(renderer).toContain("expandToggle.current?.focus()");
+    expect(renderer).toContain('document.body.classList.add("launcher-preview-expanded")');
+    expect(renderer).not.toContain("setWorkspaceLayout({ expanded");
+    expect(css).toMatch(/\.device-preview\.expanded \{[\s\S]*?grid-template-columns:/);
+    expect(css).toMatch(
+      /\.device-preview\.expanded \.device-shell:not\(\.logical-pixels\) \{[\s\S]*?aspect-ratio: 4 \/ 3;/,
+    );
+    expect(css).toContain("image-rendering: pixelated");
+  });
+
   it("captures dark-theme input before asynchronous Material preview persistence", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
 

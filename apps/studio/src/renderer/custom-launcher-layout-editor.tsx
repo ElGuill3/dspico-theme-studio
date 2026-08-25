@@ -8,6 +8,7 @@ import {
 import type { SetCustomLauncherLayoutV3 } from "../../../../packages/theme-core/src/index.js";
 import type { CustomLauncherLayoutDtoV1 } from "../studio-ipc.js";
 import {
+  LAUNCHER_TOP_COVER_SIZE_V1,
   resolveCustomLauncherLayoutV1,
   type EffectiveCustomLauncherLayoutV1,
   type LauncherPreviewModeV1,
@@ -51,9 +52,9 @@ export const moveCustomLauncherLayoutV1 = (key: LayoutKey, value: LayoutValue, x
   } as EffectiveCustomLauncherLayoutV1[typeof key];
 };
 
-const hitbox = (key: LayoutKey, value: LayoutValue) => ({
-  width: "width" in value ? value.width : key === "topCover" ? 50 : 24,
-  height: key === "topCover" ? 50 : 12,
+export const customLauncherLayoutHitboxV1 = (key: LayoutKey, value: LayoutValue) => ({
+  width: "width" in value ? value.width : key === "topCover" ? LAUNCHER_TOP_COVER_SIZE_V1.width : 24,
+  height: key === "topCover" ? LAUNCHER_TOP_COVER_SIZE_V1.height : 12,
 });
 const operationFor = (key: LayoutKey, value: LayoutValue) =>
   ({ version: 3, type: "set-custom-launcher-layout", element: key, value }) as SetCustomLauncherLayoutV3;
@@ -437,7 +438,7 @@ export function CustomLauncherLayoutEditor({
         {CUSTOM_LAUNCHER_LAYOUT_KEYS_V1.map((key) => {
           const target = customLauncherLayoutTargetV1(key, mode);
           const value = valueFor(key);
-          const box = hitbox(key, value);
+          const box = customLauncherLayoutHitboxV1(key, value);
           const name = target.unavailable ? `${title(key)} is unavailable in Coverflow` : `Select ${labels[key]}`;
           return (
             <button
