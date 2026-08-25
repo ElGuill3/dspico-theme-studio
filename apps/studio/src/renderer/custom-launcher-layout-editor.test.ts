@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   customLauncherLayoutBoundsV1,
   customLauncherLayoutDraftV1,
+  customLauncherLayoutHitboxV1,
   customLauncherLayoutTargetV1,
   moveCustomLauncherLayoutV1,
 } from "./custom-launcher-layout-editor.js";
@@ -39,5 +40,11 @@ describe("custom launcher layout editor", () => {
       unavailable: true,
     });
     expect(customLauncherLayoutTargetV1("topCover", "banner-list")).toMatchObject({ unavailable: false });
+  });
+
+  it("uses the rendered cover geometry for the top cover selector", () => {
+    const topCover = resolveCustomLauncherLayoutV1({}).topCover;
+
+    expect(customLauncherLayoutHitboxV1("topCover", topCover)).toEqual({ width: 106, height: 96 });
   });
 });

@@ -225,7 +225,31 @@ function DevicePreview({
   busy: boolean;
 }) {
   const [logicalPixels, setLogicalPixels] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [inspectorHost, setInspectorHost] = useState<HTMLDivElement | null>(null);
+  const expandToggle = useRef<HTMLButtonElement>(null);
+  const restoreExpandFocus = useRef(false);
+  useEffect(() => {
+    if (!expanded && restoreExpandFocus.current) {
+      restoreExpandFocus.current = false;
+      expandToggle.current?.focus();
+    }
+  }, [expanded]);
+  useEffect(() => {
+    if (!expanded) return;
+    document.body.classList.add("launcher-preview-expanded");
+    const exit = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      restoreExpandFocus.current = true;
+      setExpanded(false);
+    };
+    globalThis.addEventListener("keydown", exit);
+    return () => {
+      document.body.classList.remove("launcher-preview-expanded");
+      globalThis.removeEventListener("keydown", exit);
+    };
+  }, [expanded]);
   const launcherPreview = useMemo<LauncherPreviewState>(() => {
     if (customPreview.kind === "invalid") return { kind: "invalid" };
     try {
@@ -266,21 +290,36 @@ function DevicePreview({
     }
   }, [customLauncherLayout, customPreview, launcherView, preview]);
   return (
-    <>
+    <div className={`device-preview${expanded ? " expanded" : ""}`} data-preview-expanded={expanded}>
       <div className="preview-toolbar">
         <div>
           <span>Device</span>
           <h2>Live preview</h2>
         </div>
         <div className="preview-controls">
-          <button
-            type="button"
-            className="pixel-scale-toggle"
-            aria-pressed={logicalPixels}
-            onClick={() => setLogicalPixels((active) => !active)}
-          >
-            1:1 pixels
-          </button>
+          <div className="preview-actions">
+            <button
+              ref={expandToggle}
+              type="button"
+              className="expand-preview-toggle"
+              aria-label={expanded ? "Exit expanded preview" : "Expand preview"}
+              aria-pressed={expanded}
+              onClick={() => {
+                if (expanded) restoreExpandFocus.current = true;
+                setExpanded((active) => !active);
+              }}
+            >
+              {expanded ? "Exit expanded preview" : "Expand preview"}
+            </button>
+            <button
+              type="button"
+              className="pixel-scale-toggle"
+              aria-pressed={logicalPixels}
+              onClick={() => setLogicalPixels((active) => !active)}
+            >
+              1:1 pixels
+            </button>
+          </div>
           <div className="mode-switcher" role="group" aria-label="Preview mode">
             {launcherViews.map(({ id, label }) => (
               <button
@@ -378,7 +417,7 @@ function DevicePreview({
         </div>
       )}
       <div ref={setInspectorHost} className="custom-launcher-layout-inspector-host" />
-    </>
+    </div>
   );
 }
 
