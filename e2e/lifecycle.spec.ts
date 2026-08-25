@@ -1626,6 +1626,126 @@ test("completes the offline Material and Custom lifecycles through the hardened 
   }
 });
 
+test("authors Custom launcher layout values through the accessible inspector", async () => {
+  test.setTimeout(120_000);
+  const root = await mkdtemp(path.join(os.tmpdir(), "dspico-layout-inspector-"));
+  const customRoot = path.join(root, "custom-project");
+  await mkdir(customRoot);
+  await mkdir(path.join(root, "export"));
+  await writeFile(path.join(root, "project-selection.txt"), customRoot);
+  const electronApp = await electron.launch({
+    args: [
+      "--no-sandbox",
+      "--headless",
+      "--disable-gpu",
+      "--ozone-platform=headless",
+      path.resolve("dist/apps/studio/src/main.js"),
+    ],
+    env: { ...process.env, DSPICO_STUDIO_E2E_ROOT: root, ELECTRON_DISABLE_SANDBOX: "1" },
+  });
+  try {
+    const page = await electronApp.firstWindow();
+    page.setDefaultTimeout(5_000);
+    await closeOnboarding(page);
+    await createCustomFromChrome(page);
+    await expect(page.getByRole("region", { name: "Theme canvas" })).toBeVisible();
+    await showDockTab(page, "Preview");
+
+    const editor = page.getByRole("group", { name: "Custom launcher layout" });
+    const inspector = page.getByRole("region", { name: "Launcher layout inspector" });
+    const topIcon = editor.getByRole("button", { name: "Select top icon" });
+    await topIcon.click();
+    await expect(topIcon).toBeFocused();
+    await expect(inspector).toContainText("Top icon");
+    await expect(inspector.getByRole("status")).toContainText("Top icon selected");
+
+    const x = inspector.getByRole("spinbutton", { name: "Top icon X" });
+    const blendRed = inspector.getByRole("spinbutton", { name: "Top icon blend color red" });
+    const y = inspector.getByRole("spinbutton", { name: "Top icon Y" });
+    const initialOperations = (await customLauncherLayoutState(root)).operations.length;
+    await x.fill("44");
+    await x.press("Enter");
+    await expect
+      .poll(async () => (await customLauncherLayoutState(root)).operations.length)
+      .toBe(initialOperations + 1);
+    expect(layoutPosition((await customLauncherLayoutState(root)).operations.at(-1)!)).toEqual({ x: 44, y: 132 });
+
+    await blendRed.fill("123");
+    await blendRed.blur();
+    await expect
+      .poll(async () => (await customLauncherLayoutState(root)).operations.length)
+      .toBe(initialOperations + 2);
+    expect((await customLauncherLayoutState(root)).operations.at(-1)).toMatchObject({
+      value: { blendColor: { r: 123 } },
+    });
+
+    await y.fill("180");
+    await y.press("Escape");
+    await expect(y).toHaveValue("132");
+    expect((await customLauncherLayoutState(root)).operations).toHaveLength(initialOperations + 2);
+
+    await x.fill("999");
+    await x.blur();
+    await expect(inspector.getByRole("alert")).toContainText("X must be between");
+    expect((await customLauncherLayoutState(root)).operations).toHaveLength(initialOperations + 2);
+
+    await x.fill("55");
+    const staleAuthority = await editor.getAttribute("data-layout-authority");
+    expect(staleAuthority).toMatch(/^[a-f0-9]{64}$/);
+    const beforeConflictRasters = await page
+      .locator("[data-launcher-screen]")
+      .evaluateAll((canvases) => canvases.map((canvas) => (canvas as HTMLCanvasElement).toDataURL()));
+    await page.evaluate(async (authority) => {
+      const studio = (
+        globalThis as typeof globalThis & {
+          studio: {
+            setCustomLauncherLayout(
+              expectedAuthoritySha256: string,
+              operation: Record<string, unknown>,
+            ): Promise<{ customLauncherLayoutStatus?: string }>;
+          };
+        }
+      ).studio;
+      await studio.setCustomLauncherLayout(authority, {
+        version: 3,
+        type: "set-custom-launcher-layout",
+        element: "topIcon",
+        value: { position: { x: 79, y: 132 }, blendColor: { r: 200, g: 200, b: 200 } },
+      });
+    }, staleAuthority!);
+    await x.blur();
+    await expect.poll(() => editor.getAttribute("data-layout-authority")).not.toBe(staleAuthority);
+    await expect(x).toHaveValue("79");
+    await expect(topIcon).toBeFocused();
+    await expect(inspector.getByRole("status")).toContainText("Latest committed layout restored");
+    expect(
+      await page
+        .locator("[data-launcher-screen]")
+        .evaluateAll((canvases) => canvases.map((canvas) => (canvas as HTMLCanvasElement).toDataURL())),
+    ).not.toEqual(beforeConflictRasters);
+
+    await inspector.getByRole("button", { name: "Reset top icon" }).click();
+    await expect
+      .poll(async () => (await customLauncherLayoutState(root)).operations.length)
+      .toBe(initialOperations + 4);
+    expect((await customLauncherLayoutState(root)).operations.at(-1)).toMatchObject({
+      type: "set-custom-launcher-layout",
+      element: "topIcon",
+    });
+    expect((await customLauncherLayoutState(root)).operations.at(-1)).not.toHaveProperty("value");
+
+    const coverflow = page.getByRole("button", { name: "Coverflow", exact: true });
+    await coverflow.click();
+    const topCover = editor.getByRole("button", { name: "Top cover is unavailable in Coverflow" });
+    await topCover.focus();
+    await expect(topCover).toBeFocused();
+    await expect(inspector).toContainText("Cover art is unavailable in Coverflow.");
+  } finally {
+    await closeElectronApp(electronApp);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("surfaces blocked diagnostics and recovers root-bound Custom saves on open", async () => {
   test.setTimeout(120_000);
   const metadata = { name: "Committed Custom", description: "Committed description", author: "Committed author" };

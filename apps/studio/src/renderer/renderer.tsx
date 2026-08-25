@@ -210,6 +210,7 @@ function DevicePreview({
   onLauncherView,
   customPreview,
   customLauncherLayout,
+  customLauncherLayoutStatus,
   onCustomLauncherLayoutCommit,
   preview,
   busy,
@@ -218,11 +219,13 @@ function DevicePreview({
   onLauncherView(view: LauncherView): void;
   customPreview: CustomLauncherPreviewState;
   customLauncherLayout?: CustomLauncherLayoutDtoV1;
+  customLauncherLayoutStatus?: "committed" | "conflict";
   onCustomLauncherLayoutCommit(expectedAuthoritySha256: string, operation: SetCustomLauncherLayoutV3): Promise<boolean>;
   preview?: PreviewModel;
   busy: boolean;
 }) {
   const [logicalPixels, setLogicalPixels] = useState(false);
+  const [inspectorHost, setInspectorHost] = useState<HTMLDivElement | null>(null);
   const launcherPreview = useMemo<LauncherPreviewState>(() => {
     if (customPreview.kind === "invalid") return { kind: "invalid" };
     try {
@@ -316,7 +319,9 @@ function DevicePreview({
                   customLauncherLayout && customPreview.kind !== "not-custom" ? (
                     <CustomLauncherLayoutEditor
                       committedLayout={customLauncherLayout}
+                      commitStatus={customLauncherLayoutStatus}
                       disabled={busy}
+                      inspectorHost={inspectorHost}
                       mode={launcherPreview.frame.mode}
                       onCommit={onCustomLauncherLayoutCommit}
                     />
@@ -372,6 +377,7 @@ function DevicePreview({
           </section>
         </div>
       )}
+      <div ref={setInspectorHost} className="custom-launcher-layout-inspector-host" />
     </>
   );
 }
@@ -636,8 +642,8 @@ function Studio() {
       if (mounted.current) setBusy(false);
     }
   };
-  const commitCustomLauncherLayout = (expectedAuthoritySha256: string, operation: SetCustomLauncherLayoutV3) =>
-    run(
+  const commitCustomLauncherLayout = async (expectedAuthoritySha256: string, operation: SetCustomLauncherLayoutV3) => {
+    const saved = await run(
       "Launcher layout saved.",
       () => window.studio.setCustomLauncherLayout(expectedAuthoritySha256, operation),
       false,
@@ -645,6 +651,10 @@ function Studio() {
       false,
       false,
     );
+    if (saved && resultRef.current?.customLauncherLayoutStatus === "conflict" && mounted.current)
+      setStatus("Layout conflict. Latest committed layout restored.");
+    return saved;
+  };
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       const editing = suppressGlobalShortcut(event.target) || suppressGlobalShortcut(document.activeElement);
@@ -1184,6 +1194,7 @@ function Studio() {
                     onLauncherView={setLauncherView}
                     customPreview={customPreview}
                     customLauncherLayout={result?.customLauncherLayout}
+                    customLauncherLayoutStatus={result?.customLauncherLayoutStatus}
                     onCustomLauncherLayoutCommit={commitCustomLauncherLayout}
                     preview={preview}
                     busy={busy}
