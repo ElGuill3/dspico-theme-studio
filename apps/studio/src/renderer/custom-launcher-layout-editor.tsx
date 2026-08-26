@@ -16,7 +16,9 @@ import {
 
 type LayoutKey = CustomLauncherLayoutKeyV1;
 type LayoutValue = EffectiveCustomLauncherLayoutV1[LayoutKey];
-type LayoutDraft = { key: LayoutKey; value: LayoutValue };
+export type CustomLauncherLayoutDraftV1 = { key: LayoutKey; value: LayoutValue };
+export type CustomLauncherLayoutCommitStatusV1 = "committed" | "conflict" | undefined;
+export type CustomLauncherLayoutDirectionV1 = "up" | "left" | "right" | "down";
 type InspectorDraft = { key: LayoutKey; fields: Record<string, string> };
 type InspectorError = { field: string; message: string };
 
@@ -36,6 +38,12 @@ export const customLauncherLayoutTargetV1 = (key: LayoutKey, mode: LauncherPrevi
   unavailable: key === "topCover" && mode === "coverflow",
 });
 
+export const customLauncherLayoutEditorAvailableV1 = (
+  hasLayout: boolean,
+  customPreviewKind: "not-custom" | "partial" | "invalid" | "ready",
+  launcherPreviewKind: "invalid" | "partial" | "ready",
+) => hasLayout && customPreviewKind !== "not-custom" && launcherPreviewKind !== "invalid";
+
 export const customLauncherLayoutBoundsV1 = (value: LayoutValue) => ({
   x: { minimum: 0, maximum: "width" in value ? 256 - value.width : 255 },
   y: { minimum: 0, maximum: 191 },
@@ -50,6 +58,30 @@ export const moveCustomLauncherLayoutV1 = (key: LayoutKey, value: LayoutValue, x
       y: clamp(Math.round(y), bounds.y.minimum, bounds.y.maximum),
     },
   } as EffectiveCustomLauncherLayoutV1[typeof key];
+};
+
+export const customLauncherLayoutPointerDeltaV1 = (
+  start: { x: number; y: number },
+  current: { x: number; y: number },
+  surface: { width: number; height: number },
+) =>
+  surface.width > 0 && surface.height > 0
+    ? {
+        x: ((current.x - start.x) * 256) / surface.width,
+        y: ((current.y - start.y) * 192) / surface.height,
+      }
+    : undefined;
+
+export const nudgeCustomLauncherLayoutV1 = (
+  key: LayoutKey,
+  value: LayoutValue,
+  direction: CustomLauncherLayoutDirectionV1,
+  distance = 1,
+): LayoutValue | undefined => {
+  const x = direction === "left" ? -distance : direction === "right" ? distance : 0;
+  const y = direction === "up" ? -distance : direction === "down" ? distance : 0;
+  const next = moveCustomLauncherLayoutV1(key, value, value.position.x + x, value.position.y + y);
+  return next.position.x === value.position.x && next.position.y === value.position.y ? undefined : next;
 };
 
 export const customLauncherLayoutHitboxV1 = (key: LayoutKey, value: LayoutValue) => ({
@@ -117,44 +149,75 @@ export const customLauncherLayoutInspectorValueV1 = (
 };
 
 export function CustomLauncherLayoutEditor({
+  active,
   committedLayout,
   commitStatus,
+  draft,
   inspectorHost,
   mode,
+  selectOnActivate,
   disabled,
   onCommit,
+  onDraftChange,
 }: {
+  active: boolean;
   committedLayout: CustomLauncherLayoutDtoV1;
   commitStatus?: "committed" | "conflict";
+  draft?: CustomLauncherLayoutDraftV1;
   inspectorHost: HTMLElement | null;
   mode: LauncherPreviewModeV1;
+  selectOnActivate: boolean;
   disabled: boolean;
-  onCommit(expectedAuthoritySha256: string, operation: SetCustomLauncherLayoutV3): Promise<boolean>;
+  onCommit(
+    expectedAuthoritySha256: string,
+    operation: SetCustomLauncherLayoutV3,
+  ): Promise<CustomLauncherLayoutCommitStatusV1>;
+  onDraftChange(draft: CustomLauncherLayoutDraftV1 | undefined): void;
 }) {
   const [selected, setSelected] = useState<LayoutKey>();
-  const [draft, setDraft] = useState<LayoutDraft>();
   const [, setInspector] = useState<InspectorDraft>();
   const [error, setError] = useState<InspectorError>();
   const [announcement, setAnnouncement] = useState("");
-  const draftRef = useRef<LayoutDraft | undefined>(undefined);
   const inspectorRef = useRef<InspectorDraft | undefined>(undefined);
-  const commitRef = useRef<Promise<boolean> | undefined>(undefined);
+  const commitRef = useRef<Promise<CustomLauncherLayoutCommitStatusV1> | undefined>(undefined);
   const cancelledInspectorBlur = useRef(false);
   const authority = useRef(committedLayout.authoritySha256);
   const targets = useRef(new Map<LayoutKey, HTMLButtonElement>());
   const inspectorInputs = useRef(new Map<string, HTMLInputElement>());
+  const gestureMode = useRef(mode);
   const gesture = useRef<
-    { key: LayoutKey; pointerId: number; start: { x: number; y: number }; value: LayoutValue } | undefined
+    | {
+        key: LayoutKey;
+        mode: LauncherPreviewModeV1;
+        pointerId: number;
+        start: { x: number; y: number };
+        origin: LayoutValue;
+        value: LayoutValue;
+      }
+    | undefined
   >(undefined);
   const effective = resolveCustomLauncherLayoutV1(committedLayout.overrides);
-  const setLayoutDraft = (next: LayoutDraft | undefined) => {
-    draftRef.current = next;
-    setDraft(next);
-  };
+  const setLayoutDraft = onDraftChange;
   const setInspectorDraft = (next: InspectorDraft | undefined) => {
     inspectorRef.current = next;
     setInspector(next);
   };
+
+  useEffect(() => {
+    if (gestureMode.current === mode) return;
+    gestureMode.current = mode;
+    gesture.current = undefined;
+    setLayoutDraft(undefined);
+    setInspectorDraft(undefined);
+    setError(undefined);
+  }, [mode]);
+  useEffect(() => {
+    if (!disabled) return;
+    gesture.current = undefined;
+    setLayoutDraft(undefined);
+    setInspectorDraft(undefined);
+    setError(undefined);
+  }, [disabled]);
 
   useEffect(() => {
     if (authority.current === committedLayout.authoritySha256) return;
@@ -178,19 +241,35 @@ export function CustomLauncherLayoutEditor({
     setError(undefined);
     setAnnouncement(target.unavailable ? "Cover art is unavailable in Coverflow." : `${title(key)} selected.`);
   };
+  useEffect(() => {
+    if (!active) {
+      gesture.current = undefined;
+      setLayoutDraft(undefined);
+      setInspectorDraft(undefined);
+      setError(undefined);
+      return;
+    }
+    if (selectOnActivate && !selected) announceSelection(CUSTOM_LAUNCHER_LAYOUT_KEYS_V1[0]);
+  }, [active, selectOnActivate, selected]);
   const commit = async (key: LayoutKey, value: LayoutValue, message: string) => {
     if (commitRef.current) return commitRef.current;
     const saving = onCommit(committedLayout.authoritySha256, operationFor(key, value));
     commitRef.current = saving;
     try {
-      if (await saving) {
+      const outcome = await saving;
+      if (outcome === "committed") {
         setLayoutDraft(undefined);
         setInspectorDraft(undefined);
         setError(undefined);
         setAnnouncement(message);
-        return true;
+      } else if (outcome === "conflict") {
+        setLayoutDraft(undefined);
+        setInspectorDraft(undefined);
+        setError(undefined);
+        setAnnouncement("Layout conflict. Latest committed layout restored.");
+        queueMicrotask(() => targets.current.get(key)?.focus());
       }
-      return false;
+      return outcome;
     } finally {
       commitRef.current = undefined;
     }
@@ -209,12 +288,20 @@ export function CustomLauncherLayoutEditor({
     setLayoutDraft({ key, value: candidate.value });
   };
   const cancelInspector = () => {
-    cancelledInspectorBlur.current = true;
+    const cancelled = Boolean(gesture.current || draft || inspectorRef.current || error);
+    if (!cancelled) return false;
+    cancelledInspectorBlur.current = Boolean(inspectorRef.current);
     gesture.current = undefined;
     setLayoutDraft(undefined);
     setInspectorDraft(undefined);
     setError(undefined);
     if (selected) setAnnouncement(`${title(selected)} edit cancelled.`);
+    return true;
+  };
+  const cancelPointer = (event: React.PointerEvent<HTMLButtonElement>, key: LayoutKey) => {
+    const active = gesture.current;
+    if (!active || active.key !== key || active.pointerId !== event.pointerId) return;
+    cancelInspector();
   };
   const commitInspector = (key: LayoutKey) => {
     if (disabled || customLauncherLayoutTargetV1(key, mode).unavailable) return;
@@ -243,46 +330,74 @@ export function CustomLauncherLayoutEditor({
     announceSelection(key);
     gesture.current = {
       key,
+      mode,
       pointerId: event.pointerId,
       start: { x: event.clientX, y: event.clientY },
+      origin: valueFor(key),
       value: valueFor(key),
     };
   };
   const move = (event: React.PointerEvent<HTMLButtonElement>, key: LayoutKey) => {
     const active = gesture.current;
     if (!active || active.key !== key || active.pointerId !== event.pointerId) return;
+    if (active.mode !== mode) {
+      gesture.current = undefined;
+      setLayoutDraft(undefined);
+      return;
+    }
     const surface = event.currentTarget.parentElement?.getBoundingClientRect();
     if (!surface?.width || !surface.height) return;
+    const delta = customLauncherLayoutPointerDeltaV1(active.start, { x: event.clientX, y: event.clientY }, surface);
+    if (!delta) return;
     const value = moveCustomLauncherLayoutV1(
       key,
-      active.value,
-      active.value.position.x + ((event.clientX - active.start.x) * 256) / surface.width,
-      active.value.position.y + ((event.clientY - active.start.y) * 192) / surface.height,
+      active.origin,
+      active.origin.position.x + delta.x,
+      active.origin.position.y + delta.y,
     );
+    if (active.value.position.x === value.position.x && active.value.position.y === value.position.y) return;
+    active.value = value;
     setLayoutDraft({ key, value });
   };
   const finish = (event: React.PointerEvent<HTMLButtonElement>, key: LayoutKey) => {
     const active = gesture.current;
     if (!active || active.key !== key || active.pointerId !== event.pointerId) return;
+    if (active.mode !== mode) {
+      gesture.current = undefined;
+      setLayoutDraft(undefined);
+      return;
+    }
     gesture.current = undefined;
-    const next = draftRef.current;
-    if (!next || next.key !== key) return;
-    void commit(key, next.value, `${title(key)} moved to ${next.value.position.x}, ${next.value.position.y}.`);
+    if (active.value.position.x === active.origin.position.x && active.value.position.y === active.origin.position.y) {
+      setLayoutDraft(undefined);
+      return;
+    }
+    void commit(key, active.value, `${title(key)} moved to ${active.value.position.x}, ${active.value.position.y}.`);
+  };
+  const nudge = (key: LayoutKey, direction: CustomLauncherLayoutDirectionV1, distance = 1) => {
+    if (disabled || customLauncherLayoutTargetV1(key, mode).unavailable) return;
+    const next = nudgeCustomLauncherLayoutV1(key, valueFor(key), direction, distance);
+    if (!next) return;
+    void commit(key, next, `${title(key)} moved to ${next.position.x}, ${next.position.y}.`);
   };
   const moveWithKeyboard = (event: React.KeyboardEvent<HTMLButtonElement>, key: LayoutKey, unavailable: boolean) => {
     if (event.key === "Escape") {
-      event.preventDefault();
-      cancelInspector();
+      if (cancelInspector()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
       return;
     }
     if (disabled || unavailable || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
     event.preventDefault();
     const distance = event.shiftKey ? 10 : 1;
-    const x = event.key === "ArrowLeft" ? -distance : event.key === "ArrowRight" ? distance : 0;
-    const y = event.key === "ArrowUp" ? -distance : event.key === "ArrowDown" ? distance : 0;
-    const value = valueFor(key);
-    const next = moveCustomLauncherLayoutV1(key, value, value.position.x + x, value.position.y + y);
-    void commit(key, next, `${title(key)} moved to ${next.position.x}, ${next.position.y}.`);
+    const direction = {
+      ArrowLeft: "left",
+      ArrowRight: "right",
+      ArrowUp: "up",
+      ArrowDown: "down",
+    }[event.key] as CustomLauncherLayoutDirectionV1;
+    nudge(key, direction, distance);
   };
   const reset = (key: LayoutKey) => {
     if (disabled || customLauncherLayoutTargetV1(key, mode).unavailable || commitRef.current) return;
@@ -293,8 +408,8 @@ export function CustomLauncherLayoutEditor({
     } as SetCustomLauncherLayoutV3);
     commitRef.current = saving;
     void saving
-      .then((saved) => {
-        if (!saved) return;
+      .then((outcome) => {
+        if (outcome !== "committed") return;
         setLayoutDraft(undefined);
         setInspectorDraft(undefined);
         setError(undefined);
@@ -308,6 +423,7 @@ export function CustomLauncherLayoutEditor({
   const selectedTarget = selected ? customLauncherLayoutTargetV1(selected, mode) : undefined;
   const selectedFields = selected ? inputFields(selected) : undefined;
   const selectedBounds = selectedValue ? customLauncherLayoutBoundsV1(selectedValue) : undefined;
+  const directions: readonly CustomLauncherLayoutDirectionV1[] = ["up", "left", "right", "down"];
   const inspectorPanel =
     inspectorHost && selected && selectedTarget && selectedValue && selectedFields && selectedBounds
       ? createPortal(
@@ -361,8 +477,10 @@ export function CustomLauncherLayoutEditor({
                           onChange={(event) => updateInspector(selected, fieldName, event.target.value)}
                           onKeyDown={(event) => {
                             if (event.key === "Escape") {
-                              event.preventDefault();
-                              cancelInspector();
+                              if (cancelInspector()) {
+                                event.preventDefault();
+                                event.stopPropagation();
+                              }
                             } else if (event.key === "Enter") {
                               event.preventDefault();
                               commitInspector(selected);
@@ -402,8 +520,10 @@ export function CustomLauncherLayoutEditor({
                                 onChange={(event) => updateInspector(selected, field, event.target.value)}
                                 onKeyDown={(event) => {
                                   if (event.key === "Escape") {
-                                    event.preventDefault();
-                                    cancelInspector();
+                                    if (cancelInspector()) {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                    }
                                   } else if (event.key === "Enter") {
                                     event.preventDefault();
                                     commitInspector(selected);
@@ -416,6 +536,24 @@ export function CustomLauncherLayoutEditor({
                       : [],
                   )}
                 </div>
+                <div
+                  className="custom-launcher-layout-nudge"
+                  aria-label={`Move ${title(selected)} by 1 pixel`}
+                  role="group"
+                >
+                  {directions.map((direction) => (
+                    <button
+                      aria-label={`Move ${title(selected)} ${direction} 1 pixel`}
+                      className={`nudge-${direction}`}
+                      disabled={disabled || !nudgeCustomLauncherLayoutV1(selected, selectedValue, direction)}
+                      key={direction}
+                      type="button"
+                      onClick={() => nudge(selected, direction)}
+                    >
+                      {`${direction[0]!.toUpperCase()}${direction.slice(1)}`}
+                    </button>
+                  ))}
+                </div>
                 {error && <p role="alert">{error.message}</p>}
                 <button disabled={disabled} type="button" onClick={() => reset(selected)}>
                   Reset {labels[selected]}
@@ -427,7 +565,7 @@ export function CustomLauncherLayoutEditor({
         )
       : null;
 
-  return (
+  return !active ? null : (
     <>
       <section
         className="custom-launcher-layout-editor"
@@ -465,7 +603,8 @@ export function CustomLauncherLayoutEditor({
               onClick={() => announceSelection(key)}
               onFocus={() => target.unavailable && announceSelection(key)}
               onKeyDown={(event) => moveWithKeyboard(event, key, target.unavailable)}
-              onPointerCancel={cancelInspector}
+              onLostPointerCapture={(event) => cancelPointer(event, key)}
+              onPointerCancel={(event) => cancelPointer(event, key)}
               onPointerDown={(event) => begin(event, key, target.unavailable)}
               onPointerMove={(event) => move(event, key)}
               onPointerUp={(event) => finish(event, key)}

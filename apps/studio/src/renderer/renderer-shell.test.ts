@@ -69,13 +69,27 @@ describe("renderer shell", () => {
     expect(readFileSync(path.join(root, "vite.e2e.config.mts"), "utf8")).toContain("assetsInlineLimit: 0");
   });
 
-  it("keeps expanded preview authorable, transient, keyboard-dismissable, and focused on its toggle", () => {
+  it("keeps expanded preview viewing-first, explicitly arrangeable, transient, and focus-safe", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
     const css = readFileSync(path.join(rendererRoot, "studio.css"), "utf8");
 
     expect(renderer).toContain('aria-label={expanded ? "Exit expanded preview" : "Expand preview"}');
     expect(renderer).toContain("aria-pressed={expanded}");
+    expect(renderer).toContain('className="arrange-elements-toggle"');
+    expect(renderer).toContain('{arranging ? "Done arranging" : "Arrange elements"}');
+    expect(renderer).toContain("aria-pressed={arranging}");
+    expect(renderer).toMatch(/className="arrange-elements-toggle"[\s\S]{0,160}disabled=\{busy\}/);
+    expect(renderer).toContain("customLauncherLayoutEditorAvailableV1(");
+    expect(renderer).toContain("if (layoutEditorAvailable && (!busy || layoutCommitPending.current)) return;");
+    expect(renderer).toContain("active={!expanded || arranging}");
+    expect(renderer).toContain("selectOnActivate={expanded && arranging}");
+    expect(renderer).toContain(
+      "overrides: { ...customLauncherLayout.overrides, [layoutDraft.key]: layoutDraft.value }",
+    );
     expect(renderer).toContain('event.key !== "Escape" || event.defaultPrevented');
+    expect(renderer).toContain("if (layoutDraftRef.current)");
+    expect(renderer).toContain("if (arranging)");
+    expect(renderer).toContain("arrangeToggle.current?.focus()");
     expect(renderer).toContain("expandToggle.current?.focus()");
     expect(renderer).toContain('document.body.classList.add("launcher-preview-expanded")');
     expect(renderer).toContain('role={expanded ? "dialog" : undefined}');
@@ -94,6 +108,11 @@ describe("renderer shell", () => {
     expect(css).not.toMatch(
       /\.device-preview\.expanded[^{}]*(?:\.device-chrome|\.bottom-preview)[^{]*\{[^}]*display: none;/,
     );
+    expect(css).toMatch(/\.launcher-layout-target \{[\s\S]*?touch-action: none;[\s\S]*?user-select: none;/);
+    const layoutEditor = readFileSync(path.join(rendererRoot, "custom-launcher-layout-editor.tsx"), "utf8");
+    expect(layoutEditor).toContain("onLostPointerCapture={(event) => cancelPointer(event, key)}");
+    expect(layoutEditor).toMatch(/active\.value\.position\.x === value\.position\.x[\s\S]{0,100}return;/);
+    expect(css).toContain(".custom-launcher-layout-nudge");
     expect(css).toContain("image-rendering: pixelated");
   });
 

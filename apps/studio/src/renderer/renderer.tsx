@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import {
   compileCustomVisualPackageV1,
@@ -48,7 +48,12 @@ import {
   renderPartialCustomLauncherPreview,
   type LauncherPreviewFrameV1,
 } from "./launcher-preview/render-launcher-preview.js";
-import { CustomLauncherLayoutEditor } from "./custom-launcher-layout-editor.js";
+import {
+  CustomLauncherLayoutEditor,
+  customLauncherLayoutEditorAvailableV1,
+  type CustomLauncherLayoutCommitStatusV1,
+  type CustomLauncherLayoutDraftV1,
+} from "./custom-launcher-layout-editor.js";
 
 declare global {
   interface Window {
@@ -221,22 +226,50 @@ function DevicePreview({
   customPreview: CustomLauncherPreviewState;
   customLauncherLayout?: CustomLauncherLayoutDtoV1;
   customLauncherLayoutStatus?: "committed" | "conflict";
-  onCustomLauncherLayoutCommit(expectedAuthoritySha256: string, operation: SetCustomLauncherLayoutV3): Promise<boolean>;
+  onCustomLauncherLayoutCommit(
+    expectedAuthoritySha256: string,
+    operation: SetCustomLauncherLayoutV3,
+  ): Promise<CustomLauncherLayoutCommitStatusV1>;
   preview?: PreviewModel;
   busy: boolean;
 }) {
   const [logicalPixels, setLogicalPixels] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [arranging, setArranging] = useState(false);
+  const [layoutDraft, setLayoutDraftState] = useState<CustomLauncherLayoutDraftV1>();
   const [inspectorHost, setInspectorHost] = useState<HTMLDivElement | null>(null);
   const expandToggle = useRef<HTMLButtonElement>(null);
+  const arrangeToggle = useRef<HTMLButtonElement>(null);
   const previewSurface = useRef<HTMLDivElement>(null);
   const restoreExpandFocus = useRef(false);
+  const restoreArrangeFocus = useRef(false);
+  const layoutCommitPending = useRef(false);
+  const layoutDraftRef = useRef<CustomLauncherLayoutDraftV1 | undefined>(undefined);
+  const setLayoutDraft = useCallback((next: CustomLauncherLayoutDraftV1 | undefined) => {
+    layoutDraftRef.current = next;
+    setLayoutDraftState(next);
+  }, []);
+  const commitLayout = async (expectedAuthoritySha256: string, operation: SetCustomLauncherLayoutV3) => {
+    layoutCommitPending.current = true;
+    try {
+      return await onCustomLauncherLayoutCommit(expectedAuthoritySha256, operation);
+    } finally {
+      layoutCommitPending.current = false;
+    }
+  };
   useEffect(() => {
     if (!expanded && restoreExpandFocus.current) {
       restoreExpandFocus.current = false;
       expandToggle.current?.focus();
     }
   }, [expanded]);
+  useEffect(() => {
+    if (expanded && !arranging && restoreArrangeFocus.current) {
+      restoreArrangeFocus.current = false;
+      arrangeToggle.current?.focus();
+    }
+  }, [arranging, expanded]);
+  useEffect(() => setLayoutDraft(undefined), [customLauncherLayout?.authoritySha256, launcherView, setLayoutDraft]);
   useEffect(() => {
     if (!expanded) return;
     document.body.classList.add("launcher-preview-expanded");
@@ -255,7 +288,18 @@ function DevicePreview({
     const exit = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
+      if (layoutDraftRef.current) {
+        setLayoutDraft(undefined);
+        return;
+      }
+      if (arranging) {
+        restoreArrangeFocus.current = true;
+        setArranging(false);
+        return;
+      }
       restoreExpandFocus.current = true;
+      setArranging(false);
+      setLayoutDraft(undefined);
       setExpanded(false);
     };
     globalThis.addEventListener("keydown", exit);
@@ -264,7 +308,17 @@ function DevicePreview({
       for (const [sibling, inert] of inertSiblings) sibling.inert = inert;
       globalThis.removeEventListener("keydown", exit);
     };
-  }, [expanded]);
+  }, [arranging, expanded, setLayoutDraft]);
+  const renderedCustomLauncherLayout = useMemo<CustomLauncherLayoutDtoV1 | undefined>(
+    () =>
+      customLauncherLayout && layoutDraft
+        ? {
+            ...customLauncherLayout,
+            overrides: { ...customLauncherLayout.overrides, [layoutDraft.key]: layoutDraft.value },
+          }
+        : customLauncherLayout,
+    [customLauncherLayout, layoutDraft],
+  );
   const launcherPreview = useMemo<LauncherPreviewState>(() => {
     if (customPreview.kind === "invalid") return { kind: "invalid" };
     try {
@@ -275,7 +329,7 @@ function DevicePreview({
             sources: customPreview.sources,
             mode: launcherView,
             fixture: neutralLauncherFixtureV1(),
-            committedLayout: customLauncherLayout,
+            committedLayout: renderedCustomLauncherLayout,
           }),
           startedRoles: customPreview.startedRoles,
           placeholderRoles: customPreview.placeholderRoles,
@@ -297,13 +351,24 @@ function DevicePreview({
         theme,
         mode: launcherView,
         fixture: neutralLauncherFixtureV1(),
-        committedLayout: customLauncherLayout,
+        committedLayout: renderedCustomLauncherLayout,
       });
       return { kind: "ready", frame };
     } catch {
       return { kind: "invalid" };
     }
-  }, [customLauncherLayout, customPreview, launcherView, preview]);
+  }, [customPreview, launcherView, preview, renderedCustomLauncherLayout]);
+  const layoutEditorAvailable = customLauncherLayoutEditorAvailableV1(
+    Boolean(customLauncherLayout),
+    customPreview.kind,
+    launcherPreview.kind,
+  );
+  useEffect(() => {
+    if (layoutEditorAvailable && (!busy || layoutCommitPending.current)) return;
+    restoreArrangeFocus.current = false;
+    setArranging(false);
+    setLayoutDraft(undefined);
+  }, [busy, layoutEditorAvailable, setLayoutDraft]);
   const oneToOne = logicalPixels && !expanded;
   return (
     <div
@@ -320,6 +385,21 @@ function DevicePreview({
           <h2 id="launcher-preview-title">Live preview</h2>
         </div>
         <div className="preview-actions">
+          {expanded && layoutEditorAvailable && (
+            <button
+              ref={arrangeToggle}
+              type="button"
+              className="arrange-elements-toggle"
+              aria-pressed={arranging}
+              disabled={busy}
+              onClick={() => {
+                if (arranging) setLayoutDraft(undefined);
+                setArranging((active) => !active);
+              }}
+            >
+              {arranging ? "Done arranging" : "Arrange elements"}
+            </button>
+          )}
           <button
             ref={expandToggle}
             type="button"
@@ -327,8 +407,12 @@ function DevicePreview({
             aria-label={expanded ? "Exit expanded preview" : "Expand preview"}
             aria-pressed={expanded}
             onClick={() => {
-              if (expanded) restoreExpandFocus.current = true;
-              setExpanded((active) => !active);
+              if (expanded) {
+                restoreExpandFocus.current = true;
+                setArranging(false);
+                setLayoutDraft(undefined);
+                setExpanded(false);
+              } else setExpanded(true);
             }}
           >
             {expanded ? "Exit expanded preview" : "Expand preview"}
@@ -379,14 +463,18 @@ function DevicePreview({
                 frame={launcherPreview.frame}
                 screen="top"
                 editor={
-                  customLauncherLayout && customPreview.kind !== "not-custom" ? (
+                  layoutEditorAvailable && customLauncherLayout ? (
                     <CustomLauncherLayoutEditor
+                      active={!expanded || arranging}
                       committedLayout={customLauncherLayout}
                       commitStatus={customLauncherLayoutStatus}
+                      draft={layoutDraft}
                       disabled={busy}
                       inspectorHost={inspectorHost}
                       mode={launcherPreview.frame.mode}
-                      onCommit={onCustomLauncherLayoutCommit}
+                      onCommit={commitLayout}
+                      onDraftChange={setLayoutDraft}
+                      selectOnActivate={expanded && arranging}
                     />
                   ) : undefined
                 }
@@ -693,7 +781,7 @@ function Studio() {
       }
       if (resynchronize) authority.reset();
       acceptResult(next, sequence, resynchronize, replaceProject);
-      if (mounted.current) setStatus(label);
+      if (mounted.current && label) setStatus(label);
       return true;
     } catch (error) {
       if (mounted.current)
@@ -707,16 +795,21 @@ function Studio() {
   };
   const commitCustomLauncherLayout = async (expectedAuthoritySha256: string, operation: SetCustomLauncherLayoutV3) => {
     const saved = await run(
-      "Launcher layout saved.",
+      "",
       () => window.studio.setCustomLauncherLayout(expectedAuthoritySha256, operation),
       false,
       false,
       false,
       false,
     );
-    if (saved && resultRef.current?.customLauncherLayoutStatus === "conflict" && mounted.current)
-      setStatus("Layout conflict. Latest committed layout restored.");
-    return saved;
+    if (!saved) return undefined;
+    const outcome = resultRef.current?.customLauncherLayoutStatus;
+    if (mounted.current) {
+      if (outcome === "committed") setStatus("Launcher layout saved.");
+      else if (outcome === "conflict") setStatus("Layout conflict. Latest committed layout restored.");
+      else setStatus("Launcher layout update was not confirmed.");
+    }
+    return outcome === "committed" || outcome === "conflict" ? outcome : undefined;
   };
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {

@@ -863,7 +863,7 @@ test("completes the offline Material and Custom lifecycles through the hardened 
         await page
           .locator("[data-launcher-screen]")
           .evaluateAll((canvases) => canvases.map((canvas) => (canvas as HTMLCanvasElement).toDataURL())),
-      ).toEqual(rastersBeforeDraft);
+      ).not.toEqual(rastersBeforeDraft);
       await topIcon.dispatchEvent("pointerup", {
         pointerId: 41,
         button: 0,
@@ -1641,7 +1641,12 @@ test("authors Custom launcher layout values through the accessible inspector", a
       "--ozone-platform=headless",
       path.resolve("dist/apps/studio/src/main.js"),
     ],
-    env: { ...process.env, DSPICO_STUDIO_E2E_ROOT: root, ELECTRON_DISABLE_SANDBOX: "1" },
+    env: {
+      ...process.env,
+      DSPICO_STUDIO_E2E_ROOT: root,
+      DSPICO_STUDIO_E2E_SAVE_DELAY_MS: "5000",
+      ELECTRON_DISABLE_SANDBOX: "1",
+    },
   });
   try {
     const page = await electronApp.firstWindow();
@@ -1748,13 +1753,15 @@ test("authors Custom launcher layout values through the accessible inspector", a
     const topCanvas = page.locator('[data-launcher-screen="top"]');
     const bottomCanvas = page.locator('[data-launcher-screen="bottom"]');
     const normalCanvasWidth = (await topCanvas.boundingBox())!.width;
-    const operationsBeforeExpanded = (await customLauncherLayoutState(root)).operations.length;
     const authorityBeforeExpanded = await editor.getAttribute("data-layout-authority");
     const preferencesBeforeExpanded = await page.evaluate(() => localStorage.getItem("dspico:workspace-layout:v3"));
     const expandPreview = page.getByRole("button", { name: "Expand preview" });
     await expandPreview.click();
     const exitExpandedPreview = page.getByRole("button", { name: "Exit expanded preview" });
+    const arrangeToggle = page.locator(".arrange-elements-toggle");
     await expect(exitExpandedPreview).toHaveAttribute("aria-pressed", "true");
+    await expect(arrangeToggle).toHaveText("Arrange elements");
+    await expect(arrangeToggle).toHaveAttribute("aria-pressed", "false");
     await expect(page.getByRole("dialog", { name: "Live preview" })).toBeVisible();
     await expect.poll(async () => (await topCanvas.boundingBox())!.width).toBeGreaterThan(normalCanvasWidth);
     await expect(topCanvas).toBeVisible();
@@ -1762,6 +1769,12 @@ test("authors Custom launcher layout values through the accessible inspector", a
     await expect(page.locator('[data-preview-chrome="device-frame"]')).toBeVisible();
     await expect(page.locator(".pixel-scale-toggle")).toBeHidden();
     await expect(page.locator(".dock-tabs")).toBeHidden();
+    await expect(editor).toHaveCount(0);
+    await expect(inspector).toHaveCount(0);
+
+    await arrangeToggle.click();
+    await expect(arrangeToggle).toHaveText("Done arranging");
+    await expect(arrangeToggle).toHaveAttribute("aria-pressed", "true");
     await expect(editor).toBeVisible();
     await expect(inspector).toBeVisible();
     for (const label of [
@@ -1774,23 +1787,212 @@ test("authors Custom launcher layout values through the accessible inspector", a
     ]) {
       await expect(editor.getByRole("button", { name: label })).toBeVisible();
     }
+    await arrangeToggle.click();
+    await expect(arrangeToggle).toHaveText("Arrange elements");
+    await expect(editor).toHaveCount(0);
+    await expect(inspector).toHaveCount(0);
+    await arrangeToggle.click();
+    await expect(arrangeToggle).toHaveText("Done arranging");
+    await expect(editor).toBeVisible();
+    await expect(inspector).toBeVisible();
     const stageBox = (await page.locator(".device-preview.expanded .device-stage").boundingBox())!;
     const inspectorBox = (await page.locator(".custom-launcher-layout-inspector-host").boundingBox())!;
     expect(inspectorBox.x).toBeGreaterThanOrEqual(stageBox.x + stageBox.width);
 
+    const operationsBeforeCancellation = (await customLauncherLayoutState(root)).operations.length;
+    const cancellationBox = (await topCover.boundingBox())!;
+    const cancellationPoint = {
+      x: cancellationBox.x + cancellationBox.width / 2,
+      y: cancellationBox.y + cancellationBox.height / 2,
+    };
+    await topCover.dispatchEvent("pointerdown", {
+      pointerId: 51,
+      button: 0,
+      buttons: 1,
+      clientX: cancellationPoint.x,
+      clientY: cancellationPoint.y,
+    });
+    await topCover.dispatchEvent("pointermove", {
+      pointerId: 51,
+      button: 0,
+      buttons: 1,
+      clientX: cancellationPoint.x + 0.1,
+      clientY: cancellationPoint.y + 0.1,
+    });
+    await expect(topCover).not.toHaveAttribute("data-layout-draft", "true");
+    await topCover.dispatchEvent("pointerup", {
+      pointerId: 51,
+      button: 0,
+      clientX: cancellationPoint.x + 0.1,
+      clientY: cancellationPoint.y + 0.1,
+    });
+    expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeCancellation);
+
+    await topCover.dispatchEvent("pointerdown", {
+      pointerId: 52,
+      button: 0,
+      buttons: 1,
+      clientX: cancellationPoint.x,
+      clientY: cancellationPoint.y,
+    });
+    await topCover.dispatchEvent("pointermove", {
+      pointerId: 52,
+      button: 0,
+      buttons: 1,
+      clientX: cancellationPoint.x + 12,
+      clientY: cancellationPoint.y + 8,
+    });
+    await expect(topCover).toHaveAttribute("data-layout-draft", "true");
+    await topCover.dispatchEvent("lostpointercapture", { pointerId: 51 });
+    await expect(topCover).toHaveAttribute("data-layout-draft", "true");
+    await topCover.dispatchEvent("lostpointercapture", { pointerId: 52 });
+    await expect(topCover).not.toHaveAttribute("data-layout-draft", "true");
+    await topCover.dispatchEvent("pointerup", {
+      pointerId: 52,
+      button: 0,
+      clientX: cancellationPoint.x + 12,
+      clientY: cancellationPoint.y + 8,
+    });
+    expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeCancellation);
+
+    await topCover.dispatchEvent("pointerdown", {
+      pointerId: 53,
+      button: 0,
+      buttons: 1,
+      clientX: cancellationPoint.x,
+      clientY: cancellationPoint.y,
+    });
+    await topCover.dispatchEvent("pointermove", {
+      pointerId: 53,
+      button: 0,
+      buttons: 1,
+      clientX: cancellationPoint.x + 12,
+      clientY: cancellationPoint.y + 8,
+    });
+    await expect(topCover).toHaveAttribute("data-layout-draft", "true");
+    await page.getByRole("button", { name: "Horizontal Grid", exact: true }).click();
+    await expect(topCover).not.toHaveAttribute("data-layout-draft", "true");
+    await expect(topCover).toHaveAttribute("aria-pressed", "true");
+    await topCover.dispatchEvent("pointerup", {
+      pointerId: 53,
+      button: 0,
+      clientX: cancellationPoint.x + 12,
+      clientY: cancellationPoint.y + 8,
+    });
+    expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeCancellation);
+    await bannerList.click();
+
+    await topCover.dispatchEvent("pointerdown", {
+      pointerId: 54,
+      button: 0,
+      buttons: 1,
+      clientX: cancellationPoint.x,
+      clientY: cancellationPoint.y,
+    });
+    await topCover.dispatchEvent("pointermove", {
+      pointerId: 54,
+      button: 0,
+      buttons: 1,
+      clientX: cancellationPoint.x + 12,
+      clientY: cancellationPoint.y + 8,
+    });
+    await expect(topCover).toHaveAttribute("data-layout-draft", "true");
+    const saveDelayMarker = path.join(root, ".dspico-e2e-delay-save"),
+      saveBlockedMarker = path.join(root, ".dspico-e2e-save-blocked");
+    await writeFile(saveDelayMarker, "delay launcher arrangement save");
+    await page
+      .locator(".project-actions button")
+      .filter({ hasText: "Save" })
+      .evaluate((button) => (button as HTMLButtonElement).click());
+    await expect
+      .poll(() =>
+        readFile(saveBlockedMarker).then(
+          () => true,
+          () => false,
+        ),
+      )
+      .toBe(true);
+    await expect(arrangeToggle).toBeDisabled();
+    await expect(arrangeToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(editor).toHaveCount(0);
+    await rm(saveDelayMarker);
+    await expect(arrangeToggle).toBeEnabled();
+    await arrangeToggle.click();
+    await expect(topCover).toBeVisible();
+    await topCover.dispatchEvent("pointerup", {
+      pointerId: 54,
+      button: 0,
+      clientX: cancellationPoint.x + 12,
+      clientY: cancellationPoint.y + 8,
+    });
+    expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeCancellation);
+
+    for (const direction of ["up", "left", "right", "down"]) {
+      await expect(inspector.getByRole("button", { name: `Move Top cover ${direction} 1 pixel` })).toBeVisible();
+    }
+    const operationsBeforeNudge = (await customLauncherLayoutState(root)).operations.length;
+    await inspector.getByRole("button", { name: "Move Top cover up 1 pixel" }).click();
+    await expect
+      .poll(async () => (await customLauncherLayoutState(root)).operations.length)
+      .toBe(operationsBeforeNudge + 1);
+    expect(layoutPosition((await customLauncherLayoutState(root)).operations.at(-1)!)).toEqual({ x: 75, y: 17 });
+
+    await expect(topCover).toBeEnabled();
+    await topCover.press("ArrowRight");
+    await expect
+      .poll(async () => (await customLauncherLayoutState(root)).operations.length)
+      .toBe(operationsBeforeNudge + 2);
+    expect(layoutPosition((await customLauncherLayoutState(root)).operations.at(-1)!)).toEqual({ x: 76, y: 17 });
+
+    const coverX = inspector.getByRole("spinbutton", { name: "Top cover X" });
+    await coverX.fill("255");
+    await coverX.press("Enter");
+    await expect
+      .poll(async () => (await customLauncherLayoutState(root)).operations.length)
+      .toBe(operationsBeforeNudge + 3);
+    const moveCoverRight = inspector.getByRole("button", { name: "Move Top cover right 1 pixel" });
+    await expect(moveCoverRight).toBeDisabled();
+    await moveCoverRight.evaluate((button) => (button as HTMLButtonElement).click());
+    expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeNudge + 3);
+
+    await coverX.fill("75");
+    await coverX.press("Enter");
+    await expect
+      .poll(async () => (await customLauncherLayoutState(root)).operations.length)
+      .toBe(operationsBeforeNudge + 4);
     const coverY = inspector.getByRole("spinbutton", { name: "Top cover Y" });
     await coverY.fill("90");
     await coverY.press("Enter");
     await expect
       .poll(async () => (await customLauncherLayoutState(root)).operations.length)
-      .toBe(operationsBeforeExpanded + 1);
+      .toBe(operationsBeforeNudge + 5);
     expect((await customLauncherLayoutState(root)).operations.at(-1)).toMatchObject({
       type: "set-custom-launcher-layout",
       element: "topCover",
       value: { position: { y: 90 } },
     });
     await expect.poll(() => editor.getAttribute("data-layout-authority")).not.toBe(authorityBeforeExpanded);
-    const authorityAfterExpanded = await editor.getAttribute("data-layout-authority");
+
+    const operationsBeforeDrag = (await customLauncherLayoutState(root)).operations.length;
+    const rasterBeforeDrag = await topCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL());
+    const coverBox = (await topCover.boundingBox())!;
+    await page.mouse.move(coverBox.x + coverBox.width / 2, coverBox.y + coverBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(coverBox.x + coverBox.width / 2 + 24, coverBox.y + coverBox.height / 2 + 12, {
+      steps: 4,
+    });
+    await expect(topCover).toHaveAttribute("data-layout-draft", "true");
+    expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeDrag);
+    await expect
+      .poll(() => topCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL()))
+      .not.toBe(rasterBeforeDrag);
+    await page.mouse.up();
+    await expect
+      .poll(async () => (await customLauncherLayoutState(root)).operations.length)
+      .toBe(operationsBeforeDrag + 1);
+    await expect(topCover).not.toHaveAttribute("data-layout-draft", "true");
+    await topCover.dispatchEvent("lostpointercapture", { pointerId: 1 });
+    expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeDrag + 1);
 
     await expect(bannerList).toHaveAttribute("aria-pressed", "true");
     await expect(bottomCanvas.locator("..")).toHaveAttribute("data-mode", "banner-list");
@@ -1810,6 +2012,11 @@ test("authors Custom launcher layout values through the accessible inspector", a
       await expect.poll(() => bottomCanvas.getAttribute("data-canvas-evidence")).not.toBe(previousEvidence);
       previousEvidence = await bottomCanvas.getAttribute("data-canvas-evidence");
     }
+    const unavailableTopCover = editor.getByRole("button", { name: "Top cover is unavailable in Coverflow" });
+    await unavailableTopCover.focus();
+    await expect(unavailableTopCover).toBeFocused();
+    await expect(inspector).toContainText("Cover art is unavailable in Coverflow.");
+
     await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(700, 900));
     await page.waitForFunction(() => window.innerWidth <= 760);
     const narrowStageBox = (await page.locator(".device-preview.expanded .device-stage").boundingBox())!;
@@ -1831,20 +2038,39 @@ test("authors Custom launcher layout values through the accessible inspector", a
     await expect(inspector).toBeVisible();
     await expandPreview.click();
     await expect(page.getByRole("button", { name: "Exit expanded preview" })).toHaveAttribute("aria-pressed", "true");
-    await page.getByRole("button", { name: "Exit expanded preview" }).focus();
+    await expect(arrangeToggle).toHaveText("Arrange elements");
+    await expect(editor).toHaveCount(0);
+    await arrangeToggle.click();
+    const expandedTopIcon = editor.getByRole("button", { name: "Select top icon" });
+    await expandedTopIcon.click();
+    const operationsBeforeCancelledDrag = (await customLauncherLayoutState(root)).operations.length;
+    const rasterBeforeCancelledDrag = await topCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL());
+    const iconBox = (await expandedTopIcon.boundingBox())!;
+    await page.mouse.move(iconBox.x + iconBox.width / 2, iconBox.y + iconBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(iconBox.x + iconBox.width / 2 + 20, iconBox.y + iconBox.height / 2 + 10, { steps: 3 });
+    await expect(expandedTopIcon).toHaveAttribute("data-layout-draft", "true");
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+    await expect(expandedTopIcon).not.toHaveAttribute("data-layout-draft", "true");
+    await expect(arrangeToggle).toHaveAttribute("aria-pressed", "true");
+    expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeCancelledDrag);
+    await expect
+      .poll(() => topCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL()))
+      .toBe(rasterBeforeCancelledDrag);
+
+    await page.keyboard.press("Escape");
+    await expect(arrangeToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(arrangeToggle).toHaveText("Arrange elements");
+    await expect(arrangeToggle).toBeFocused();
+    await expect(editor).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(expandPreview).toHaveAttribute("aria-pressed", "false");
     await expect(expandPreview).toBeFocused();
-    expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeExpanded + 1);
-    await expect(editor).toHaveAttribute("data-layout-authority", authorityAfterExpanded!);
+    expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeCancelledDrag);
     expect(await page.evaluate(() => localStorage.getItem("dspico:workspace-layout:v3"))).toBe(
       preferencesAfterModeChange,
     );
-
-    const unavailableTopCover = editor.getByRole("button", { name: "Top cover is unavailable in Coverflow" });
-    await unavailableTopCover.focus();
-    await expect(unavailableTopCover).toBeFocused();
-    await expect(inspector).toContainText("Cover art is unavailable in Coverflow.");
   } finally {
     await closeElectronApp(electronApp);
     await rm(root, { recursive: true, force: true });

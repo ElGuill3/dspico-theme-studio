@@ -2936,6 +2936,35 @@ body.workspace-resizing * {
   background: var(--app-bg);
   font: 700 10px var(--data);
 }
+.custom-launcher-layout-nudge {
+  display: grid;
+  grid-template-columns: repeat(3, 52px);
+  grid-template-areas:
+    ". up ."
+    "left . right"
+    ". down .";
+  gap: 4px;
+}
+.custom-launcher-layout-nudge button {
+  min-height: 26px;
+  border-color: var(--line);
+  padding: 3px 5px;
+  color: var(--text);
+  background: var(--app-bg);
+  font-size: 9px;
+}
+.custom-launcher-layout-nudge .nudge-up {
+  grid-area: up;
+}
+.custom-launcher-layout-nudge .nudge-left {
+  grid-area: left;
+}
+.custom-launcher-layout-nudge .nudge-right {
+  grid-area: right;
+}
+.custom-launcher-layout-nudge .nudge-down {
+  grid-area: down;
+}
 .custom-launcher-layout-inspector > button {
   justify-self: start;
   min-height: 28px;
@@ -2958,6 +2987,9 @@ body.workspace-resizing * {
   cursor: move;
   outline-offset: 1px;
   pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .launcher-layout-target[aria-pressed="true"],
 .launcher-layout-target:focus-visible {
