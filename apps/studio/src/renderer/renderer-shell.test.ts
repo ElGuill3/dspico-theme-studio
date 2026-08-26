@@ -50,8 +50,12 @@ describe("renderer shell", () => {
     expect(renderer).toContain('data-fidelity="material-fields"');
     expect(renderer).toContain("frame.metadata.fidelity.materialFields");
     expect(renderer).toContain("data-preview-state={launcherPreview.kind}");
+    expect(renderer).toContain("aria-label={`${screen} launcher screen, ${modeLabel} mode`}");
+    expect(renderer).toMatch(/<PhysicalPreview[\s\S]*?screen="top"[\s\S]*?<PhysicalPreview[^>]*screen="bottom"/);
+    expect(renderer).toMatch(/<button\s+type="button"\s+className=\{launcherView === id/);
     expect(renderer).toContain("1:1 pixels");
-    expect(renderer).toContain('data-pixel-scale={logicalPixels ? "1" : "device"}');
+    expect(renderer).toContain("const oneToOne = logicalPixels && !expanded");
+    expect(renderer).toContain('data-pixel-scale={oneToOne ? "1" : "device"}');
     expect(css).toMatch(/\.device-shell \{[\s\S]*?width: min\(350px, 100%, calc\(\(100vh - 205px\) \* 0\.9344\)\);/);
     expect(css).not.toContain("width: min(270px, 100%)");
     expect(css).toMatch(/\.device-shell\.logical-pixels \{[\s\S]*?width: 256px;[\s\S]*?aspect-ratio: auto;/);
@@ -74,10 +78,18 @@ describe("renderer shell", () => {
     expect(renderer).toContain('event.key !== "Escape" || event.defaultPrevented');
     expect(renderer).toContain("expandToggle.current?.focus()");
     expect(renderer).toContain('document.body.classList.add("launcher-preview-expanded")');
+    expect(renderer).toContain('role={expanded ? "dialog" : undefined}');
+    expect(renderer).toContain("aria-modal={expanded || undefined}");
+    expect(renderer).toContain("sibling.inert = true");
     expect(renderer).not.toContain("setWorkspaceLayout({ expanded");
-    expect(css).toMatch(/\.device-preview\.expanded \{[\s\S]*?grid-template-columns:/);
+    expect(css).toContain("body.launcher-preview-expanded .workspace-dock > .dock-tabs");
+    expect(css).toMatch(/body\.launcher-preview-expanded \.workspace-dock[^}]*grid-template-rows: minmax\(0, 1fr\);/);
+    expect(css).toMatch(/\.device-preview\.expanded \.device-shell \{[\s\S]*?aspect-ratio: 598 \/ 640;/);
     expect(css).toMatch(
-      /\.device-preview\.expanded \.device-shell:not\(\.logical-pixels\) \{[\s\S]*?aspect-ratio: 4 \/ 3;/,
+      /\.device-preview\.expanded \.preview-display-options,[\s\S]*?\.custom-launcher-layout-inspector-host \{\s*display: none;/,
+    );
+    expect(css).not.toMatch(
+      /\.device-preview\.expanded[^{}]*(?:\.device-chrome|\.bottom-preview)[^{]*\{[^}]*display: none;/,
     );
     expect(css).toContain("image-rendering: pixelated");
   });

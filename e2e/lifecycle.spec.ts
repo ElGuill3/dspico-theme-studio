@@ -1746,6 +1746,7 @@ test("authors Custom launcher layout values through the accessible inspector", a
     await pixelScale.click();
 
     const topCanvas = page.locator('[data-launcher-screen="top"]');
+    const bottomCanvas = page.locator('[data-launcher-screen="bottom"]');
     const normalCanvasWidth = (await topCanvas.boundingBox())!.width;
     const operationsBeforeExpanded = (await customLauncherLayoutState(root)).operations.length;
     const authorityBeforeExpanded = await editor.getAttribute("data-layout-authority");
@@ -1754,17 +1755,35 @@ test("authors Custom launcher layout values through the accessible inspector", a
     await expandPreview.click();
     const exitExpandedPreview = page.getByRole("button", { name: "Exit expanded preview" });
     await expect(exitExpandedPreview).toHaveAttribute("aria-pressed", "true");
-    await expect.poll(async () => (await topCanvas.boundingBox())!.width).toBeGreaterThan(normalCanvasWidth * 2);
-    await expect(inspector).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Live preview" })).toBeVisible();
+    await expect.poll(async () => (await topCanvas.boundingBox())!.width).toBeGreaterThan(normalCanvasWidth);
+    await expect(topCanvas).toBeVisible();
+    await expect(bottomCanvas).toBeVisible();
+    await expect(page.locator('[data-preview-chrome="device-frame"]')).toBeVisible();
+    await expect(page.locator(".pixel-scale-toggle")).toBeHidden();
+    await expect(page.locator(".dock-tabs")).toBeHidden();
+    await expect(page.locator(".custom-launcher-layout-editor")).toBeHidden();
+    await expect(page.locator(".custom-launcher-layout-inspector-host")).toBeHidden();
+
+    const bannerEvidence = await bottomCanvas.getAttribute("data-canvas-evidence");
+    const horizontalGrid = page.getByRole("button", { name: "Horizontal Grid", exact: true });
+    await horizontalGrid.click();
+    await expect(horizontalGrid).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator('.device-preview.expanded .mode-switcher button[aria-pressed="true"]')).toHaveCount(1);
+    await expect(bottomCanvas.locator("..")).toHaveAttribute("data-mode", "horizontal-grid");
+    await expect(bottomCanvas).toHaveAttribute("aria-label", "bottom launcher screen, Horizontal Grid mode");
+    await expect.poll(() => bottomCanvas.getAttribute("data-canvas-evidence")).not.toBe(bannerEvidence);
+    const preferencesAfterModeChange = await page.evaluate(() => localStorage.getItem("dspico:workspace-layout:v3"));
+    expect(preferencesAfterModeChange).not.toBe(preferencesBeforeExpanded);
+    expect(JSON.parse(preferencesAfterModeChange!).layout.previewMode).toBe("horizontal-grid");
 
     await exitExpandedPreview.click();
     await expect(expandPreview).toHaveAttribute("aria-pressed", "false");
     await expect(expandPreview).toBeFocused();
+    await expect(pixelScale).toBeVisible();
+    await expect(editor).toBeVisible();
+    await expect(inspector).toBeVisible();
     await expandPreview.click();
-    const coverY = inspector.getByRole("spinbutton", { name: "Top cover Y" });
-    await coverY.fill("90");
-    await coverY.press("Escape");
-    await expect(coverY).toHaveValue("18");
     await expect(page.getByRole("button", { name: "Exit expanded preview" })).toHaveAttribute("aria-pressed", "true");
     await page.getByRole("button", { name: "Exit expanded preview" }).focus();
     await page.keyboard.press("Escape");
@@ -1773,7 +1792,7 @@ test("authors Custom launcher layout values through the accessible inspector", a
     expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeExpanded);
     await expect(editor).toHaveAttribute("data-layout-authority", authorityBeforeExpanded!);
     expect(await page.evaluate(() => localStorage.getItem("dspico:workspace-layout:v3"))).toBe(
-      preferencesBeforeExpanded,
+      preferencesAfterModeChange,
     );
 
     const coverflow = page.getByRole("button", { name: "Coverflow", exact: true });

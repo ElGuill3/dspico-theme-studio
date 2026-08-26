@@ -1297,18 +1297,11 @@
     font-size: 17px;
     letter-spacing: -0.025em;
   }
-  .preview-controls {
-    display: grid;
-    gap: 5px;
-  }
-  .preview-controls {
-    justify-items: end;
-  }
   .mode-switcher {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
     gap: 4px;
+    margin-top: 10px;
   }
   .mode-switcher button {
     min-height: 28px;
@@ -2733,10 +2726,14 @@ body.workspace-resizing * {
 .device-preview {
   display: contents;
 }
-.preview-actions {
+.preview-actions,
+.preview-display-options {
   display: flex;
   justify-content: flex-end;
   gap: 4px;
+}
+.preview-display-options {
+  margin-top: 5px;
 }
 .pixel-scale-toggle,
 .expand-preview-toggle {
@@ -2985,9 +2982,15 @@ body.launcher-preview-expanded .workspace-dock {
   position: fixed;
   z-index: 50;
   inset: 0;
+  grid-template-rows: minmax(0, 1fr);
   width: auto;
   border: 0;
   box-shadow: none;
+}
+body.launcher-preview-expanded .workspace-dock > .dock-resize-handle,
+body.launcher-preview-expanded .workspace-dock > #dock-width-resize-instructions,
+body.launcher-preview-expanded .workspace-dock > .dock-tabs {
+  display: none;
 }
 body.launcher-preview-expanded .creator-editor.dock-visible::after {
   display: none;
@@ -2998,100 +3001,60 @@ body.launcher-preview-expanded .dock-preview {
 }
 .device-preview.expanded {
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) minmax(240px, 320px);
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 12px 16px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 10px;
   height: 100%;
   min-height: 0;
-  padding: 14px;
+  padding: clamp(12px, 2vw, 24px);
   overflow: hidden;
   background: var(--panel);
 }
 .device-preview.expanded .preview-toolbar {
-  grid-column: 1 / -1;
+  grid-row: 1;
+}
+.device-preview.expanded .mode-switcher {
+  grid-row: 2;
+  width: min(720px, 100%);
+  margin-top: 0;
+  justify-self: center;
+}
+.device-preview.expanded .preview-display-options,
+.device-preview.expanded .custom-launcher-layout-editor,
+.device-preview.expanded .custom-launcher-layout-inspector-host {
+  display: none;
 }
 .device-preview.expanded .device-stage {
-  grid-row: 2;
-  grid-column: 1;
+  grid-row: 3;
   min-height: 0;
   padding: 0;
   overflow: auto;
 }
-.device-preview.expanded .device-shell:not(.logical-pixels) {
-  width: min(100%, calc((100dvh - 170px) * 4 / 3));
-  aspect-ratio: 4 / 3;
+.device-preview.expanded .device-shell {
+  width: min(100%, calc((100dvh - 220px) * 598 / 640));
+  aspect-ratio: 598 / 640;
   filter: drop-shadow(0 18px 22px rgb(4 6 20 / 0.42));
 }
-.device-preview.expanded .device-shell:not(.logical-pixels) .device-chrome,
-.device-preview.expanded .device-shell:not(.logical-pixels) .bottom-preview {
-  display: none;
-}
-.device-preview.expanded .device-shell:not(.logical-pixels) .top-preview {
-  position: relative;
-  top: auto;
-  left: auto;
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  border: 1px solid var(--line);
-}
 .device-preview.expanded .preview-caption {
-  grid-row: 3;
-  grid-column: 1;
-  width: 100%;
-  max-width: none;
+  grid-row: 4;
+  width: min(720px, 100%);
+  max-width: 720px;
   margin: 0;
-}
-.device-preview.expanded .custom-launcher-layout-inspector-host {
-  grid-row: 2 / 4;
-  grid-column: 2;
-  min-width: 0;
-  min-height: 0;
-  margin: 0;
-  padding-left: 16px;
-  overflow: auto;
-  border-left: 1px solid var(--line);
-}
-.device-preview.expanded .custom-launcher-layout-inspector {
-  border-top: 0;
-  padding-top: 0;
+  justify-self: center;
 }
 @media (max-width: 760px) {
   .device-preview.expanded {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto auto auto;
-    align-content: start;
-    overflow-y: auto;
+    padding: 12px;
   }
   .device-preview.expanded .preview-toolbar {
     align-items: stretch;
     flex-direction: column;
   }
-  .device-preview.expanded .preview-controls {
-    justify-items: start;
-  }
   .device-preview.expanded .preview-actions,
-  .device-preview.expanded .mode-switcher {
+  .device-preview.expanded .preview-display-options {
     justify-content: flex-start;
   }
-  .device-preview.expanded .device-stage,
-  .device-preview.expanded .preview-caption,
-  .device-preview.expanded .custom-launcher-layout-inspector-host {
-    grid-column: 1;
-  }
-  .device-preview.expanded .device-stage {
-    grid-row: 2;
-  }
-  .device-preview.expanded .device-shell:not(.logical-pixels) {
-    width: min(520px, 100%);
-  }
-  .device-preview.expanded .preview-caption {
-    grid-row: 3;
-  }
-  .device-preview.expanded .custom-launcher-layout-inspector-host {
-    grid-row: 4;
-    max-height: 220px;
-    padding: 12px 0 0;
-    border-top: 1px solid var(--line);
-    border-left: 0;
+  .device-preview.expanded .device-shell {
+    width: min(100%, calc((100dvh - 260px) * 598 / 640));
   }
 }

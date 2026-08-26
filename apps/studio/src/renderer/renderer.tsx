@@ -176,6 +176,7 @@ function PhysicalPreview({
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const bytes = frame[screen];
+  const modeLabel = launcherViews.find(({ id }) => id === frame.mode)?.label ?? frame.mode;
   const evidence = bytes.reduce((hash, byte) => Math.imul(hash ^ byte, 16_777_619) >>> 0, 2_166_136_261).toString(16);
   useEffect(() => {
     const context = canvas.current?.getContext("2d");
@@ -197,7 +198,7 @@ function PhysicalPreview({
           width={256}
           height={192}
           role="img"
-          aria-label={`${screen} launcher screen`}
+          aria-label={`${screen} launcher screen, ${modeLabel} mode`}
         />
         {editor}
       </div>
@@ -228,6 +229,7 @@ function DevicePreview({
   const [expanded, setExpanded] = useState(false);
   const [inspectorHost, setInspectorHost] = useState<HTMLDivElement | null>(null);
   const expandToggle = useRef<HTMLButtonElement>(null);
+  const previewSurface = useRef<HTMLDivElement>(null);
   const restoreExpandFocus = useRef(false);
   useEffect(() => {
     if (!expanded && restoreExpandFocus.current) {
@@ -238,6 +240,18 @@ function DevicePreview({
   useEffect(() => {
     if (!expanded) return;
     document.body.classList.add("launcher-preview-expanded");
+    const inertSiblings: Array<[HTMLElement, boolean]> = [];
+    let active: HTMLElement | null = previewSurface.current;
+    while (active?.parentElement) {
+      const parent = active.parentElement;
+      for (const sibling of parent.children) {
+        if (!(sibling instanceof HTMLElement) || sibling === active) continue;
+        inertSiblings.push([sibling, sibling.inert]);
+        sibling.inert = true;
+      }
+      if (parent === document.body) break;
+      active = parent;
+    }
     const exit = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
@@ -247,6 +261,7 @@ function DevicePreview({
     globalThis.addEventListener("keydown", exit);
     return () => {
       document.body.classList.remove("launcher-preview-expanded");
+      for (const [sibling, inert] of inertSiblings) sibling.inert = inert;
       globalThis.removeEventListener("keydown", exit);
     };
   }, [expanded]);
@@ -289,59 +304,68 @@ function DevicePreview({
       return { kind: "invalid" };
     }
   }, [customLauncherLayout, customPreview, launcherView, preview]);
+  const oneToOne = logicalPixels && !expanded;
   return (
-    <div className={`device-preview${expanded ? " expanded" : ""}`} data-preview-expanded={expanded}>
+    <div
+      ref={previewSurface}
+      className={`device-preview${expanded ? " expanded" : ""}`}
+      data-preview-expanded={expanded}
+      role={expanded ? "dialog" : undefined}
+      aria-labelledby={expanded ? "launcher-preview-title" : undefined}
+      aria-modal={expanded || undefined}
+    >
       <div className="preview-toolbar">
         <div>
           <span>Device</span>
-          <h2>Live preview</h2>
+          <h2 id="launcher-preview-title">Live preview</h2>
         </div>
-        <div className="preview-controls">
-          <div className="preview-actions">
-            <button
-              ref={expandToggle}
-              type="button"
-              className="expand-preview-toggle"
-              aria-label={expanded ? "Exit expanded preview" : "Expand preview"}
-              aria-pressed={expanded}
-              onClick={() => {
-                if (expanded) restoreExpandFocus.current = true;
-                setExpanded((active) => !active);
-              }}
-            >
-              {expanded ? "Exit expanded preview" : "Expand preview"}
-            </button>
-            <button
-              type="button"
-              className="pixel-scale-toggle"
-              aria-pressed={logicalPixels}
-              onClick={() => setLogicalPixels((active) => !active)}
-            >
-              1:1 pixels
-            </button>
-          </div>
-          <div className="mode-switcher" role="group" aria-label="Preview mode">
-            {launcherViews.map(({ id, label }) => (
-              <button
-                className={launcherView === id ? "active" : ""}
-                aria-pressed={launcherView === id}
-                disabled={busy}
-                key={id}
-                onClick={() => onLauncherView(id)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+        <div className="preview-actions">
+          <button
+            ref={expandToggle}
+            type="button"
+            className="expand-preview-toggle"
+            aria-label={expanded ? "Exit expanded preview" : "Expand preview"}
+            aria-pressed={expanded}
+            onClick={() => {
+              if (expanded) restoreExpandFocus.current = true;
+              setExpanded((active) => !active);
+            }}
+          >
+            {expanded ? "Exit expanded preview" : "Expand preview"}
+          </button>
         </div>
+      </div>
+      <div className="mode-switcher" role="group" aria-label="Preview mode">
+        {launcherViews.map(({ id, label }) => (
+          <button
+            type="button"
+            className={launcherView === id ? "active" : ""}
+            aria-pressed={launcherView === id}
+            disabled={busy}
+            key={id}
+            onClick={() => onLauncherView(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="preview-display-options">
+        <button
+          type="button"
+          className="pixel-scale-toggle"
+          aria-pressed={logicalPixels}
+          onClick={() => setLogicalPixels((active) => !active)}
+        >
+          1:1 pixels
+        </button>
       </div>
       {launcherPreview.kind !== "invalid" ? (
         <>
           <div className="device-stage">
             <div
-              className={`device-shell${logicalPixels ? " logical-pixels" : ""}`}
+              className={`device-shell${oneToOne ? " logical-pixels" : ""}`}
               aria-label="DSpico dual-screen device preview"
-              data-pixel-scale={logicalPixels ? "1" : "device"}
+              data-pixel-scale={oneToOne ? "1" : "device"}
               data-preview-state={launcherPreview.kind}
               data-started-roles={
                 launcherPreview.kind === "partial" ? launcherPreview.startedRoles.join(" ") : undefined
