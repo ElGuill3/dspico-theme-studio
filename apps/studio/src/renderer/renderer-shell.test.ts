@@ -69,7 +69,7 @@ describe("renderer shell", () => {
     expect(readFileSync(path.join(root, "vite.e2e.config.mts"), "utf8")).toContain("assetsInlineLimit: 0");
   });
 
-  it("keeps expanded preview transient, keyboard-dismissable, and focused on its toggle", () => {
+  it("keeps expanded preview authorable, transient, keyboard-dismissable, and focused on its toggle", () => {
     const renderer = readFileSync(path.join(rendererRoot, "renderer.tsx"), "utf8");
     const css = readFileSync(path.join(rendererRoot, "studio.css"), "utf8");
 
@@ -86,8 +86,11 @@ describe("renderer shell", () => {
     expect(css).toMatch(/body\.launcher-preview-expanded \.workspace-dock[^}]*grid-template-rows: minmax\(0, 1fr\);/);
     expect(css).toMatch(/\.device-preview\.expanded \.device-shell \{[\s\S]*?aspect-ratio: 598 \/ 640;/);
     expect(css).toMatch(
-      /\.device-preview\.expanded \.preview-display-options,[\s\S]*?\.custom-launcher-layout-inspector-host \{\s*display: none;/,
+      /\.device-preview\.expanded:has\(> \.custom-launcher-layout-inspector-host:not\(:empty\)\) \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) minmax\(240px, 320px\);/,
     );
+    expect(css).toMatch(/\.device-preview\.expanded \.preview-display-options,[\s\S]*?:empty \{\s*display: none;/);
+    expect(css).not.toMatch(/\.device-preview\.expanded \.custom-launcher-layout-editor[^{}]*\{[^}]*display: none;/);
+    expect(css).not.toMatch(/\.device-preview\.expanded \.custom-launcher-layout-inspector-host \{\s*display: none;/);
     expect(css).not.toMatch(
       /\.device-preview\.expanded[^{}]*(?:\.device-chrome|\.bottom-preview)[^{]*\{[^}]*display: none;/,
     );

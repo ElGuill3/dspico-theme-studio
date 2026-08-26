@@ -1762,20 +1762,66 @@ test("authors Custom launcher layout values through the accessible inspector", a
     await expect(page.locator('[data-preview-chrome="device-frame"]')).toBeVisible();
     await expect(page.locator(".pixel-scale-toggle")).toBeHidden();
     await expect(page.locator(".dock-tabs")).toBeHidden();
-    await expect(page.locator(".custom-launcher-layout-editor")).toBeHidden();
-    await expect(page.locator(".custom-launcher-layout-inspector-host")).toBeHidden();
+    await expect(editor).toBeVisible();
+    await expect(inspector).toBeVisible();
+    for (const label of [
+      "Select top icon",
+      "Select banner line 1",
+      "Select banner line 2",
+      "Select banner line 3",
+      "Select file name",
+      "Select top cover",
+    ]) {
+      await expect(editor.getByRole("button", { name: label })).toBeVisible();
+    }
+    const stageBox = (await page.locator(".device-preview.expanded .device-stage").boundingBox())!;
+    const inspectorBox = (await page.locator(".custom-launcher-layout-inspector-host").boundingBox())!;
+    expect(inspectorBox.x).toBeGreaterThanOrEqual(stageBox.x + stageBox.width);
 
-    const bannerEvidence = await bottomCanvas.getAttribute("data-canvas-evidence");
-    const horizontalGrid = page.getByRole("button", { name: "Horizontal Grid", exact: true });
-    await horizontalGrid.click();
-    await expect(horizontalGrid).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator('.device-preview.expanded .mode-switcher button[aria-pressed="true"]')).toHaveCount(1);
-    await expect(bottomCanvas.locator("..")).toHaveAttribute("data-mode", "horizontal-grid");
-    await expect(bottomCanvas).toHaveAttribute("aria-label", "bottom launcher screen, Horizontal Grid mode");
-    await expect.poll(() => bottomCanvas.getAttribute("data-canvas-evidence")).not.toBe(bannerEvidence);
+    const coverY = inspector.getByRole("spinbutton", { name: "Top cover Y" });
+    await coverY.fill("90");
+    await coverY.press("Enter");
+    await expect
+      .poll(async () => (await customLauncherLayoutState(root)).operations.length)
+      .toBe(operationsBeforeExpanded + 1);
+    expect((await customLauncherLayoutState(root)).operations.at(-1)).toMatchObject({
+      type: "set-custom-launcher-layout",
+      element: "topCover",
+      value: { position: { y: 90 } },
+    });
+    await expect.poll(() => editor.getAttribute("data-layout-authority")).not.toBe(authorityBeforeExpanded);
+    const authorityAfterExpanded = await editor.getAttribute("data-layout-authority");
+
+    await expect(bannerList).toHaveAttribute("aria-pressed", "true");
+    await expect(bottomCanvas.locator("..")).toHaveAttribute("data-mode", "banner-list");
+    await expect(bottomCanvas).toHaveAttribute("aria-label", "bottom launcher screen, Banner List mode");
+    let previousEvidence = await bottomCanvas.getAttribute("data-canvas-evidence");
+    for (const [label, mode] of [
+      ["Horizontal Grid", "horizontal-grid"],
+      ["Vertical Grid", "vertical-grid"],
+      ["Coverflow", "coverflow"],
+    ] as const) {
+      const control = page.getByRole("button", { name: label, exact: true });
+      await control.click();
+      await expect(control).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator('.device-preview.expanded .mode-switcher button[aria-pressed="true"]')).toHaveCount(1);
+      await expect(bottomCanvas.locator("..")).toHaveAttribute("data-mode", mode);
+      await expect(bottomCanvas).toHaveAttribute("aria-label", `bottom launcher screen, ${label} mode`);
+      await expect.poll(() => bottomCanvas.getAttribute("data-canvas-evidence")).not.toBe(previousEvidence);
+      previousEvidence = await bottomCanvas.getAttribute("data-canvas-evidence");
+    }
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(700, 900));
+    await page.waitForFunction(() => window.innerWidth <= 760);
+    const narrowStageBox = (await page.locator(".device-preview.expanded .device-stage").boundingBox())!;
+    const narrowInspectorBox = (await page.locator(".custom-launcher-layout-inspector-host").boundingBox())!;
+    expect(narrowInspectorBox.y).toBeGreaterThanOrEqual(narrowStageBox.y + narrowStageBox.height);
+    await expect(topCanvas).toBeVisible();
+    await expect(bottomCanvas).toBeVisible();
+    await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1200, 800));
+    await page.waitForFunction(() => window.innerWidth >= 1100);
     const preferencesAfterModeChange = await page.evaluate(() => localStorage.getItem("dspico:workspace-layout:v3"));
     expect(preferencesAfterModeChange).not.toBe(preferencesBeforeExpanded);
-    expect(JSON.parse(preferencesAfterModeChange!).layout.previewMode).toBe("horizontal-grid");
+    expect(JSON.parse(preferencesAfterModeChange!).layout.previewMode).toBe("coverflow");
 
     await exitExpandedPreview.click();
     await expect(expandPreview).toHaveAttribute("aria-pressed", "false");
@@ -1789,14 +1835,12 @@ test("authors Custom launcher layout values through the accessible inspector", a
     await page.keyboard.press("Escape");
     await expect(expandPreview).toHaveAttribute("aria-pressed", "false");
     await expect(expandPreview).toBeFocused();
-    expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeExpanded);
-    await expect(editor).toHaveAttribute("data-layout-authority", authorityBeforeExpanded!);
+    expect((await customLauncherLayoutState(root)).operations).toHaveLength(operationsBeforeExpanded + 1);
+    await expect(editor).toHaveAttribute("data-layout-authority", authorityAfterExpanded!);
     expect(await page.evaluate(() => localStorage.getItem("dspico:workspace-layout:v3"))).toBe(
       preferencesAfterModeChange,
     );
 
-    const coverflow = page.getByRole("button", { name: "Coverflow", exact: true });
-    await coverflow.click();
     const unavailableTopCover = editor.getByRole("button", { name: "Top cover is unavailable in Coverflow" });
     await unavailableTopCover.focus();
     await expect(unavailableTopCover).toBeFocused();
